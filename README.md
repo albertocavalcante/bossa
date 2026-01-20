@@ -12,6 +12,7 @@ Unified CLI for managing your development environment.
 - **doctor** - Health checks for all systems
 - **nova** - Full machine bootstrap (15 stages)
 - **completions** - Shell completions (bash/zsh/fish/powershell)
+- **config** - Manage configuration files (supports JSON and TOML)
 
 ## Installation
 
@@ -62,8 +63,21 @@ bossa completions fish > ~/.config/fish/completions/bossa.fish
 
 Bossa reads configuration from `~/.config/workspace-setup/`:
 
-- `refs.json` - Reference repositories
-- `workspaces.json` - Workspace definitions
+- `refs.toml` or `refs.json` - Reference repositories
+- `workspaces.toml` or `workspaces.json` - Workspace definitions
+
+TOML format is preferred when both formats exist. Use `bossa config convert` to switch formats:
+
+```bash
+# Show current config files
+bossa config show
+
+# Convert to TOML
+bossa config convert all --format toml
+
+# Validate configs
+bossa config validate
+```
 
 ## Global Flags
 
