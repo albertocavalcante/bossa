@@ -1,10 +1,10 @@
-pub mod brew;
-pub mod config;
+// New declarative command module
+pub mod declarative;
+
+// CRUD command implementations
+pub mod crud;
+
+// Core commands
 pub mod doctor;
+pub mod migrate;
 pub mod nova;
-pub mod refs;
-pub mod status;
-pub mod sync;
-pub mod t9;
-pub mod workspace;
-pub mod worktree;

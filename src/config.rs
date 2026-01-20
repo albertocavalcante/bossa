@@ -1,5 +1,7 @@
+#![allow(dead_code)]
+
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Serialize, de::DeserializeOwned};
 use std::fs;
 use std::path::PathBuf;
 
@@ -93,8 +95,15 @@ pub fn save_config<T: Serialize>(
     Ok(path)
 }
 
-/// Get the config directory path
+/// Get the bossa config directory path
 pub fn config_dir() -> Result<PathBuf> {
+    let home = dirs::home_dir().context("Could not determine home directory")?;
+    Ok(home.join(".config").join("bossa"))
+}
+
+/// Get the legacy workspace-setup config directory path
+/// This is kept for backwards compatibility with migration tools
+pub fn legacy_config_dir() -> Result<PathBuf> {
     let home = dirs::home_dir().context("Could not determine home directory")?;
     Ok(home.join(".config").join("workspace-setup"))
 }
@@ -103,136 +112,6 @@ pub fn config_dir() -> Result<PathBuf> {
 pub fn workspaces_dir() -> Result<PathBuf> {
     let home = dirs::home_dir().context("Could not determine home directory")?;
     Ok(home.join("dev").join("ws"))
-}
-
-// ============================================================================
-// Refs Config
-// ============================================================================
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct RefsConfig {
-    pub root_directory: String,
-    pub repositories: Vec<RefsRepo>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct RefsRepo {
-    pub name: String,
-    pub url: String,
-    #[serde(default = "default_branch")]
-    pub default_branch: String,
-}
-
-fn default_branch() -> String {
-    "main".to_string()
-}
-
-impl RefsConfig {
-    /// Load refs config (tries .toml first, then .json)
-    pub fn load() -> Result<Self> {
-        let dir = config_dir()?;
-        let (config, _format) = load_config(&dir, "refs")?;
-        Ok(config)
-    }
-
-    /// Load refs config and return the format it was loaded from
-    pub fn load_with_format() -> Result<(Self, ConfigFormat)> {
-        let dir = config_dir()?;
-        load_config(&dir, "refs")
-    }
-
-    /// Save refs config (preserves format, defaults to TOML for new files)
-    #[allow(dead_code)]
-    pub fn save(&self) -> Result<()> {
-        self.save_as(ConfigFormat::Toml)
-    }
-
-    /// Save refs config in specific format
-    pub fn save_as(&self, format: ConfigFormat) -> Result<()> {
-        let dir = config_dir()?;
-        save_config(&dir, "refs", self, format)?;
-        Ok(())
-    }
-
-    /// Get expanded root directory path
-    pub fn root_path(&self) -> Result<PathBuf> {
-        let expanded = shellexpand::tilde(&self.root_directory);
-        Ok(PathBuf::from(expanded.as_ref()))
-    }
-
-    /// Find a repo by name
-    pub fn find_repo(&self, name: &str) -> Option<&RefsRepo> {
-        self.repositories.iter().find(|r| r.name == name)
-    }
-
-    /// Add a new repo
-    pub fn add_repo(&mut self, repo: RefsRepo) {
-        // Remove if exists (update)
-        self.repositories.retain(|r| r.name != repo.name);
-        self.repositories.push(repo);
-        // Sort by name
-        self.repositories.sort_by(|a, b| a.name.cmp(&b.name));
-    }
-
-    /// Remove a repo by name
-    pub fn remove_repo(&mut self, name: &str) -> bool {
-        let len_before = self.repositories.len();
-        self.repositories.retain(|r| r.name != name);
-        self.repositories.len() < len_before
-    }
-}
-
-// ============================================================================
-// Workspaces Config
-// ============================================================================
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct WorkspacesConfig {
-    pub workspaces: Vec<Workspace>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Workspace {
-    pub name: String,
-    pub url: String,
-    #[serde(default)]
-    pub bare_dir: Option<String>,
-    #[serde(default)]
-    pub worktrees: Vec<WorktreeConfig>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct WorktreeConfig {
-    pub branch: String,
-    pub path: String,
-}
-
-impl WorkspacesConfig {
-    /// Load workspaces config (tries .toml first, then .json)
-    pub fn load() -> Result<Self> {
-        let dir = config_dir()?;
-        let (config, _format) = load_config(&dir, "workspaces")?;
-        Ok(config)
-    }
-
-    /// Load workspaces config and return the format it was loaded from
-    pub fn load_with_format() -> Result<(Self, ConfigFormat)> {
-        let dir = config_dir()?;
-        load_config(&dir, "workspaces")
-    }
-
-    /// Save workspaces config (defaults to TOML)
-    #[allow(dead_code)]
-    pub fn save(&self) -> Result<()> {
-        self.save_as(ConfigFormat::Toml)
-    }
-
-    /// Save workspaces config in specific format
-    pub fn save_as(&self, format: ConfigFormat) -> Result<()> {
-        let dir = config_dir()?;
-        save_config(&dir, "workspaces", self, format)?;
-        Ok(())
-    }
 }
 
 // ============================================================================

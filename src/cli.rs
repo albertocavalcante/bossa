@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(clippy::inherent_to_string)]
+
 use clap::{Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 
@@ -17,42 +20,46 @@ pub struct Cli {
     pub quiet: bool,
 
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Command,
 }
 
 #[derive(Subcommand)]
-pub enum Commands {
-    /// Show status dashboard of all systems
-    Status,
+pub enum Command {
+    /// Bootstrap a new machine (bossa nova!)
+    Nova(NovaArgs),
 
-    /// Sync everything (workspaces, refs, packages)
-    Sync(SyncArgs),
+    /// Show current vs desired state
+    Status(StatusArgs),
 
-    /// Manage reference repositories (~/dev/refs)
+    /// Apply desired state
+    Apply(ApplyArgs),
+
+    /// Preview what would change
+    Diff(DiffArgs),
+
+    /// Add resources to config
     #[command(subcommand)]
-    Refs(RefsCommand),
+    Add(AddCommand),
 
-    /// Manage Homebrew packages
+    /// Remove resources from config
     #[command(subcommand)]
-    Brew(BrewCommand),
+    Rm(RmCommand),
 
-    /// Manage workspaces (bare repos + worktrees)
-    #[command(subcommand)]
-    Workspace(WorkspaceCommand),
+    /// List resources
+    List(ListArgs),
 
-    /// Manage git worktrees (worker pool model)
-    #[command(subcommand)]
-    Worktree(WorktreeCommand),
+    /// Show detailed resource info
+    Show(ShowArgs),
 
-    /// Manage T9 external drive (exFAT repos)
-    #[command(subcommand)]
-    T9(T9Command),
-
-    /// Run health checks on all systems
+    /// System health check
     Doctor,
 
-    /// Bootstrap a new machine from scratch (like install.sh)
-    Nova(NovaArgs),
+    /// Migrate old config format to new unified format
+    Migrate {
+        /// Preview changes without writing
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+    },
 
     /// Generate shell completions
     Completions {
@@ -60,249 +67,155 @@ pub enum Commands {
         #[arg(value_enum)]
         shell: Shell,
     },
-
-    /// Manage configuration files
-    #[command(subcommand)]
-    Config(ConfigCommand),
 }
 
 // ============================================================================
-// Config Commands
-// ============================================================================
-
-#[derive(Subcommand)]
-pub enum ConfigCommand {
-    /// Show config file locations and formats
-    Show,
-
-    /// Convert config files between formats
-    Convert {
-        /// Config to convert: refs, workspaces, or all
-        #[arg(value_enum)]
-        config: ConfigTarget,
-
-        /// Target format
-        #[arg(short, long, value_enum)]
-        format: ConfigFormatArg,
-
-        /// Keep original file after conversion
-        #[arg(short, long)]
-        keep: bool,
-    },
-
-    /// Validate config files
-    Validate,
-
-    /// Open config directory
-    Dir,
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-pub enum ConfigTarget {
-    Refs,
-    Workspaces,
-    All,
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-pub enum ConfigFormatArg {
-    Json,
-    Toml,
-}
-
-// ============================================================================
-// Sync
+// Command Arguments
 // ============================================================================
 
 #[derive(Parser)]
-pub struct SyncArgs {
-    /// Only sync specific targets (comma-separated): refs, workspace, brew
-    #[arg(short, long)]
-    pub only: Option<String>,
+pub struct StatusArgs {
+    /// Target resource (e.g., "collections", "collections.refs", "workspaces", "storage.t9")
+    pub target: Option<String>,
+}
+
+#[derive(Parser)]
+pub struct ApplyArgs {
+    /// Target resource (e.g., "collections", "collections.refs", "workspaces", "storage.t9")
+    pub target: Option<String>,
 
     /// Dry run - show what would be done
     #[arg(short, long)]
     pub dry_run: bool,
 
-    /// Number of parallel jobs for cloning
+    /// Number of parallel jobs
     #[arg(short, long, default_value = "4")]
     pub jobs: usize,
-}
-
-// ============================================================================
-// Refs Commands
-// ============================================================================
-
-#[derive(Subcommand)]
-pub enum RefsCommand {
-    /// Clone all missing repos from refs.json
-    Sync(RefsSyncArgs),
-
-    /// List all configured reference repos
-    List {
-        /// Filter by name pattern
-        #[arg(short, long)]
-        filter: Option<String>,
-
-        /// Show only missing repos
-        #[arg(long)]
-        missing: bool,
-    },
-
-    /// Capture current ~/dev/refs state to refs.json
-    Snapshot,
-
-    /// Detect repos not tracked in refs.json (drift detection)
-    Audit {
-        /// Automatically add untracked repos to config
-        #[arg(long)]
-        fix: bool,
-    },
-
-    /// Add a new repo to refs.json (and optionally clone it)
-    Add {
-        /// Git URL to add
-        url: String,
-
-        /// Custom name (defaults to repo name from URL)
-        #[arg(short, long)]
-        name: Option<String>,
-
-        /// Clone immediately after adding
-        #[arg(short, long)]
-        clone: bool,
-    },
-
-    /// Remove a repo from refs.json
-    Remove {
-        /// Repo name to remove
-        name: String,
-
-        /// Also delete the local clone
-        #[arg(short, long)]
-        delete: bool,
-    },
 }
 
 #[derive(Parser)]
-pub struct RefsSyncArgs {
-    /// Specific repo name to sync
-    pub name: Option<String>,
+pub struct DiffArgs {
+    /// Target resource (e.g., "collections", "collections.refs", "workspaces", "storage.t9")
+    pub target: Option<String>,
+}
 
-    /// Number of parallel clone jobs
-    #[arg(short, long, default_value = "4")]
-    pub jobs: usize,
+#[derive(Parser)]
+pub struct ListArgs {
+    /// Resource type to list
+    #[arg(value_enum)]
+    pub resource_type: ResourceType,
+}
 
-    /// Number of retry attempts for failed clones
-    #[arg(short, long, default_value = "3")]
-    pub retries: usize,
+#[derive(Parser)]
+pub struct ShowArgs {
+    /// Target resource (e.g., "collections.refs", "workspaces.dotfiles", "storage.t9")
+    pub target: String,
+}
 
-    /// Dry run - show what would be cloned
-    #[arg(long)]
-    pub dry_run: bool,
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ResourceType {
+    /// List collections
+    Collections,
+    /// List repositories
+    Repos,
+    /// List workspaces
+    Workspaces,
+    /// List storage
+    Storage,
 }
 
 // ============================================================================
-// Brew Commands
+// Add Commands
 // ============================================================================
 
-#[derive(Subcommand)]
-pub enum BrewCommand {
-    /// Install all packages from Brewfile
-    Apply {
-        /// Install only essential packages
+#[derive(Debug, Subcommand)]
+pub enum AddCommand {
+    /// Add a new collection
+    Collection {
+        /// Collection name
+        name: String,
+
+        /// Collection path
+        path: String,
+
+        /// Collection description
         #[arg(short, long)]
-        essential: bool,
+        description: Option<String>,
     },
 
-    /// Capture current packages to Brewfile
-    Capture,
+    /// Add a repository to a collection
+    Repo {
+        /// Collection name
+        collection: String,
 
-    /// Detect packages not in Brewfile (drift detection)
-    Audit,
-}
+        /// Repository URL
+        url: String,
 
-// ============================================================================
-// Workspace Commands
-// ============================================================================
-
-#[derive(Subcommand)]
-pub enum WorkspaceCommand {
-    /// Sync workspaces from config
-    Sync {
-        /// Specific workspace to sync
-        target: Option<String>,
+        /// Repository name (defaults to repo name from URL)
+        #[arg(short, long)]
+        name: Option<String>,
     },
 
-    /// List configured workspaces
-    List,
-}
+    /// Add a workspace
+    Workspace {
+        /// Repository URL
+        url: String,
 
-// ============================================================================
-// Worktree Commands (wt wrapper)
-// ============================================================================
-
-#[derive(Subcommand)]
-pub enum WorktreeCommand {
-    /// Show worktree status (worker pool)
-    Status,
-
-    /// Create new worktree in available slot
-    New {
-        /// Branch name
-        branch: String,
-
-        /// Specific slot (w1-w10)
+        /// Workspace name (defaults to repo name from URL)
         #[arg(short, long)]
-        slot: Option<String>,
+        name: Option<String>,
 
-        /// Push branch to remote
+        /// Workspace category
         #[arg(short, long)]
-        push: bool,
+        category: Option<String>,
     },
 
-    /// Release a worktree slot
-    Release {
-        /// Slot to release (w1-w10)
-        slot: String,
+    /// Add storage
+    Storage {
+        /// Storage name
+        name: String,
 
-        /// Force release even if dirty
-        #[arg(short, long)]
-        force: bool,
-    },
+        /// Mount point
+        mount: String,
 
-    /// Clean up merged worktrees
-    Cleanup {
-        /// Force cleanup
-        #[arg(short, long)]
-        force: bool,
-
-        /// Dry run
-        #[arg(short, long)]
-        dry_run: bool,
+        /// Storage type
+        #[arg(short = 't', long)]
+        storage_type: Option<String>,
     },
 }
 
 // ============================================================================
-// T9 Commands
+// Remove Commands
 // ============================================================================
 
-#[derive(Subcommand)]
-pub enum T9Command {
-    /// Check git status across all T9 repos
-    Status,
+#[derive(Debug, Subcommand)]
+pub enum RmCommand {
+    /// Remove a collection
+    Collection {
+        /// Collection name
+        name: String,
+    },
 
-    /// Configure repos for exFAT (fileMode=false)
-    Config,
+    /// Remove a repository from a collection
+    Repo {
+        /// Collection name
+        collection: String,
 
-    /// Clean metadata files (._ and .DS_Store)
-    Clean,
+        /// Repository name
+        name: String,
+    },
 
-    /// Show T9 statistics
-    Stats,
+    /// Remove a workspace
+    Workspace {
+        /// Workspace name
+        name: String,
+    },
 
-    /// Verify T9 mount and symlinks
-    Verify,
+    /// Remove storage
+    Storage {
+        /// Storage name
+        name: String,
+    },
 }
 
 // ============================================================================
@@ -326,6 +239,10 @@ pub struct NovaArgs {
     /// Dry run - show what would be done
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Number of parallel jobs
+    #[arg(short, long)]
+    pub jobs: Option<usize>,
 }
 
 /// Nova bootstrap stages
@@ -427,6 +344,48 @@ impl NovaStage {
             "refs" => Some(NovaStage::Refs),
             "workspaces" => Some(NovaStage::Workspaces),
             _ => None,
+        }
+    }
+}
+
+// ============================================================================
+// Target Parser
+// ============================================================================
+
+/// Represents a parsed target like "collections.refs" or "workspaces"
+#[derive(Debug, Clone)]
+pub struct Target {
+    /// Resource type (e.g., "collections", "workspaces", "storage")
+    pub resource_type: String,
+    /// Optional specific resource name (e.g., "refs", "dotfiles", "t9")
+    pub name: Option<String>,
+}
+
+impl Target {
+    /// Parse a target string like "collections.refs" into (resource_type, name)
+    pub fn parse(target: &str) -> Self {
+        match target.split_once('.') {
+            Some((resource_type, name)) => Self {
+                resource_type: resource_type.to_string(),
+                name: Some(name.to_string()),
+            },
+            None => Self {
+                resource_type: target.to_string(),
+                name: None,
+            },
+        }
+    }
+
+    /// Check if this target matches a specific resource type
+    pub fn matches_type(&self, resource_type: &str) -> bool {
+        self.resource_type == resource_type
+    }
+
+    /// Get the full target string (e.g., "collections.refs")
+    pub fn to_string(&self) -> String {
+        match &self.name {
+            Some(name) => format!("{}.{}", self.resource_type, name),
+            None => self.resource_type.clone(),
         }
     }
 }

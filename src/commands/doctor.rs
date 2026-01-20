@@ -3,7 +3,8 @@ use colored::Colorize;
 use std::path::Path;
 
 use crate::Context;
-use crate::config::{self, RefsConfig, WorkspacesConfig};
+use crate::commands::declarative::BossaConfig;
+use crate::config;
 use crate::runner;
 use crate::ui;
 
@@ -78,42 +79,53 @@ fn check_configs() -> bool {
         }
     };
 
-    let configs = [
-        ("refs.json", "Reference repositories"),
-        ("workspaces.json", "Developer workspaces"),
-    ];
-
     let mut all_ok = true;
 
-    for (file, desc) in configs {
-        let path = config_dir.join(file);
-        if path.exists() {
-            // Try to parse it
-            let valid = match file {
-                "refs.json" => RefsConfig::load().is_ok(),
-                "workspaces.json" => WorkspacesConfig::load().is_ok(),
-                _ => true,
-            };
+    // Check for unified config file (new format)
+    let config_path = config_dir.join("config.toml");
+    let config_json_path = config_dir.join("config.json");
 
-            if valid {
-                println!("  {} {} - {}", "✓".green(), file, desc.dimmed());
-            } else {
-                println!(
-                    "  {} {} - {} {}",
-                    "⚠".yellow(),
-                    file,
-                    desc,
-                    "(invalid JSON)".yellow()
-                );
-                all_ok = false;
-            }
+    if config_path.exists() || config_json_path.exists() {
+        let file_name = if config_path.exists() {
+            "config.toml"
+        } else {
+            "config.json"
+        };
+        let valid = config::load_config::<BossaConfig>(&config_dir, "config").is_ok();
+
+        if valid {
+            println!(
+                "  {} {} - {}",
+                "✓".green(),
+                file_name,
+                "Unified bossa config".dimmed()
+            );
         } else {
             println!(
-                "  {} {} - {} {}",
-                "○".dimmed(),
-                file,
-                desc,
-                "(not configured)".dimmed()
+                "  {} {} - Unified bossa config {}",
+                "⚠".yellow(),
+                file_name,
+                "(invalid format)".yellow()
+            );
+            all_ok = false;
+        }
+    } else {
+        println!(
+            "  {} config.toml - Unified bossa config {}",
+            "○".dimmed(),
+            "(not configured)".dimmed()
+        );
+    }
+
+    // Check legacy configs (for migration)
+    if let Ok(legacy_dir) = config::legacy_config_dir() {
+        let legacy_refs = legacy_dir.join("refs.json");
+        let legacy_ws = legacy_dir.join("workspaces.json");
+
+        if legacy_refs.exists() || legacy_ws.exists() {
+            println!(
+                "  {} Legacy configs found - run 'bossa migrate' to upgrade",
+                "ℹ".blue()
             );
         }
     }
@@ -150,7 +162,7 @@ fn check_directories() -> bool {
         ("dev/ws", "Workspaces root"),
         ("dev/refs", "Reference repos"),
         ("bin", "User scripts"),
-        (".config/workspace-setup", "Bossa config"),
+        (".config/bossa", "Bossa config"),
     ];
 
     let mut all_ok = true;

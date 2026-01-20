@@ -1,14 +1,19 @@
 mod cli;
 mod commands;
 mod config;
+mod engine;
 mod progress;
+mod resource;
 mod runner;
+mod schema;
+mod state;
+mod sudo;
 mod ui;
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use cli::{Cli, Commands};
+use cli::{AddCommand, Cli, Command, RmCommand};
 use std::io;
 
 /// Global context for the application
@@ -43,20 +48,50 @@ fn main() -> Result<()> {
     };
 
     match cli.command {
-        Commands::Status => commands::status::run(&ctx),
-        Commands::Sync(args) => commands::sync::run(&ctx, args),
-        Commands::Refs(cmd) => commands::refs::run(&ctx, cmd),
-        Commands::Brew(cmd) => commands::brew::run(&ctx, cmd),
-        Commands::Workspace(cmd) => commands::workspace::run(&ctx, cmd),
-        Commands::Worktree(cmd) => commands::worktree::run(&ctx, cmd),
-        Commands::T9(cmd) => commands::t9::run(&ctx, cmd),
-        Commands::Doctor => commands::doctor::run(&ctx),
-        Commands::Nova(args) => commands::nova::run(&ctx, args),
-        Commands::Completions { shell } => {
+        Command::Nova(args) => commands::nova::run(&ctx, args),
+        Command::Status(args) => commands::declarative::status(&ctx, args.target.as_deref()),
+        Command::Apply(args) => {
+            commands::declarative::apply(&ctx, args.target.as_deref(), args.dry_run, args.jobs)
+        }
+        Command::Diff(args) => commands::declarative::diff(&ctx, args.target.as_deref()),
+        Command::Add(cmd) => match cmd {
+            AddCommand::Collection {
+                name,
+                path,
+                description,
+            } => commands::crud::add_collection(&ctx, &name, &path, description.as_deref()),
+            AddCommand::Repo {
+                collection,
+                url,
+                name,
+            } => commands::crud::add_repo(&ctx, &collection, &url, name.as_deref()),
+            AddCommand::Workspace {
+                url,
+                name,
+                category,
+            } => commands::crud::add_workspace(&ctx, &url, name.as_deref(), category.as_deref()),
+            AddCommand::Storage {
+                name,
+                mount,
+                storage_type,
+            } => commands::crud::add_storage(&ctx, &name, &mount, storage_type.as_deref()),
+        },
+        Command::Rm(cmd) => match cmd {
+            RmCommand::Collection { name } => commands::crud::rm_collection(&ctx, &name),
+            RmCommand::Repo { collection, name } => {
+                commands::crud::rm_repo(&ctx, &collection, &name)
+            }
+            RmCommand::Workspace { name } => commands::crud::rm_workspace(&ctx, &name),
+            RmCommand::Storage { name } => commands::crud::rm_storage(&ctx, &name),
+        },
+        Command::List(args) => commands::crud::list(&ctx, args.resource_type),
+        Command::Show(args) => commands::crud::show(&ctx, &args.target),
+        Command::Doctor => commands::doctor::run(&ctx),
+        Command::Migrate { dry_run } => commands::migrate::run(&ctx, dry_run),
+        Command::Completions { shell } => {
             let mut cmd = Cli::command();
             generate(shell, &mut cmd, "bossa", &mut io::stdout());
             Ok(())
         }
-        Commands::Config(cmd) => commands::config::run(&ctx, cmd),
     }
 }
