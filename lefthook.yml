@@ -1,0 +1,25 @@
+# --- Lefthook Configuration ---
+# See: https://github.com/evilmartians/lefthook
+
+pre-commit:
+  parallel: true
+  commands:
+    # Check Rust formatting
+    cargo-fmt:
+      glob: "*.rs"
+      run: cargo fmt -- --check
+
+    # Run Clippy linter
+    cargo-clippy:
+      glob: "*.rs"
+      run: cargo clippy --all-targets --all-features -- -D warnings
+
+pre-push:
+  commands:
+    # Run tests before pushing
+    cargo-test:
+      run: cargo test --quiet
+
+    # Ensure it builds in release mode
+    cargo-build:
+      run: cargo build --release --quiet
