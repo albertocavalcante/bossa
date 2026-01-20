@@ -13,10 +13,10 @@ jobs:
     name: Build macOS arm64
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Install Rust
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Build release binary
         run: cargo build --release
@@ -28,7 +28,7 @@ jobs:
           shasum -a 256 bossa-darwin-arm64.tar.gz > bossa-darwin-arm64.tar.gz.sha256
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: bossa-darwin-arm64
           path: |
@@ -43,7 +43,7 @@ jobs:
       contents: write
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: bossa-darwin-arm64
 
@@ -53,7 +53,7 @@ jobs:
           cat bossa-darwin-arm64.tar.gz.sha256
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           files: |
             bossa-darwin-arm64.tar.gz
