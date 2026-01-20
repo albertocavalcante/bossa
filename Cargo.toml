@@ -1,12 +1,12 @@
 [package]
 name = "bossa"
 version = "0.3.0"
-edition = "2024"
-rust-version = "1.85"
-description = "Unified CLI for managing dev environment - workspaces, refs, packages"
 authors = ["Alberto Cavalcante"]
+edition = "2024"
 license = "MIT"
 repository = "https://github.com/albertocavalcante/bossa"
+rust-version = "1.85"
+description = "Unified CLI for managing dev environment - workspaces, refs, packages"
 
 [dependencies]
 # CLI parsing
@@ -15,8 +15,8 @@ clap_complete = "4.5"
 
 # Terminal UI
 colored = "3"
-indicatif = "0.18"
 console = "0.16"
+indicatif = "0.18"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -37,12 +37,12 @@ shellexpand = "3"
 rayon = "1.11"
 
 # Logging
-log = "0.4"
 env_logger = "0.11"
+log = "0.4"
 
 [profile.release]
-opt-level = "z"     # Optimize for size
-lto = true          # Link-time optimization
-codegen-units = 1   # Single codegen unit for better optimization
-panic = "abort"     # Smaller binary
-strip = true        # Strip symbols
+opt-level = "z" # Optimize for size
+lto = true # Link-time optimization
+codegen-units = 1 # Single codegen unit for better optimization
+panic = "abort" # Smaller binary
+strip = true # Strip symbols

@@ -14,6 +14,21 @@ pre-commit:
       glob: "*.rs"
       run: cargo clippy --all-targets --all-features -- -D warnings
 
+    # Check Markdown formatting
+    dprint-md:
+      glob: "*.md"
+      run: dprint check {staged_files}
+
+    # Check TOML formatting
+    dprint-toml:
+      glob: "*.toml"
+      run: dprint check {staged_files}
+
+    # Check JSON formatting
+    dprint-json:
+      glob: "*.json"
+      run: dprint check {staged_files}
+
 pre-push:
   commands:
     # Run tests before pushing

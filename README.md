@@ -90,23 +90,23 @@ bossa config validate
 
 The `nova` command bootstraps a new machine with 15 stages:
 
-| Stage | Description |
-|-------|-------------|
-| defaults | macOS system defaults |
-| terminal | Terminal font setup |
-| git-signing | Git signing key setup |
-| homebrew | Homebrew installation |
-| bash | Bash 4+ bootstrap |
-| essential | Essential packages (stow, jq, gh, etc.) |
-| brew | Full Brewfile packages |
-| pnpm | Node packages via pnpm |
-| dock | Dock configuration |
-| ecosystem | Ecosystem extensions |
-| handlers | File handlers (duti) |
-| stow | Symlinks via GNU Stow |
-| mcp | MCP server configuration |
-| refs | Reference repositories |
-| workspaces | Developer workspaces |
+| Stage       | Description                             |
+| ----------- | --------------------------------------- |
+| defaults    | macOS system defaults                   |
+| terminal    | Terminal font setup                     |
+| git-signing | Git signing key setup                   |
+| homebrew    | Homebrew installation                   |
+| bash        | Bash 4+ bootstrap                       |
+| essential   | Essential packages (stow, jq, gh, etc.) |
+| brew        | Full Brewfile packages                  |
+| pnpm        | Node packages via pnpm                  |
+| dock        | Dock configuration                      |
+| ecosystem   | Ecosystem extensions                    |
+| handlers    | File handlers (duti)                    |
+| stow        | Symlinks via GNU Stow                   |
+| mcp         | MCP server configuration                |
+| refs        | Reference repositories                  |
+| workspaces  | Developer workspaces                    |
 
 ## License
 
