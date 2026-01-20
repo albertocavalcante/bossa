@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fs;
 use std::path::PathBuf;
 
@@ -25,12 +25,8 @@ impl ConfigFormat {
     /// Parse content in this format
     pub fn parse<T: DeserializeOwned>(&self, content: &str) -> Result<T> {
         match self {
-            ConfigFormat::Json => {
-                serde_json::from_str(content).context("Invalid JSON format")
-            }
-            ConfigFormat::Toml => {
-                toml::from_str(content).context("Invalid TOML format")
-            }
+            ConfigFormat::Json => serde_json::from_str(content).context("Invalid JSON format"),
+            ConfigFormat::Toml => toml::from_str(content).context("Invalid TOML format"),
         }
     }
 
@@ -48,7 +44,7 @@ impl ConfigFormat {
 }
 
 /// Find config file, preferring TOML over JSON if both exist
-pub fn find_config_file(dir: &PathBuf, base_name: &str) -> Option<(PathBuf, ConfigFormat)> {
+pub fn find_config_file(dir: &std::path::Path, base_name: &str) -> Option<(PathBuf, ConfigFormat)> {
     // Prefer TOML
     let toml_path = dir.join(format!("{}.toml", base_name));
     if toml_path.exists() {
@@ -65,12 +61,19 @@ pub fn find_config_file(dir: &PathBuf, base_name: &str) -> Option<(PathBuf, Conf
 }
 
 /// Load a config file, trying TOML first then JSON
-pub fn load_config<T: DeserializeOwned>(dir: &PathBuf, base_name: &str) -> Result<(T, ConfigFormat)> {
-    let (path, format) = find_config_file(dir, base_name)
-        .with_context(|| format!("Config file not found: {}.toml or {}.json", base_name, base_name))?;
+pub fn load_config<T: DeserializeOwned>(
+    dir: &std::path::Path,
+    base_name: &str,
+) -> Result<(T, ConfigFormat)> {
+    let (path, format) = find_config_file(dir, base_name).with_context(|| {
+        format!(
+            "Config file not found: {}.toml or {}.json",
+            base_name, base_name
+        )
+    })?;
 
-    let content = fs::read_to_string(&path)
-        .with_context(|| format!("Could not read {}", path.display()))?;
+    let content =
+        fs::read_to_string(&path).with_context(|| format!("Could not read {}", path.display()))?;
 
     let config = format.parse(&content)?;
     Ok((config, format))
@@ -78,7 +81,7 @@ pub fn load_config<T: DeserializeOwned>(dir: &PathBuf, base_name: &str) -> Resul
 
 /// Save a config file in the specified format
 pub fn save_config<T: Serialize>(
-    dir: &PathBuf,
+    dir: &std::path::Path,
     base_name: &str,
     config: &T,
     format: ConfigFormat,

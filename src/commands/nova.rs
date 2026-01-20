@@ -3,11 +3,11 @@ use colored::Colorize;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+use crate::Context;
 use crate::cli::{NovaArgs, NovaStage};
 use crate::progress::{self, StageProgress};
 use crate::runner;
 use crate::ui;
-use crate::Context;
 
 pub fn run(ctx: &Context, args: NovaArgs) -> Result<()> {
     // Handle --list-stages
@@ -198,7 +198,7 @@ fn get_dotfiles_dir() -> Result<PathBuf> {
     )
 }
 
-fn run_stage(ctx: &Context, stage: &NovaStage, dotfiles_dir: &PathBuf) -> Result<()> {
+fn run_stage(ctx: &Context, stage: &NovaStage, dotfiles_dir: &std::path::Path) -> Result<()> {
     match stage {
         NovaStage::Defaults => {
             let script = dotfiles_dir.join("scripts/macos/setup-defaults.sh");
@@ -317,7 +317,9 @@ fn run_stage(ctx: &Context, stage: &NovaStage, dotfiles_dir: &PathBuf) -> Result
             }
 
             // Find stow packages (directories that aren't ignored)
-            let ignore_dirs = ["scripts", "config", "private", "mcp", ".git", ".github", "tools"];
+            let ignore_dirs = [
+                "scripts", "config", "private", "mcp", ".git", ".github", "tools",
+            ];
 
             let mut stow_dirs = Vec::new();
             for entry in std::fs::read_dir(dotfiles_dir)? {

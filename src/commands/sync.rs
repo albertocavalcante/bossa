@@ -1,10 +1,10 @@
 use anyhow::Result;
 
+use crate::Context;
 use crate::cli::{RefsCommand, RefsSyncArgs, SyncArgs};
 use crate::commands::refs;
 use crate::runner;
 use crate::ui;
-use crate::Context;
 
 pub fn run(ctx: &Context, args: SyncArgs) -> Result<()> {
     ui::header("Syncing Environment");

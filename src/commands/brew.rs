@@ -1,11 +1,11 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
+use crate::Context;
 use crate::cli::BrewCommand;
 use crate::progress;
 use crate::runner;
 use crate::ui;
-use crate::Context;
 
 pub fn run(_ctx: &Context, cmd: BrewCommand) -> Result<()> {
     match cmd {
@@ -32,7 +32,10 @@ fn apply(essential: bool) -> Result<()> {
 
     let script = brew_manager_path();
     if !script.exists() {
-        ui::error(&format!("brew-manager.sh not found at {}", script.display()));
+        ui::error(&format!(
+            "brew-manager.sh not found at {}",
+            script.display()
+        ));
         ui::info("Make sure dotfiles are properly installed");
         return Ok(());
     }
@@ -46,7 +49,10 @@ fn capture() -> Result<()> {
 
     let script = brew_manager_path();
     if !script.exists() {
-        ui::error(&format!("brew-manager.sh not found at {}", script.display()));
+        ui::error(&format!(
+            "brew-manager.sh not found at {}",
+            script.display()
+        ));
         return Ok(());
     }
 
@@ -70,7 +76,10 @@ fn audit() -> Result<()> {
 
     let script = brew_manager_path();
     if !script.exists() {
-        ui::error(&format!("brew-manager.sh not found at {}", script.display()));
+        ui::error(&format!(
+            "brew-manager.sh not found at {}",
+            script.display()
+        ));
         return Ok(());
     }
 

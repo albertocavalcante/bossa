@@ -3,17 +3,17 @@ use colored::Colorize;
 use rayon::prelude::*;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
+use crate::Context;
 use crate::cli::{RefsCommand, RefsSyncArgs};
 use crate::config::{self, RefsConfig, RefsRepo};
 use crate::progress;
 use crate::runner;
 use crate::ui;
-use crate::Context;
 
 pub fn run(ctx: &Context, cmd: RefsCommand) -> Result<()> {
     match cmd {
@@ -123,12 +123,12 @@ fn sync(ctx: &Context, args: RefsSyncArgs) -> Result<()> {
 
     println!();
     if failed_count == 0 {
-        ui::success(&format!("Cloned {} repositories successfully!", cloned_count));
-    } else {
-        ui::warn(&format!(
-            "Cloned {}, {} failed",
-            cloned_count, failed_count
+        ui::success(&format!(
+            "Cloned {} repositories successfully!",
+            cloned_count
         ));
+    } else {
+        ui::warn(&format!("Cloned {}, {} failed", cloned_count, failed_count));
 
         if !ctx.quiet {
             println!();
@@ -143,7 +143,7 @@ fn sync(ctx: &Context, args: RefsSyncArgs) -> Result<()> {
 }
 
 /// Clone a single repo with retry logic
-fn clone_with_retry(root: &PathBuf, repo: &RefsRepo, max_retries: usize) -> Result<()> {
+fn clone_with_retry(root: &std::path::Path, repo: &RefsRepo, max_retries: usize) -> Result<()> {
     let repo_path = root.join(&repo.name);
 
     for attempt in 1..=max_retries {
@@ -175,12 +175,18 @@ fn clone_with_retry(root: &PathBuf, repo: &RefsRepo, max_retries: usize) -> Resu
 }
 
 /// Clone a single repository
-fn clone_repo(root: &PathBuf, repo: &RefsRepo) -> Result<()> {
+fn clone_repo(root: &std::path::Path, repo: &RefsRepo) -> Result<()> {
     let repo_path = root.join(&repo.name);
 
     // Run git clone
     let output = std::process::Command::new("git")
-        .args(["clone", "--depth", "1", &repo.url, repo_path.to_str().unwrap()])
+        .args([
+            "clone",
+            "--depth",
+            "1",
+            &repo.url,
+            repo_path.to_str().unwrap(),
+        ])
         .output()
         .context("Failed to execute git clone")?;
 
@@ -254,10 +260,7 @@ fn list(_ctx: &Context, filter: Option<String>, only_missing: bool) -> Result<()
     ui::kv("Root", &root.display().to_string());
     ui::kv("Showing", &repos.len().to_string());
     if filter.is_some() || only_missing {
-        ui::kv(
-            "Total",
-            &config.repositories.len().to_string(),
-        );
+        ui::kv("Total", &config.repositories.len().to_string());
     }
     println!();
 
@@ -327,7 +330,13 @@ fn snapshot(_ctx: &Context) -> Result<()> {
         // Get remote URL
         let url = match runner::run_capture(
             "git",
-            &["-C", path.to_str().unwrap(), "config", "--get", "remote.origin.url"],
+            &[
+                "-C",
+                path.to_str().unwrap(),
+                "config",
+                "--get",
+                "remote.origin.url",
+            ],
         ) {
             Ok(u) => u,
             Err(_) => continue,
@@ -336,9 +345,14 @@ fn snapshot(_ctx: &Context) -> Result<()> {
         // Get default branch
         let default_branch = runner::run_capture(
             "git",
-            &["-C", path.to_str().unwrap(), "symbolic-ref", "refs/remotes/origin/HEAD"],
+            &[
+                "-C",
+                path.to_str().unwrap(),
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+            ],
         )
-        .map(|s| s.split('/').last().unwrap_or("main").to_string())
+        .map(|s| s.split('/').next_back().unwrap_or("main").to_string())
         .unwrap_or_else(|_| "main".to_string());
 
         repositories.push(RefsRepo {
@@ -377,7 +391,10 @@ fn audit(_ctx: &Context, fix: bool) -> Result<()> {
     let root = config.root_path()?;
 
     if !root.exists() {
-        ui::warn(&format!("Refs directory does not exist: {}", root.display()));
+        ui::warn(&format!(
+            "Refs directory does not exist: {}",
+            root.display()
+        ));
         return Ok(());
     }
 
@@ -434,15 +451,26 @@ fn audit(_ctx: &Context, fix: bool) -> Result<()> {
             // Get remote URL
             let url = runner::run_capture(
                 "git",
-                &["-C", path.to_str().unwrap(), "config", "--get", "remote.origin.url"],
+                &[
+                    "-C",
+                    path.to_str().unwrap(),
+                    "config",
+                    "--get",
+                    "remote.origin.url",
+                ],
             )?;
 
             // Get default branch
             let default_branch = runner::run_capture(
                 "git",
-                &["-C", path.to_str().unwrap(), "symbolic-ref", "refs/remotes/origin/HEAD"],
+                &[
+                    "-C",
+                    path.to_str().unwrap(),
+                    "symbolic-ref",
+                    "refs/remotes/origin/HEAD",
+                ],
             )
-            .map(|s| s.split('/').last().unwrap_or("main").to_string())
+            .map(|s| s.split('/').next_back().unwrap_or("main").to_string())
             .unwrap_or_else(|_| "main".to_string());
 
             config.add_repo(RefsRepo {

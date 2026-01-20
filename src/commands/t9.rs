@@ -1,9 +1,9 @@
 use anyhow::Result;
 
+use crate::Context;
 use crate::cli::T9Command;
 use crate::runner;
 use crate::ui;
-use crate::Context;
 
 pub fn run(_ctx: &Context, cmd: T9Command) -> Result<()> {
     match cmd {

@@ -2,10 +2,10 @@ use anyhow::Result;
 use colored::Colorize;
 use std::path::Path;
 
+use crate::Context;
 use crate::config::{self, RefsConfig, WorkspacesConfig};
 use crate::runner;
 use crate::ui;
-use crate::Context;
 
 pub fn run(_ctx: &Context) -> Result<()> {
     ui::banner();
@@ -125,9 +125,8 @@ fn check_configs() -> bool {
             println!("  {} Brewfile - {}", "✓".green(), "Package list".dimmed());
         } else {
             println!(
-                "  {} Brewfile - {} {}",
+                "  {} Brewfile - Package list {}",
                 "○".dimmed(),
-                "Package list",
                 "(not found)".dimmed()
             );
         }
@@ -174,13 +173,7 @@ fn check_directories() -> bool {
             } else {
                 String::new()
             };
-            println!(
-                "  {} ~/{} - {}{}",
-                "✓".green(),
-                dir,
-                desc.dimmed(),
-                extra
-            );
+            println!("  {} ~/{} - {}{}", "✓".green(), dir, desc.dimmed(), extra);
         } else {
             println!(
                 "  {} ~/{} - {} {}",
@@ -208,11 +201,7 @@ fn check_git() -> bool {
     match user_name {
         Ok(name) => println!("  {} user.name: {}", "✓".green(), name),
         Err(_) => {
-            println!(
-                "  {} user.name: {}",
-                "✗".red(),
-                "(not set)".red()
-            );
+            println!("  {} user.name: {}", "✗".red(), "(not set)".red());
             all_ok = false;
         }
     }
@@ -220,11 +209,7 @@ fn check_git() -> bool {
     match user_email {
         Ok(email) => println!("  {} user.email: {}", "✓".green(), email),
         Err(_) => {
-            println!(
-                "  {} user.email: {}",
-                "✗".red(),
-                "(not set)".red()
-            );
+            println!("  {} user.email: {}", "✗".red(), "(not set)".red());
             all_ok = false;
         }
     }
@@ -265,10 +250,7 @@ fn check_t9() -> bool {
             if refs_path.is_symlink() {
                 if let Ok(target) = std::fs::read_link(&refs_path) {
                     if target.to_string_lossy().contains("T9") {
-                        println!(
-                            "  {} refs symlinked to T9",
-                            "✓".green()
-                        );
+                        println!("  {} refs symlinked to T9", "✓".green());
                     }
                 }
             }
@@ -319,10 +301,7 @@ fn check_brew() -> bool {
             }
         }
         Err(_) => {
-            println!(
-                "  {} Could not run brew doctor",
-                "⚠".yellow()
-            );
+            println!("  {} Could not run brew doctor", "⚠".yellow());
             false
         }
     }

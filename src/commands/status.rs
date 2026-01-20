@@ -1,10 +1,10 @@
 use anyhow::Result;
 use colored::Colorize;
 
+use crate::Context;
 use crate::config::{self, RefsConfig, WorkspacesConfig};
 use crate::runner;
 use crate::ui;
-use crate::Context;
 
 pub fn run(_ctx: &Context) -> Result<()> {
     ui::banner();
@@ -147,7 +147,10 @@ fn show_t9_status() -> Result<()> {
             if refs.is_symlink() {
                 if let Ok(target) = std::fs::read_link(&refs) {
                     if target.to_string_lossy().contains("T9") {
-                        ui::kv("Refs symlink", &format!("{} -> {}", "✓".green(), target.display()));
+                        ui::kv(
+                            "Refs symlink",
+                            &format!("{} -> {}", "✓".green(), target.display()),
+                        );
                     }
                 }
             }

@@ -1,17 +1,19 @@
 use anyhow::Result;
 use std::fs;
 
-use crate::cli::{ConfigCommand, ConfigFormatArg, ConfigTarget};
-use crate::config::{
-    config_dir, find_config_file, ConfigFormat, RefsConfig, WorkspacesConfig,
-};
-use crate::ui;
 use crate::Context;
+use crate::cli::{ConfigCommand, ConfigFormatArg, ConfigTarget};
+use crate::config::{ConfigFormat, RefsConfig, WorkspacesConfig, config_dir, find_config_file};
+use crate::ui;
 
 pub fn run(_ctx: &Context, cmd: ConfigCommand) -> Result<()> {
     match cmd {
         ConfigCommand::Show => show(),
-        ConfigCommand::Convert { config, format, keep } => convert(config, format, keep),
+        ConfigCommand::Convert {
+            config,
+            format,
+            keep,
+        } => convert(config, format, keep),
         ConfigCommand::Validate => validate(),
         ConfigCommand::Dir => dir(),
     }
@@ -68,7 +70,10 @@ fn convert(target: ConfigTarget, format_arg: ConfigFormatArg, keep: bool) -> Res
         ConfigFormatArg::Toml => ConfigFormat::Toml,
     };
 
-    ui::header(&format!("Converting to {}", target_format.extension().to_uppercase()));
+    ui::header(&format!(
+        "Converting to {}",
+        target_format.extension().to_uppercase()
+    ));
 
     match target {
         ConfigTarget::Refs => convert_refs(target_format, keep)?,
@@ -204,16 +209,12 @@ fn dir() -> Result<()> {
 
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open")
-            .arg(&dir)
-            .spawn()?;
+        std::process::Command::new("open").arg(&dir).spawn()?;
     }
 
     #[cfg(target_os = "linux")]
     {
-        std::process::Command::new("xdg-open")
-            .arg(&dir)
-            .spawn()?;
+        std::process::Command::new("xdg-open").arg(&dir).spawn()?;
     }
 
     ui::info(&format!("Opened {}", dir.display()));

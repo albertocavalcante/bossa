@@ -1,9 +1,9 @@
 use anyhow::Result;
 
+use crate::Context;
 use crate::cli::WorktreeCommand;
 use crate::runner;
 use crate::ui;
-use crate::Context;
 
 pub fn run(_ctx: &Context, cmd: WorktreeCommand) -> Result<()> {
     match cmd {
