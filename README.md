@@ -16,13 +16,22 @@ Unified CLI for managing your development environment.
 
 ## Installation
 
+### Homebrew (macOS arm64)
+
 ```bash
-# From source
+brew install albertocavalcante/tap/bossa
+```
+
+> **Note:** Use the full tap path to avoid conflict with homebrew-core's `bossa` (a flash programmer).
+
+### From Source
+
+```bash
+# Using Cargo
 cargo install --path .
 
-# Or build manually
-cargo build --release
-cp target/release/bossa ~/bin/
+# Using Bazel
+bazel run //:install
 ```
 
 ## Usage
