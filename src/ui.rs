@@ -43,16 +43,6 @@ pub fn kv(key: &str, value: &str) {
     println!("  {}: {}", key.dimmed(), value);
 }
 
-/// Print a list item
-pub fn item(text: &str, exists: bool) {
-    let marker = if exists {
-        "✓".green()
-    } else {
-        "✗".yellow()
-    };
-    println!("  {} {}", marker, text);
-}
-
 /// Print a step indicator
 pub fn step(num: usize, total: usize, msg: &str) {
     println!(

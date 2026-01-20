@@ -27,17 +27,6 @@ pub fn run_capture(cmd: &str, args: &[&str]) -> Result<String> {
     }
 }
 
-/// Run a command silently, returning success/failure
-pub fn run_quiet(cmd: &str, args: &[&str]) -> bool {
-    Command::new(cmd)
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
 /// Check if a command exists
 pub fn command_exists(cmd: &str) -> bool {
     Command::new("which")
@@ -53,13 +42,4 @@ pub fn command_exists(cmd: &str) -> bool {
 pub fn run_script(script_name: &str, args: &[&str]) -> Result<ExitStatus> {
     // Scripts are in PATH after stow, so just run by name
     run(script_name, args)
-}
-
-/// Get the path to a script (for display purposes)
-pub fn script_path(script_name: &str) -> String {
-    if let Some(home) = dirs::home_dir() {
-        format!("{}/bin/{}", home.display(), script_name)
-    } else {
-        script_name.to_string()
-    }
 }

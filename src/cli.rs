@@ -60,6 +60,54 @@ pub enum Commands {
         #[arg(value_enum)]
         shell: Shell,
     },
+
+    /// Manage configuration files
+    #[command(subcommand)]
+    Config(ConfigCommand),
+}
+
+// ============================================================================
+// Config Commands
+// ============================================================================
+
+#[derive(Subcommand)]
+pub enum ConfigCommand {
+    /// Show config file locations and formats
+    Show,
+
+    /// Convert config files between formats
+    Convert {
+        /// Config to convert: refs, workspaces, or all
+        #[arg(value_enum)]
+        config: ConfigTarget,
+
+        /// Target format
+        #[arg(short, long, value_enum)]
+        format: ConfigFormatArg,
+
+        /// Keep original file after conversion
+        #[arg(short, long)]
+        keep: bool,
+    },
+
+    /// Validate config files
+    Validate,
+
+    /// Open config directory
+    Dir,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum ConfigTarget {
+    Refs,
+    Workspaces,
+    All,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum ConfigFormatArg {
+    Json,
+    Toml,
 }
 
 // ============================================================================

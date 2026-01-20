@@ -1,4 +1,5 @@
 pub mod brew;
+pub mod config;
 pub mod doctor;
 pub mod nova;
 pub mod refs;

@@ -1,18 +1,99 @@
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+
+// ============================================================================
+// Config Format Support
+// ============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigFormat {
+    Json,
+    Toml,
+}
+
+impl ConfigFormat {
+    /// Get file extension for this format
+    pub fn extension(&self) -> &'static str {
+        match self {
+            ConfigFormat::Json => "json",
+            ConfigFormat::Toml => "toml",
+        }
+    }
+
+    /// Parse content in this format
+    pub fn parse<T: DeserializeOwned>(&self, content: &str) -> Result<T> {
+        match self {
+            ConfigFormat::Json => {
+                serde_json::from_str(content).context("Invalid JSON format")
+            }
+            ConfigFormat::Toml => {
+                toml::from_str(content).context("Invalid TOML format")
+            }
+        }
+    }
+
+    /// Serialize to this format
+    pub fn serialize<T: Serialize>(&self, value: &T) -> Result<String> {
+        match self {
+            ConfigFormat::Json => {
+                serde_json::to_string_pretty(value).context("Failed to serialize to JSON")
+            }
+            ConfigFormat::Toml => {
+                toml::to_string_pretty(value).context("Failed to serialize to TOML")
+            }
+        }
+    }
+}
+
+/// Find config file, preferring TOML over JSON if both exist
+pub fn find_config_file(dir: &PathBuf, base_name: &str) -> Option<(PathBuf, ConfigFormat)> {
+    // Prefer TOML
+    let toml_path = dir.join(format!("{}.toml", base_name));
+    if toml_path.exists() {
+        return Some((toml_path, ConfigFormat::Toml));
+    }
+
+    // Fall back to JSON
+    let json_path = dir.join(format!("{}.json", base_name));
+    if json_path.exists() {
+        return Some((json_path, ConfigFormat::Json));
+    }
+
+    None
+}
+
+/// Load a config file, trying TOML first then JSON
+pub fn load_config<T: DeserializeOwned>(dir: &PathBuf, base_name: &str) -> Result<(T, ConfigFormat)> {
+    let (path, format) = find_config_file(dir, base_name)
+        .with_context(|| format!("Config file not found: {}.toml or {}.json", base_name, base_name))?;
+
+    let content = fs::read_to_string(&path)
+        .with_context(|| format!("Could not read {}", path.display()))?;
+
+    let config = format.parse(&content)?;
+    Ok((config, format))
+}
+
+/// Save a config file in the specified format
+pub fn save_config<T: Serialize>(
+    dir: &PathBuf,
+    base_name: &str,
+    config: &T,
+    format: ConfigFormat,
+) -> Result<PathBuf> {
+    fs::create_dir_all(dir)?;
+    let path = dir.join(format!("{}.{}", base_name, format.extension()));
+    let content = format.serialize(config)?;
+    fs::write(&path, &content)?;
+    Ok(path)
+}
 
 /// Get the config directory path
 pub fn config_dir() -> Result<PathBuf> {
     let home = dirs::home_dir().context("Could not determine home directory")?;
     Ok(home.join(".config").join("workspace-setup"))
-}
-
-/// Get the refs root directory
-pub fn refs_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("Could not determine home directory")?;
-    Ok(home.join("dev").join("refs"))
 }
 
 /// Get the workspaces root directory
@@ -44,21 +125,29 @@ fn default_branch() -> String {
 }
 
 impl RefsConfig {
-    /// Load refs.json config
+    /// Load refs config (tries .toml first, then .json)
     pub fn load() -> Result<Self> {
-        let path = config_dir()?.join("refs.json");
-        let content = fs::read_to_string(&path)
-            .with_context(|| format!("Could not read {}", path.display()))?;
-        serde_json::from_str(&content).context("Invalid refs.json format")
+        let dir = config_dir()?;
+        let (config, _format) = load_config(&dir, "refs")?;
+        Ok(config)
     }
 
-    /// Save refs.json config
-    pub fn save(&self) -> Result<()> {
+    /// Load refs config and return the format it was loaded from
+    pub fn load_with_format() -> Result<(Self, ConfigFormat)> {
         let dir = config_dir()?;
-        fs::create_dir_all(&dir)?;
-        let path = dir.join("refs.json");
-        let content = serde_json::to_string_pretty(self)?;
-        fs::write(&path, content)?;
+        load_config(&dir, "refs")
+    }
+
+    /// Save refs config (preserves format, defaults to TOML for new files)
+    #[allow(dead_code)]
+    pub fn save(&self) -> Result<()> {
+        self.save_as(ConfigFormat::Toml)
+    }
+
+    /// Save refs config in specific format
+    pub fn save_as(&self, format: ConfigFormat) -> Result<()> {
+        let dir = config_dir()?;
+        save_config(&dir, "refs", self, format)?;
         Ok(())
     }
 
@@ -116,12 +205,30 @@ pub struct WorktreeConfig {
 }
 
 impl WorkspacesConfig {
-    /// Load workspaces.json config
+    /// Load workspaces config (tries .toml first, then .json)
     pub fn load() -> Result<Self> {
-        let path = config_dir()?.join("workspaces.json");
-        let content = fs::read_to_string(&path)
-            .with_context(|| format!("Could not read {}", path.display()))?;
-        serde_json::from_str(&content).context("Invalid workspaces.json format")
+        let dir = config_dir()?;
+        let (config, _format) = load_config(&dir, "workspaces")?;
+        Ok(config)
+    }
+
+    /// Load workspaces config and return the format it was loaded from
+    pub fn load_with_format() -> Result<(Self, ConfigFormat)> {
+        let dir = config_dir()?;
+        load_config(&dir, "workspaces")
+    }
+
+    /// Save workspaces config (defaults to TOML)
+    #[allow(dead_code)]
+    pub fn save(&self) -> Result<()> {
+        self.save_as(ConfigFormat::Toml)
+    }
+
+    /// Save workspaces config in specific format
+    pub fn save_as(&self, format: ConfigFormat) -> Result<()> {
+        let dir = config_dir()?;
+        save_config(&dir, "workspaces", self, format)?;
+        Ok(())
     }
 }
 
