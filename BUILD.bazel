@@ -1,4 +1,5 @@
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rust_doc", "rust_test")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@crates//:defs.bzl", "all_crate_deps")
 
 package(default_visibility = ["//visibility:public"])
@@ -29,4 +30,16 @@ rust_clippy(
 rust_doc(
     name = "bossa_doc",
     crate = ":bossa",
+)
+
+# ==============================================================================
+# Install Target
+# ==============================================================================
+
+# Install locally-built bossa to ~/.local/bin (or INSTALL_DIR)
+# Usage: bazel run //:install
+sh_binary(
+    name = "install",
+    srcs = ["//tools/scripts:install-local.sh"],
+    data = [":bossa"],
 )
