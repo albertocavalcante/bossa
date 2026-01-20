@@ -1,0 +1,26 @@
+# Build settings
+build --enable_bzlmod
+build --incompatible_strict_action_env
+
+# Rust settings
+# Note: rustfmt.toml is read automatically from the workspace root
+
+# Performance
+build --jobs=auto
+
+# Output settings
+build --color=yes
+build --show_timestamps
+
+# Test settings
+test --test_output=errors
+test --test_summary=short
+
+# Release build configuration
+build:release --compilation_mode=opt
+build:release --strip=always
+
+# CI configuration
+build:ci --color=no
+build:ci --curses=no
+test:ci --test_output=all

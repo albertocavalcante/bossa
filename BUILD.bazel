@@ -1,0 +1,32 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rust_doc", "rust_test")
+load("@crates//:defs.bzl", "all_crate_deps")
+
+package(default_visibility = ["//visibility:public"])
+
+# Main binary
+rust_binary(
+    name = "bossa",
+    srcs = glob(["src/**/*.rs"]),
+    crate_root = "src/main.rs",
+    edition = "2024",
+    deps = all_crate_deps(normal = True),
+)
+
+# Unit tests
+rust_test(
+    name = "bossa_test",
+    crate = ":bossa",
+    deps = all_crate_deps(normal_dev = True),
+)
+
+# Clippy linting
+rust_clippy(
+    name = "bossa_clippy",
+    deps = [":bossa"],
+)
+
+# Documentation
+rust_doc(
+    name = "bossa_doc",
+    crate = ":bossa",
+)

@@ -38,3 +38,7 @@ pre-push:
     # Ensure it builds in release mode
     cargo-build:
       run: cargo build --release --quiet
+
+    # Bazel build verification
+    bazel-build:
+      run: bazel build //:bossa --config=ci
