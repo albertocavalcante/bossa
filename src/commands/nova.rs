@@ -51,7 +51,7 @@ pub fn run(ctx: &AppContext, args: NovaArgs) -> Result<()> {
     // Execute
     let opts = ExecuteOptions {
         dry_run: args.dry_run,
-        jobs: args.jobs.unwrap_or(4),
+        jobs: args.jobs.map(|j| j as usize).unwrap_or(4),
         yes: false,
         verbose: ctx.verbose > 0,
     };

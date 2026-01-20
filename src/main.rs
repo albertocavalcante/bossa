@@ -50,9 +50,12 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Nova(args) => commands::nova::run(&ctx, args),
         Command::Status(args) => commands::declarative::status(&ctx, args.target.as_deref()),
-        Command::Apply(args) => {
-            commands::declarative::apply(&ctx, args.target.as_deref(), args.dry_run, args.jobs)
-        }
+        Command::Apply(args) => commands::declarative::apply(
+            &ctx,
+            args.target.as_deref(),
+            args.dry_run,
+            args.jobs as usize,
+        ),
         Command::Diff(args) => commands::declarative::diff(&ctx, args.target.as_deref()),
         Command::Add(cmd) => match cmd {
             AddCommand::Collection {

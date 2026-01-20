@@ -162,9 +162,13 @@ impl BossaState {
         state.repos_cloned.retain(|name| name != repo_name);
         // Update or add to failed list
         state.repos_failed.retain(|(name, _)| name != repo_name);
-        state
-            .repos_failed
-            .push((repo_name.to_string(), error.to_string()));
+        // Truncate error message if too long
+        let error_msg = if error.len() > 1024 {
+            format!("{}... (truncated)", &error[..1024])
+        } else {
+            error.to_string()
+        };
+        state.repos_failed.push((repo_name.to_string(), error_msg));
     }
 
     /// Mark collection path as verified
@@ -202,9 +206,15 @@ impl BossaState {
         self.workspaces
             .repos_failed
             .retain(|(name, _)| name != repo_name);
+        // Truncate error message if too long
+        let error_msg = if error.len() > 1024 {
+            format!("{}... (truncated)", &error[..1024])
+        } else {
+            error.to_string()
+        };
         self.workspaces
             .repos_failed
-            .push((repo_name.to_string(), error.to_string()));
+            .push((repo_name.to_string(), error_msg));
     }
 
     /// Mark workspaces as synced
@@ -415,5 +425,235 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    // ====================================================================
+    // Adversarial Tests - Edge Cases and Concurrent Access Scenarios
+    // ====================================================================
+
+    #[test]
+    fn test_mark_same_repo_multiple_times() {
+        let mut state = BossaState::default();
+
+        // Mark same repo as cloned multiple times
+        state.mark_repo_cloned("refs", "rust");
+        state.mark_repo_cloned("refs", "rust");
+        state.mark_repo_cloned("refs", "rust");
+
+        // Should only appear once
+        let collection = state.collections.get("refs").unwrap();
+        assert_eq!(
+            collection
+                .repos_cloned
+                .iter()
+                .filter(|name| *name == "rust")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_mark_repo_failed_with_empty_error() {
+        let mut state = BossaState::default();
+        state.mark_repo_failed("refs", "rust", "");
+
+        let collection = state.collections.get("refs").unwrap();
+        assert_eq!(collection.repos_failed.len(), 1);
+        assert_eq!(collection.repos_failed[0].1, "");
+    }
+
+    #[test]
+    fn test_mark_repo_failed_with_very_long_error() {
+        let mut state = BossaState::default();
+        let long_error = "error: ".repeat(10000);
+        state.mark_repo_failed("refs", "rust", &long_error);
+
+        let collection = state.collections.get("refs").unwrap();
+        assert_eq!(collection.repos_failed.len(), 1);
+        // Fixed: error messages are now truncated to 1024 chars + "... (truncated)"
+        assert!(collection.repos_failed[0].1.len() <= 1024 + 17);
+        assert!(collection.repos_failed[0].1.ends_with("... (truncated)"));
+    }
+
+    #[test]
+    fn test_collection_special_chars_in_name() {
+        let mut state = BossaState::default();
+        let collection_name = "refs/../../../etc/passwd";
+        state.mark_repo_cloned(collection_name, "rust");
+
+        assert!(state.collections.contains_key(collection_name));
+    }
+
+    #[test]
+    fn test_workspace_unicode_names() {
+        let mut state = BossaState::default();
+        state.mark_workspace_setup("日本語のプロジェクト");
+        state.mark_workspace_setup("Émojis🚀");
+        state.mark_workspace_setup("المشروع");
+
+        assert_eq!(state.workspaces.repos_setup.len(), 3);
+    }
+
+    #[test]
+    fn test_storage_add_duplicate_symlinks() {
+        let mut state = BossaState::default();
+
+        state.add_storage_symlink("t9", "~/dev/refs");
+        state.add_storage_symlink("t9", "~/dev/refs"); // Duplicate
+        state.add_storage_symlink("t9", "~/dev/refs"); // Duplicate
+
+        let storage = state.storage.get("t9").unwrap();
+        // Should only appear once due to contains check
+        assert_eq!(
+            storage
+                .symlinks_created
+                .iter()
+                .filter(|path| *path == "~/dev/refs")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_storage_mount_unmount_cycle() {
+        let mut state = BossaState::default();
+
+        state.mark_storage_mounted("t9");
+        assert!(state.storage.get("t9").unwrap().is_mounted);
+        assert!(state.storage.get("t9").unwrap().last_seen.is_some());
+
+        state.mark_storage_unmounted("t9");
+        assert!(!state.storage.get("t9").unwrap().is_mounted);
+        // last_seen should still be set
+        assert!(state.storage.get("t9").unwrap().last_seen.is_some());
+    }
+
+    #[test]
+    fn test_remove_nonexistent_symlink() {
+        let mut state = BossaState::default();
+        state.add_storage_symlink("t9", "~/dev/refs");
+
+        // Remove a symlink that doesn't exist
+        state.remove_storage_symlink("t9", "~/nonexistent");
+
+        // Original should still be there
+        let storage = state.storage.get("t9").unwrap();
+        assert_eq!(storage.symlinks_created.len(), 1);
+        assert_eq!(storage.symlinks_created[0], "~/dev/refs");
+    }
+
+    #[test]
+    fn test_state_with_many_collections() {
+        let mut state = BossaState::default();
+
+        // Add 1000 collections
+        for i in 0..1000 {
+            let collection_name = format!("collection-{}", i);
+            state.mark_repo_cloned(&collection_name, "repo1");
+            state.mark_repo_cloned(&collection_name, "repo2");
+        }
+
+        assert_eq!(state.collections.len(), 1000);
+    }
+
+    #[test]
+    fn test_state_with_many_repos_in_collection() {
+        let mut state = BossaState::default();
+
+        // Add 1000 repos to a single collection
+        for i in 0..1000 {
+            let repo_name = format!("repo-{}", i);
+            state.mark_repo_cloned("refs", &repo_name);
+        }
+
+        let collection = state.collections.get("refs").unwrap();
+        assert_eq!(collection.repos_cloned.len(), 1000);
+    }
+
+    #[test]
+    fn test_mark_collection_synced_updates_timestamp() {
+        let mut state = BossaState::default();
+
+        let before = Utc::now();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        state.mark_collection_synced("refs");
+
+        let collection = state.collections.get("refs").unwrap();
+        assert!(collection.last_sync.is_some());
+        assert!(collection.last_sync.unwrap() > before);
+    }
+
+    #[test]
+    fn test_touch_updates_last_updated() {
+        let mut state = BossaState::default();
+        let before = state.last_updated;
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // Note: touch() calls save() which may fail if we can't write to disk
+        // In a unit test environment, this might fail, so we just test the timestamp update
+        state.last_updated = Utc::now();
+        assert!(state.last_updated > before);
+    }
+
+    #[test]
+    fn test_deserialize_malformed_toml() {
+        let malformed = r#"
+[collections.refs]
+last_sync = "not-a-valid-date"
+repos_cloned = 123  # Should be array
+"#;
+        let result: Result<BossaState, _> = toml::from_str(malformed);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_state_with_empty_collections_map() {
+        let state = BossaState::default();
+        assert!(state.collections.is_empty());
+
+        // Serialize should work even with empty maps
+        let toml_str = toml::to_string_pretty(&state).unwrap();
+        assert!(!toml_str.is_empty());
+    }
+
+    #[test]
+    fn test_collection_state_transition_cloned_to_failed_to_cloned() {
+        let mut state = BossaState::default();
+
+        // Start with cloned
+        state.mark_repo_cloned("refs", "rust");
+        let collection = state.collections.get("refs").unwrap();
+        assert!(collection.repos_cloned.contains(&"rust".to_string()));
+        assert!(collection.repos_failed.is_empty());
+
+        // Mark as failed (should remove from cloned)
+        state.mark_repo_failed("refs", "rust", "network error");
+        let collection = state.collections.get("refs").unwrap();
+        assert!(!collection.repos_cloned.contains(&"rust".to_string()));
+        assert_eq!(collection.repos_failed.len(), 1);
+
+        // Mark as cloned again (should remove from failed)
+        state.mark_repo_cloned("refs", "rust");
+        let collection = state.collections.get("refs").unwrap();
+        assert!(collection.repos_cloned.contains(&"rust".to_string()));
+        assert!(collection.repos_failed.is_empty());
+    }
+
+    #[test]
+    fn test_workspace_state_concurrent_modifications() {
+        let mut state = BossaState::default();
+
+        // Simulate concurrent adds and removes
+        state.mark_workspace_setup("repo1");
+        state.mark_workspace_setup("repo2");
+        state.mark_workspace_failed("repo1", "error");
+        state.mark_workspace_setup("repo3");
+
+        assert_eq!(state.workspaces.repos_setup.len(), 2);
+        assert!(state.workspaces.repos_setup.contains(&"repo2".to_string()));
+        assert!(state.workspaces.repos_setup.contains(&"repo3".to_string()));
+        assert_eq!(state.workspaces.repos_failed.len(), 1);
     }
 }

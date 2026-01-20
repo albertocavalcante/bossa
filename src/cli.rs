@@ -88,9 +88,9 @@ pub struct ApplyArgs {
     #[arg(short, long)]
     pub dry_run: bool,
 
-    /// Number of parallel jobs
-    #[arg(short, long, default_value = "4")]
-    pub jobs: usize,
+    /// Number of parallel jobs (max 128)
+    #[arg(short, long, default_value = "4", value_parser = clap::value_parser!(u16).range(1..=128))]
+    pub jobs: u16,
 }
 
 #[derive(Parser)]
@@ -240,9 +240,9 @@ pub struct NovaArgs {
     #[arg(long)]
     pub dry_run: bool,
 
-    /// Number of parallel jobs
-    #[arg(short, long)]
-    pub jobs: Option<usize>,
+    /// Number of parallel jobs (max 128)
+    #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..=128))]
+    pub jobs: Option<u16>,
 }
 
 /// Nova bootstrap stages
@@ -364,10 +364,11 @@ pub struct Target {
 impl Target {
     /// Parse a target string like "collections.refs" into (resource_type, name)
     pub fn parse(target: &str) -> Self {
+        let target = target.trim();
         match target.split_once('.') {
             Some((resource_type, name)) => Self {
-                resource_type: resource_type.to_string(),
-                name: Some(name.to_string()),
+                resource_type: resource_type.trim().to_string(),
+                name: Some(name.trim().to_string()),
             },
             None => Self {
                 resource_type: target.to_string(),
@@ -387,5 +388,177 @@ impl Target {
             Some(name) => format!("{}.{}", self.resource_type, name),
             None => self.resource_type.clone(),
         }
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_target_parse_simple() {
+        let target = Target::parse("collections");
+        assert_eq!(target.resource_type, "collections");
+        assert_eq!(target.name, None);
+    }
+
+    #[test]
+    fn test_target_parse_with_name() {
+        let target = Target::parse("collections.refs");
+        assert_eq!(target.resource_type, "collections");
+        assert_eq!(target.name, Some("refs".to_string()));
+    }
+
+    #[test]
+    fn test_target_parse_multiple_dots() {
+        let target = Target::parse("collections.refs.something");
+        assert_eq!(target.resource_type, "collections");
+        // Only splits on first dot
+        assert_eq!(target.name, Some("refs.something".to_string()));
+    }
+
+    #[test]
+    fn test_target_parse_empty_string() {
+        let target = Target::parse("");
+        assert_eq!(target.resource_type, "");
+        assert_eq!(target.name, None);
+    }
+
+    #[test]
+    fn test_target_parse_dot_only() {
+        let target = Target::parse(".");
+        assert_eq!(target.resource_type, "");
+        assert_eq!(target.name, Some("".to_string()));
+    }
+
+    #[test]
+    fn test_target_parse_trailing_dot() {
+        let target = Target::parse("collections.");
+        assert_eq!(target.resource_type, "collections");
+        assert_eq!(target.name, Some("".to_string()));
+    }
+
+    #[test]
+    fn test_target_parse_leading_dot() {
+        let target = Target::parse(".refs");
+        assert_eq!(target.resource_type, "");
+        assert_eq!(target.name, Some("refs".to_string()));
+    }
+
+    #[test]
+    fn test_target_parse_special_chars() {
+        let target = Target::parse("coll-ect_ions.re-fs_123");
+        assert_eq!(target.resource_type, "coll-ect_ions");
+        assert_eq!(target.name, Some("re-fs_123".to_string()));
+    }
+
+    #[test]
+    fn test_target_parse_path_traversal() {
+        let target = Target::parse("../../etc.passwd");
+        // split_once splits on first '.', so ".." is before the dot
+        assert_eq!(target.resource_type, "");
+        assert_eq!(target.name, Some("./../etc.passwd".to_string()));
+    }
+
+    #[test]
+    fn test_target_parse_unicode() {
+        let target = Target::parse("コレクション.レフ");
+        assert_eq!(target.resource_type, "コレクション");
+        assert_eq!(target.name, Some("レフ".to_string()));
+    }
+
+    #[test]
+    fn test_target_matches_type() {
+        let target = Target::parse("collections.refs");
+        assert!(target.matches_type("collections"));
+        assert!(!target.matches_type("workspaces"));
+    }
+
+    #[test]
+    fn test_target_to_string() {
+        let target1 = Target::parse("collections");
+        assert_eq!(target1.to_string(), "collections");
+
+        let target2 = Target::parse("collections.refs");
+        assert_eq!(target2.to_string(), "collections.refs");
+    }
+
+    #[test]
+    fn test_target_parse_roundtrip() {
+        let inputs = vec![
+            "collections",
+            "collections.refs",
+            "workspaces.dotfiles",
+            "storage.t9",
+        ];
+
+        for input in inputs {
+            let target = Target::parse(input);
+            assert_eq!(target.to_string(), input);
+        }
+    }
+
+    #[test]
+    fn test_nova_stage_all() {
+        let stages = NovaStage::all();
+        assert_eq!(stages.len(), 15);
+        assert_eq!(stages[0], NovaStage::Defaults);
+        assert_eq!(stages[14], NovaStage::Workspaces);
+    }
+
+    #[test]
+    fn test_nova_stage_name() {
+        assert_eq!(NovaStage::Defaults.name(), "defaults");
+        assert_eq!(NovaStage::GitSigning.name(), "git-signing");
+        assert_eq!(NovaStage::Workspaces.name(), "workspaces");
+    }
+
+    #[test]
+    fn test_nova_stage_from_name_valid() {
+        assert_eq!(NovaStage::from_name("defaults"), Some(NovaStage::Defaults));
+        assert_eq!(
+            NovaStage::from_name("git-signing"),
+            Some(NovaStage::GitSigning)
+        );
+        assert_eq!(
+            NovaStage::from_name("workspaces"),
+            Some(NovaStage::Workspaces)
+        );
+    }
+
+    #[test]
+    fn test_nova_stage_from_name_invalid() {
+        assert_eq!(NovaStage::from_name("invalid"), None);
+        assert_eq!(NovaStage::from_name(""), None);
+        assert_eq!(NovaStage::from_name("Defaults"), None); // Case sensitive
+    }
+
+    #[test]
+    fn test_nova_stage_description() {
+        assert_eq!(NovaStage::Defaults.description(), "macOS system defaults");
+        assert_eq!(NovaStage::Homebrew.description(), "Homebrew installation");
+    }
+
+    #[test]
+    fn test_target_very_long_strings() {
+        let long_type = "a".repeat(10000);
+        let long_name = "b".repeat(10000);
+        let target_str = format!("{}.{}", long_type, long_name);
+
+        let target = Target::parse(&target_str);
+        assert_eq!(target.resource_type.len(), 10000);
+        assert_eq!(target.name.as_ref().unwrap().len(), 10000);
+    }
+
+    #[test]
+    fn test_target_whitespace() {
+        let target = Target::parse("  collections  .  refs  ");
+        // Fixed: whitespace is now trimmed
+        assert_eq!(target.resource_type, "collections");
+        assert_eq!(target.name, Some("refs".to_string()));
     }
 }

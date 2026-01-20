@@ -234,8 +234,11 @@ pub struct CollectionRepo {
 impl CollectionRepo {
     /// Validate the repo
     pub fn validate(&self) -> Result<()> {
-        if self.name.is_empty() {
+        if self.name.trim().is_empty() {
             anyhow::bail!("Repository name cannot be empty");
+        }
+        if self.name.contains("..") || self.name.contains('/') || self.name.contains('\\') {
+            anyhow::bail!("Repository name cannot contain path separators or '..'");
         }
         if self.url.is_empty() {
             anyhow::bail!("Repository URL cannot be empty");
@@ -372,13 +375,16 @@ pub struct WorkspaceRepo {
 impl WorkspaceRepo {
     /// Validate the repo
     pub fn validate(&self) -> Result<()> {
-        if self.name.is_empty() {
+        if self.name.trim().is_empty() {
             anyhow::bail!("Repository name cannot be empty");
+        }
+        if self.name.contains("..") || self.name.contains('/') || self.name.contains('\\') {
+            anyhow::bail!("Repository name cannot contain path separators or '..'");
         }
         if self.url.is_empty() {
             anyhow::bail!("Repository URL cannot be empty");
         }
-        if self.category.is_empty() {
+        if self.category.trim().is_empty() {
             anyhow::bail!("Repository category cannot be empty");
         }
         Ok(())
@@ -907,5 +913,344 @@ stages = ["defaults", "homebrew", "essential", "stow", "collections", "workspace
 
         let expanded = symlink.expanded_to("/Volumes/T9").unwrap();
         assert_eq!(expanded, PathBuf::from("/Volumes/T9/refs"));
+    }
+
+    // ====================================================================
+    // Adversarial Tests - Edge Cases and Invalid Inputs
+    // ====================================================================
+
+    #[test]
+    fn test_parse_empty_config() {
+        let toml = "";
+        let config: BossaConfig = toml::from_str(toml).unwrap();
+        assert!(config.collections.is_empty());
+        assert!(config.workspaces.repos.is_empty());
+        assert!(config.storage.is_empty());
+    }
+
+    #[test]
+    fn test_parse_config_with_unknown_fields() {
+        let toml = r#"
+[collections.refs]
+path = "~/dev/refs"
+unknown_field = "should_be_ignored"
+
+[[collections.refs.repos]]
+name = "rust"
+url = "https://github.com/rust-lang/rust"
+extra_field = 123
+"#;
+        // Serde should ignore unknown fields by default
+        let result: Result<BossaConfig, _> = toml::from_str(toml);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_collection_empty_name() {
+        let repo = CollectionRepo {
+            name: "".to_string(),
+            url: "https://github.com/user/repo".to_string(),
+            default_branch: "main".to_string(),
+            description: "".to_string(),
+        };
+        assert!(repo.validate().is_err());
+    }
+
+    #[test]
+    fn test_collection_empty_url() {
+        let repo = CollectionRepo {
+            name: "test".to_string(),
+            url: "".to_string(),
+            default_branch: "main".to_string(),
+            description: "".to_string(),
+        };
+        assert!(repo.validate().is_err());
+    }
+
+    #[test]
+    fn test_collection_whitespace_only_name() {
+        let repo = CollectionRepo {
+            name: "   ".to_string(),
+            url: "https://github.com/user/repo".to_string(),
+            default_branch: "main".to_string(),
+            description: "".to_string(),
+        };
+        // Fixed: whitespace-only names should now fail validation
+        assert!(repo.validate().is_err());
+    }
+
+    #[test]
+    fn test_workspace_empty_category() {
+        let repo = WorkspaceRepo {
+            name: "test".to_string(),
+            url: "https://github.com/user/test".to_string(),
+            category: "".to_string(),
+            worktrees: vec![],
+            description: "".to_string(),
+        };
+        assert!(repo.validate().is_err());
+    }
+
+    #[test]
+    fn test_workspace_special_chars_in_name() {
+        let repo = WorkspaceRepo {
+            name: "test/../../../etc/passwd".to_string(),
+            url: "https://github.com/user/test".to_string(),
+            category: "projects".to_string(),
+            worktrees: vec![],
+            description: "".to_string(),
+        };
+        // Fixed: path traversal attempts should now fail validation
+        assert!(repo.validate().is_err());
+    }
+
+    #[test]
+    fn test_symlink_empty_from() {
+        let symlink = Symlink {
+            from: "".to_string(),
+            to: "/somewhere".to_string(),
+        };
+        assert!(symlink.validate().is_err());
+    }
+
+    #[test]
+    fn test_symlink_empty_to() {
+        let symlink = Symlink {
+            from: "~/test".to_string(),
+            to: "".to_string(),
+        };
+        assert!(symlink.validate().is_err());
+    }
+
+    #[test]
+    fn test_symlink_multiple_placeholders() {
+        let symlink = Symlink {
+            from: "~/dev/refs".to_string(),
+            to: "{mount}/{mount}/refs".to_string(),
+        };
+        let expanded = symlink.expanded_to("/Volumes/T9").unwrap();
+        assert_eq!(expanded, PathBuf::from("/Volumes/T9//Volumes/T9/refs"));
+    }
+
+    #[test]
+    fn test_storage_empty_mount() {
+        let storage = Storage {
+            mount: "".to_string(),
+            storage_type: StorageType::External,
+            symlinks: vec![],
+            description: "".to_string(),
+        };
+        assert!(storage.validate().is_err());
+    }
+
+    #[test]
+    fn test_nova_duplicate_stages() {
+        let config = NovaConfig {
+            stages: vec![
+                "defaults".to_string(),
+                "homebrew".to_string(),
+                "defaults".to_string(), // duplicate
+            ],
+            stage_config: HashMap::new(),
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_collection_add_duplicate_repo() {
+        let mut collection = Collection {
+            path: "~/test".to_string(),
+            description: "Test".to_string(),
+            clone: CloneSettings::default(),
+            storage: None,
+            repos: vec![],
+        };
+
+        let repo1 = CollectionRepo {
+            name: "test-repo".to_string(),
+            url: "https://github.com/user/test1".to_string(),
+            default_branch: "main".to_string(),
+            description: "".to_string(),
+        };
+
+        let repo2 = CollectionRepo {
+            name: "test-repo".to_string(),                    // Same name
+            url: "https://github.com/user/test2".to_string(), // Different URL
+            default_branch: "main".to_string(),
+            description: "".to_string(),
+        };
+
+        collection.add_repo(repo1);
+        assert_eq!(collection.repos.len(), 1);
+
+        collection.add_repo(repo2); // Should replace
+        assert_eq!(collection.repos.len(), 1);
+        assert_eq!(collection.repos[0].url, "https://github.com/user/test2");
+    }
+
+    #[test]
+    fn test_workspace_extremely_long_name() {
+        let long_name = "a".repeat(10000);
+        let repo = WorkspaceRepo {
+            name: long_name.clone(),
+            url: "https://github.com/user/test".to_string(),
+            category: "projects".to_string(),
+            worktrees: vec![],
+            description: "".to_string(),
+        };
+        assert!(repo.validate().is_ok());
+
+        let root = PathBuf::from("/home/user/ws");
+        let path = repo.bare_path(&root);
+        // This could cause filesystem issues
+        assert!(path.to_string_lossy().len() > 10000);
+    }
+
+    #[test]
+    fn test_default_value_to_args() {
+        let bool_val = DefaultValue::Bool(true);
+        assert_eq!(bool_val.to_defaults_args(), vec!["-bool", "true"]);
+
+        let int_val = DefaultValue::Int(42);
+        assert_eq!(int_val.to_defaults_args(), vec!["-int", "42"]);
+
+        let float_val = DefaultValue::Float(2.5);
+        assert_eq!(float_val.to_defaults_args(), vec!["-float", "2.5"]);
+
+        let string_val = DefaultValue::String("test".to_string());
+        assert_eq!(string_val.to_defaults_args(), vec!["-string", "test"]);
+
+        let array_val = DefaultValue::Array(vec![
+            DefaultValue::String("a".to_string()),
+            DefaultValue::String("b".to_string()),
+        ]);
+        let args = array_val.to_defaults_args();
+        assert_eq!(args[0], "-array");
+        assert_eq!(args[1], "a");
+        assert_eq!(args[2], "b");
+    }
+
+    #[test]
+    fn test_parse_config_missing_required_fields() {
+        let toml = r#"
+[[collections.refs.repos]]
+name = "rust"
+# Missing 'url' field
+"#;
+        let result: Result<BossaConfig, _> = toml::from_str(toml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_workspaces_categories() {
+        let workspaces = WorkspacesConfig {
+            repos: vec![
+                WorkspaceRepo {
+                    name: "repo1".to_string(),
+                    url: "url1".to_string(),
+                    category: "utils".to_string(),
+                    worktrees: vec![],
+                    description: "".to_string(),
+                },
+                WorkspaceRepo {
+                    name: "repo2".to_string(),
+                    url: "url2".to_string(),
+                    category: "projects".to_string(),
+                    worktrees: vec![],
+                    description: "".to_string(),
+                },
+                WorkspaceRepo {
+                    name: "repo3".to_string(),
+                    url: "url3".to_string(),
+                    category: "utils".to_string(),
+                    worktrees: vec![],
+                    description: "".to_string(),
+                },
+            ],
+            ..Default::default()
+        };
+
+        let categories = workspaces.categories();
+        assert_eq!(categories.len(), 2);
+        assert!(categories.contains(&"utils".to_string()));
+        assert!(categories.contains(&"projects".to_string()));
+    }
+
+    #[test]
+    fn test_unicode_in_paths() {
+        let collection = Collection {
+            path: "~/dev/日本語/テスト".to_string(),
+            description: "Test".to_string(),
+            clone: CloneSettings::default(),
+            storage: None,
+            repos: vec![],
+        };
+        assert!(collection.validate().is_ok());
+    }
+
+    #[test]
+    fn test_collection_repo_path_traversal_variants() {
+        // Test various path traversal attempts
+        let traversal_attempts = vec![
+            "test/../etc",
+            "../etc/passwd",
+            "test/../../etc",
+            "test\\etc",
+            "test/subdir",
+        ];
+
+        for attempt in traversal_attempts {
+            let repo = CollectionRepo {
+                name: attempt.to_string(),
+                url: "https://github.com/user/repo".to_string(),
+                default_branch: "main".to_string(),
+                description: "".to_string(),
+            };
+            assert!(
+                repo.validate().is_err(),
+                "Path traversal should be rejected: {}",
+                attempt
+            );
+        }
+    }
+
+    #[test]
+    fn test_workspace_repo_path_traversal_variants() {
+        // Test various path traversal attempts
+        let traversal_attempts = vec![
+            "test/../etc",
+            "../etc/passwd",
+            "test/../../etc",
+            "test\\etc",
+            "test/subdir",
+        ];
+
+        for attempt in traversal_attempts {
+            let repo = WorkspaceRepo {
+                name: attempt.to_string(),
+                url: "https://github.com/user/test".to_string(),
+                category: "projects".to_string(),
+                worktrees: vec![],
+                description: "".to_string(),
+            };
+            assert!(
+                repo.validate().is_err(),
+                "Path traversal should be rejected: {}",
+                attempt
+            );
+        }
+    }
+
+    #[test]
+    fn test_workspace_whitespace_only_category() {
+        let repo = WorkspaceRepo {
+            name: "test".to_string(),
+            url: "https://github.com/user/test".to_string(),
+            category: "   ".to_string(),
+            worktrees: vec![],
+            description: "".to_string(),
+        };
+        // Fixed: whitespace-only categories should now fail validation
+        assert!(repo.validate().is_err());
     }
 }

@@ -145,3 +145,152 @@ pub fn detect_default_branch(url: &str) -> String {
     }
     "main".to_string()
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_config_format_extensions() {
+        assert_eq!(ConfigFormat::Json.extension(), "json");
+        assert_eq!(ConfigFormat::Toml.extension(), "toml");
+    }
+
+    #[test]
+    fn test_parse_valid_json() {
+        let json = r#"{"name": "test", "count": 42}"#;
+        let result: Result<HashMap<String, serde_json::Value>> = ConfigFormat::Json.parse(json);
+        assert!(result.is_ok());
+        let map = result.unwrap();
+        assert_eq!(map.get("name").and_then(|v| v.as_str()), Some("test"));
+    }
+
+    #[test]
+    fn test_parse_invalid_json() {
+        let invalid_json = r#"{"name": "test", broken"#;
+        let result: Result<HashMap<String, String>> = ConfigFormat::Json.parse(invalid_json);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("JSON"));
+    }
+
+    #[test]
+    fn test_parse_valid_toml() {
+        let toml = r#"
+name = "test"
+count = 42
+"#;
+        let result: Result<HashMap<String, toml::Value>> = ConfigFormat::Toml.parse(toml);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_invalid_toml() {
+        let invalid_toml = r#"
+name = "test"
+broken =
+"#;
+        let result: Result<HashMap<String, String>> = ConfigFormat::Toml.parse(invalid_toml);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("TOML"));
+    }
+
+    #[test]
+    fn test_parse_malformed_toml_missing_quotes() {
+        let bad_toml = r#"name = test"#;
+        let result: Result<HashMap<String, String>> = ConfigFormat::Toml.parse(bad_toml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_empty_string() {
+        let result: Result<HashMap<String, String>> = ConfigFormat::Json.parse("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_serialize_json() {
+        let mut map = HashMap::new();
+        map.insert("key".to_string(), "value".to_string());
+        let result = ConfigFormat::Json.serialize(&map);
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("key"));
+    }
+
+    #[test]
+    fn test_serialize_toml() {
+        let mut map = HashMap::new();
+        map.insert("key".to_string(), "value".to_string());
+        let result = ConfigFormat::Toml.serialize(&map);
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("key"));
+    }
+
+    #[test]
+    fn test_repo_name_from_url_https() {
+        assert_eq!(
+            repo_name_from_url("https://github.com/user/repo.git"),
+            Some("repo".to_string())
+        );
+        assert_eq!(
+            repo_name_from_url("https://github.com/user/repo"),
+            Some("repo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_repo_name_from_url_ssh() {
+        assert_eq!(
+            repo_name_from_url("git@github.com:user/repo.git"),
+            Some("repo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_repo_name_from_url_trailing_slash() {
+        assert_eq!(
+            repo_name_from_url("https://github.com/user/repo/"),
+            Some("repo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_repo_name_from_url_empty() {
+        assert_eq!(repo_name_from_url(""), Some("".to_string()));
+    }
+
+    #[test]
+    fn test_repo_name_from_url_no_slashes() {
+        assert_eq!(
+            repo_name_from_url("invalid-url"),
+            Some("invalid-url".to_string())
+        );
+    }
+
+    #[test]
+    fn test_repo_name_from_url_special_chars() {
+        assert_eq!(
+            repo_name_from_url("https://github.com/user/my-repo_123.git"),
+            Some("my-repo_123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_repo_name_from_url_unicode() {
+        assert_eq!(
+            repo_name_from_url("https://github.com/user/プロジェクト.git"),
+            Some("プロジェクト".to_string())
+        );
+    }
+
+    #[test]
+    fn test_repo_name_from_url_very_long() {
+        let long_name = "a".repeat(500);
+        let url = format!("https://github.com/user/{}.git", long_name);
+        assert_eq!(repo_name_from_url(&url), Some(long_name));
+    }
+}
