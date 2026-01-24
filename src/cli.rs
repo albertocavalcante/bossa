@@ -65,6 +65,14 @@ pub enum Command {
     #[command(subcommand)]
     Caches(CachesCommand),
 
+    /// Manage collections (generic repos)
+    #[command(subcommand)]
+    Collections(CollectionsCommand),
+
+    /// [DEPRECATED] Manage reference repositories (use 'collections' instead)
+    #[command(subcommand)]
+    Refs(RefsCommand),
+
     /// Generate shell completions
     Completions {
         /// Shell to generate completions for
@@ -250,6 +258,158 @@ pub enum CachesCommand {
         #[arg(short, long)]
         force: bool,
     },
+}
+
+// ============================================================================
+// Collections Commands
+// ============================================================================
+
+#[derive(Debug, Subcommand)]
+pub enum CollectionsCommand {
+    /// List all collections
+    List,
+
+    /// Show collection status (repos, clone state)
+    Status {
+        /// Collection name
+        name: String,
+    },
+
+    /// Sync collection (clone missing repos)
+    Sync {
+        /// Collection name
+        name: String,
+
+        /// Parallel jobs
+        #[arg(short, long, default_value = "4")]
+        jobs: usize,
+
+        /// Retry attempts for failed clones
+        #[arg(short, long, default_value = "3")]
+        retries: usize,
+
+        /// Dry run
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Audit for drift (repos on disk not in config)
+    Audit {
+        /// Collection name
+        name: String,
+
+        /// Auto-fix by adding untracked repos to config
+        #[arg(long)]
+        fix: bool,
+    },
+
+    /// Snapshot collection from disk (regenerate config)
+    Snapshot {
+        /// Collection name
+        name: String,
+    },
+
+    /// Add repo to collection
+    Add {
+        /// Collection name
+        collection: String,
+
+        /// Repository URL
+        url: String,
+
+        /// Override repo name
+        #[arg(short, long)]
+        name: Option<String>,
+
+        /// Clone immediately after adding
+        #[arg(long)]
+        clone: bool,
+    },
+
+    /// Remove repo from collection
+    Rm {
+        /// Collection name
+        collection: String,
+
+        /// Repository name
+        repo: String,
+
+        /// Delete local clone
+        #[arg(long)]
+        delete: bool,
+    },
+}
+
+// ============================================================================
+// Refs Commands (DEPRECATED - forwards to Collections)
+// ============================================================================
+
+#[derive(Debug, Subcommand)]
+pub enum RefsCommand {
+    /// Sync reference repos (clone missing)
+    Sync(RefsSyncArgs),
+
+    /// List reference repos
+    List {
+        /// Filter by name pattern
+        filter: Option<String>,
+
+        /// Show only missing repos
+        #[arg(long)]
+        missing: bool,
+    },
+
+    /// Snapshot - regenerate refs.json from disk
+    Snapshot,
+
+    /// Audit - detect drift (untracked repos)
+    Audit {
+        /// Auto-fix by adding untracked repos
+        #[arg(long)]
+        fix: bool,
+    },
+
+    /// Add a new reference repo
+    Add {
+        /// Repository URL
+        url: String,
+
+        /// Override repo name (defaults to repo name from URL)
+        #[arg(short, long)]
+        name: Option<String>,
+
+        /// Clone immediately after adding
+        #[arg(long)]
+        clone: bool,
+    },
+
+    /// Remove a reference repo
+    Remove {
+        /// Repository name
+        name: String,
+
+        /// Delete local clone
+        #[arg(long)]
+        delete: bool,
+    },
+}
+
+#[derive(Debug, Parser)]
+pub struct RefsSyncArgs {
+    /// Specific repo name to sync (if not provided, syncs all missing)
+    pub name: Option<String>,
+
+    /// Number of parallel jobs
+    #[arg(short, long, default_value = "4")]
+    pub jobs: usize,
+
+    /// Retry attempts for failed clones
+    #[arg(short, long, default_value = "3")]
+    pub retries: usize,
+
+    /// Dry run - show what would be done
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 // ============================================================================

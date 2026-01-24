@@ -13,7 +13,7 @@ mod ui;
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use cli::{AddCommand, Cli, Command, RmCommand};
+use cli::{AddCommand, Cli, Command, RmCommand, CollectionsCommand, RefsCommand};
 use std::io;
 
 /// Global context for the application
@@ -92,6 +92,79 @@ fn main() -> Result<()> {
         Command::Doctor => commands::doctor::run(&ctx),
         Command::Migrate { dry_run } => commands::migrate::run(&ctx, dry_run),
         Command::Caches(cmd) => commands::caches::run(cmd),
+        Command::Collections(cmd) => {
+            let collections_cmd = match cmd {
+                CollectionsCommand::List => commands::collections::CollectionsCommand::List,
+                CollectionsCommand::Status { name } => commands::collections::CollectionsCommand::Status { name },
+                CollectionsCommand::Sync { name, jobs, retries, dry_run } => {
+                    commands::collections::CollectionsCommand::Sync { name, jobs, retries, dry_run }
+                }
+                CollectionsCommand::Audit { name, fix } => {
+                    commands::collections::CollectionsCommand::Audit { name, fix }
+                }
+                CollectionsCommand::Snapshot { name } => {
+                    commands::collections::CollectionsCommand::Snapshot { name }
+                }
+                CollectionsCommand::Add { collection, url, name, clone } => {
+                    commands::collections::CollectionsCommand::Add { collection, url, name, clone }
+                }
+                CollectionsCommand::Rm { collection, repo, delete } => {
+                    commands::collections::CollectionsCommand::Rm { collection, repo, delete }
+                }
+            };
+            commands::collections::run(&ctx, collections_cmd)
+        }
+        Command::Refs(cmd) => {
+            // Show deprecation warning
+            ui::warn("'bossa refs' is deprecated. Use 'bossa collections <subcommand> refs' instead.");
+            println!();
+
+            // Forward to collections command with "refs" collection name
+            let collections_cmd = match cmd {
+                RefsCommand::Sync(args) => {
+                    let name = args.name.unwrap_or_else(|| "refs".to_string());
+                    commands::collections::CollectionsCommand::Sync {
+                        name,
+                        jobs: args.jobs,
+                        retries: args.retries,
+                        dry_run: args.dry_run,
+                    }
+                }
+                RefsCommand::List { filter: _, missing: _ } => {
+                    // For list, just show status of refs collection
+                    commands::collections::CollectionsCommand::Status {
+                        name: "refs".to_string(),
+                    }
+                }
+                RefsCommand::Snapshot => {
+                    commands::collections::CollectionsCommand::Snapshot {
+                        name: "refs".to_string(),
+                    }
+                }
+                RefsCommand::Audit { fix } => {
+                    commands::collections::CollectionsCommand::Audit {
+                        name: "refs".to_string(),
+                        fix,
+                    }
+                }
+                RefsCommand::Add { url, name, clone } => {
+                    commands::collections::CollectionsCommand::Add {
+                        collection: "refs".to_string(),
+                        url,
+                        name,
+                        clone,
+                    }
+                }
+                RefsCommand::Remove { name, delete } => {
+                    commands::collections::CollectionsCommand::Rm {
+                        collection: "refs".to_string(),
+                        repo: name,
+                        delete,
+                    }
+                }
+            };
+            commands::collections::run(&ctx, collections_cmd)
+        }
         Command::Completions { shell } => {
             let mut cmd = Cli::command();
             generate(shell, &mut cmd, "bossa", &mut io::stdout());

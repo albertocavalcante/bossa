@@ -20,9 +20,17 @@ pub fn run(ctx: &AppContext, dry_run: bool) -> Result<()> {
     let legacy_dir = config::legacy_config_dir()?;
     let new_dir = config::config_dir()?;
 
-    // Check for legacy configs
-    let refs_path = legacy_dir.join("refs.json");
+    // Check for legacy configs in both legacy dir and bossa config dir
+    let legacy_refs_path = legacy_dir.join("refs.json");
+    let bossa_refs_path = new_dir.join("refs.json");
     let ws_path = legacy_dir.join("workspaces.json");
+
+    // Prefer refs.json in bossa config dir, fall back to legacy dir
+    let refs_path = if bossa_refs_path.exists() {
+        bossa_refs_path
+    } else {
+        legacy_refs_path
+    };
 
     let has_refs = refs_path.exists();
     let has_ws = ws_path.exists();
@@ -124,8 +132,12 @@ fn migrate_refs(path: &PathBuf, config: &mut BossaConfig, ctx: &AppContext) -> R
 
     let collection = Collection {
         path: legacy.root_directory,
-        description: "Migrated from refs.json".to_string(),
-        clone: Default::default(),
+        description: "Reference repositories for code exploration".to_string(),
+        clone: crate::schema::CloneSettings {
+            depth: 1,
+            single_branch: true,
+            options: vec![],
+        },
         storage: None,
         repos,
     };
