@@ -65,7 +65,7 @@ impl ProgressCallback for IndicatifProgress {
 
     fn on_file(&mut self, path: &Path, _size: u64) {
         let path_str = path.to_string_lossy();
-        self.pb.set_message(truncate_path(&path_str, 30));
+        self.pb.set_message(ui::truncate_path(&path_str, 30));
     }
 
     fn on_file_complete(&mut self, _success: bool) {
@@ -318,13 +318,4 @@ fn count_files(path: &Path) -> (u64, u64) {
     }
 
     (file_count, total_size)
-}
-
-/// Truncate path for display
-fn truncate_path(path: &str, max_len: usize) -> String {
-    if path.len() <= max_len {
-        path.to_string()
-    } else {
-        format!("...{}", &path[path.len() - max_len + 3..])
-    }
 }
