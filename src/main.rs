@@ -91,6 +91,7 @@ fn main() -> Result<()> {
         Command::Show(args) => commands::crud::show(&ctx, &args.target),
         Command::Doctor => commands::doctor::run(&ctx),
         Command::Migrate { dry_run } => commands::migrate::run(&ctx, dry_run),
+        Command::Caches(cmd) => commands::caches::run(cmd),
         Command::Completions { shell } => {
             let mut cmd = Cli::command();
             generate(shell, &mut cmd, "bossa", &mut io::stdout());

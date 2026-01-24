@@ -61,6 +61,10 @@ pub enum Command {
         dry_run: bool,
     },
 
+    /// Manage cache locations on external drive
+    #[command(subcommand)]
+    Caches(CachesCommand),
+
     /// Generate shell completions
     Completions {
         /// Shell to generate completions for
@@ -219,6 +223,36 @@ pub enum RmCommand {
 }
 
 // ============================================================================
+// Caches Commands
+// ============================================================================
+
+#[derive(Debug, Subcommand)]
+pub enum CachesCommand {
+    /// Show cache status and symlink health
+    Status,
+
+    /// Apply cache configuration (create symlinks, configs)
+    Apply {
+        /// Dry run - show what would be done
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Detect drift from expected configuration
+    Audit,
+
+    /// Health check for cache system
+    Doctor,
+
+    /// Initialize cache configuration with defaults
+    Init {
+        /// Overwrite existing config
+        #[arg(short, long)]
+        force: bool,
+    },
+}
+
+// ============================================================================
 // Nova (Bootstrap) Commands
 // ============================================================================
 
@@ -260,6 +294,7 @@ pub enum NovaStage {
     Ecosystem,
     Handlers,
     Stow,
+    Caches,
     Mcp,
     Refs,
     Workspaces,
@@ -280,6 +315,7 @@ impl NovaStage {
             NovaStage::Ecosystem,
             NovaStage::Handlers,
             NovaStage::Stow,
+            NovaStage::Caches,
             NovaStage::Mcp,
             NovaStage::Refs,
             NovaStage::Workspaces,
@@ -300,6 +336,7 @@ impl NovaStage {
             NovaStage::Ecosystem => "ecosystem",
             NovaStage::Handlers => "handlers",
             NovaStage::Stow => "stow",
+            NovaStage::Caches => "caches",
             NovaStage::Mcp => "mcp",
             NovaStage::Refs => "refs",
             NovaStage::Workspaces => "workspaces",
@@ -320,6 +357,7 @@ impl NovaStage {
             NovaStage::Ecosystem => "Ecosystem extensions",
             NovaStage::Handlers => "File handlers (duti)",
             NovaStage::Stow => "Symlinks via GNU Stow",
+            NovaStage::Caches => "Cache symlinks to external drive",
             NovaStage::Mcp => "MCP server configuration",
             NovaStage::Refs => "Reference repositories",
             NovaStage::Workspaces => "Developer workspaces",
@@ -340,6 +378,7 @@ impl NovaStage {
             "ecosystem" => Some(NovaStage::Ecosystem),
             "handlers" => Some(NovaStage::Handlers),
             "stow" => Some(NovaStage::Stow),
+            "caches" => Some(NovaStage::Caches),
             "mcp" => Some(NovaStage::Mcp),
             "refs" => Some(NovaStage::Refs),
             "workspaces" => Some(NovaStage::Workspaces),
@@ -505,9 +544,9 @@ mod tests {
     #[test]
     fn test_nova_stage_all() {
         let stages = NovaStage::all();
-        assert_eq!(stages.len(), 15);
+        assert_eq!(stages.len(), 16);
         assert_eq!(stages[0], NovaStage::Defaults);
-        assert_eq!(stages[14], NovaStage::Workspaces);
+        assert_eq!(stages[15], NovaStage::Workspaces);
     }
 
     #[test]

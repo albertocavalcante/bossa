@@ -115,6 +115,143 @@ pub fn workspaces_dir() -> Result<PathBuf> {
 }
 
 // ============================================================================
+// Caches Config
+// ============================================================================
+
+use serde::Deserialize;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CachesConfig {
+    pub external_drive: ExternalDrive,
+    #[serde(default)]
+    pub symlinks: Vec<CacheSymlink>,
+    #[serde(default)]
+    pub jetbrains: Vec<JetBrainsConfig>,
+    #[serde(default)]
+    pub env_vars: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub bazelrc: Option<BazelrcConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExternalDrive {
+    pub name: String,
+    pub mount_point: String,
+    #[serde(default = "default_base_path")]
+    pub base_path: String,
+}
+
+fn default_base_path() -> String {
+    "caches".to_string()
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CacheSymlink {
+    pub name: String,
+    pub source: String,
+    pub target: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JetBrainsConfig {
+    pub product: String,
+    #[serde(default)]
+    pub system_path: Option<String>,
+    #[serde(default)]
+    pub log_path: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BazelrcConfig {
+    #[serde(default)]
+    pub output_base: Option<String>,
+}
+
+impl CachesConfig {
+    /// Load caches config (tries .toml first, then .json)
+    pub fn load() -> Result<Self> {
+        let dir = config_dir()?;
+        let (config, _format) = load_config(&dir, "caches")?;
+        Ok(config)
+    }
+
+    /// Check if config file exists
+    pub fn exists() -> bool {
+        if let Ok(dir) = config_dir() {
+            find_config_file(&dir, "caches").is_some()
+        } else {
+            false
+        }
+    }
+
+    /// Save caches config in specific format
+    pub fn save_as(&self, format: ConfigFormat) -> Result<()> {
+        let dir = config_dir()?;
+        save_config(&dir, "caches", self, format)?;
+        Ok(())
+    }
+
+    /// Get the full path to the external drive cache directory
+    pub fn cache_root(&self) -> PathBuf {
+        PathBuf::from(&self.external_drive.mount_point).join(&self.external_drive.base_path)
+    }
+
+    /// Check if external drive is mounted
+    pub fn is_drive_mounted(&self) -> bool {
+        PathBuf::from(&self.external_drive.mount_point).exists()
+    }
+
+    /// Expand a source path (handles ~ and env vars)
+    pub fn expand_source(&self, source: &str) -> PathBuf {
+        let expanded = shellexpand::tilde(source);
+        PathBuf::from(expanded.as_ref())
+    }
+
+    /// Get full target path on external drive
+    pub fn target_path(&self, target: &str) -> PathBuf {
+        self.cache_root().join(target)
+    }
+
+    /// Create a default config with common cache locations
+    pub fn default_config() -> Self {
+        CachesConfig {
+            external_drive: ExternalDrive {
+                name: "T9".to_string(),
+                mount_point: "/Volumes/T9".to_string(),
+                base_path: "caches".to_string(),
+            },
+            symlinks: vec![
+                CacheSymlink {
+                    name: "bazel-repo".to_string(),
+                    source: "~/.cache/bazel-repo".to_string(),
+                    target: "bazel/bazel-repo".to_string(),
+                    description: Some("Bazel repository cache".to_string()),
+                },
+                CacheSymlink {
+                    name: "bazel-disk".to_string(),
+                    source: "~/.cache/bazel-disk".to_string(),
+                    target: "bazel/bazel-disk".to_string(),
+                    description: Some("Bazel disk cache".to_string()),
+                },
+                CacheSymlink {
+                    name: "jetbrains-analyzer".to_string(),
+                    source: "~/Library/Application Support/JetBrains/analyzer".to_string(),
+                    target: "jetbrains/analyzer".to_string(),
+                    description: Some("JetBrains code analyzer data".to_string()),
+                },
+            ],
+            jetbrains: vec![],
+            env_vars: std::collections::HashMap::new(),
+            bazelrc: Some(BazelrcConfig {
+                output_base: Some("/Volumes/T9/caches/bazel/output_base".to_string()),
+            }),
+        }
+    }
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 
