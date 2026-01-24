@@ -13,7 +13,7 @@ mod ui;
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use cli::{AddCommand, Cli, Command, RmCommand, CollectionsCommand, ManifestCommand, RefsCommand};
+use cli::{AddCommand, Cli, Command, RmCommand, CollectionsCommand, ICloudCommand, ManifestCommand, RefsCommand};
 use std::io;
 
 /// Global context for the application
@@ -130,6 +130,26 @@ fn main() -> Result<()> {
                 }
             };
             commands::manifest::run(manifest_cmd)
+        }
+        Command::ICloud(cmd) => {
+            let icloud_cmd = match cmd {
+                ICloudCommand::Status { path } => {
+                    commands::icloud::ICloudCommand::Status { path }
+                }
+                ICloudCommand::List { path, local, cloud } => {
+                    commands::icloud::ICloudCommand::List { path, local, cloud }
+                }
+                ICloudCommand::FindEvictable { path, min_size } => {
+                    commands::icloud::ICloudCommand::FindEvictable { path, min_size }
+                }
+                ICloudCommand::Evict { path, recursive, min_size, dry_run } => {
+                    commands::icloud::ICloudCommand::Evict { path, recursive, min_size, dry_run }
+                }
+                ICloudCommand::Download { path, recursive } => {
+                    commands::icloud::ICloudCommand::Download { path, recursive }
+                }
+            };
+            commands::icloud::run(icloud_cmd)
         }
         Command::Refs(cmd) => {
             // Show deprecation warning

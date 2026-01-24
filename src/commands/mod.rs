@@ -8,6 +8,7 @@ pub mod crud;
 pub mod caches;
 pub mod collections;
 pub mod doctor;
+pub mod icloud;
 pub mod manifest;
 pub mod migrate;
 pub mod nova;

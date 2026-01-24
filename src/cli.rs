@@ -73,6 +73,10 @@ pub enum Command {
     #[command(subcommand)]
     Manifest(ManifestCommand),
 
+    /// iCloud Drive storage management
+    #[command(subcommand, name = "icloud")]
+    ICloud(ICloudCommand),
+
     /// [DEPRECATED] Manage reference repositories (use 'collections' instead)
     #[command(subcommand)]
     Refs(RefsCommand),
@@ -392,6 +396,71 @@ pub enum ManifestCommand {
         /// Interactively delete duplicates (keeps first, deletes rest)
         #[arg(long)]
         delete: bool,
+    },
+}
+
+// ============================================================================
+// iCloud Commands
+// ============================================================================
+
+#[derive(Debug, Subcommand)]
+pub enum ICloudCommand {
+    /// Show status of iCloud files
+    Status {
+        /// Path to check (defaults to iCloud Drive root)
+        path: Option<String>,
+    },
+
+    /// List files in iCloud directory with their status
+    List {
+        /// Path to list (defaults to iCloud Drive root)
+        path: Option<String>,
+
+        /// Show only local files (downloaded)
+        #[arg(long)]
+        local: bool,
+
+        /// Show only cloud-only files (evicted)
+        #[arg(long)]
+        cloud: bool,
+    },
+
+    /// Find large local files that could be evicted
+    FindEvictable {
+        /// Path to search (defaults to iCloud Drive root)
+        path: Option<String>,
+
+        /// Minimum file size to consider (e.g., "100MB", "1GB")
+        #[arg(long, short, default_value = "100MB")]
+        min_size: String,
+    },
+
+    /// Evict files to free local space (keeps files in iCloud)
+    Evict {
+        /// Path to evict (file or directory)
+        path: String,
+
+        /// Recursively evict directory contents
+        #[arg(long, short)]
+        recursive: bool,
+
+        /// Only evict files larger than this size (e.g., "50MB")
+        #[arg(long)]
+        min_size: Option<String>,
+
+        /// Preview what would be evicted without doing it
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Download files from iCloud to local storage
+    Download {
+        /// Path to download (file or directory)
+        path: String,
+
+        /// Recursively download directory contents
+        #[arg(long, short)]
+        recursive: bool,
     },
 }
 

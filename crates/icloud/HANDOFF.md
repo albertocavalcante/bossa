@@ -160,64 +160,29 @@ mdls -name kMDItemIsUbiquitous \
 
 ---
 
-### 3. Bossa CLI Integration (Medium Priority)
+### 3. ✅ Bossa CLI Integration (DONE)
 
-Add `bossa icloud` commands to expose the crate functionality.
-
-**Commands to add:**
+CLI commands have been implemented in `src/commands/icloud.rs`:
 
 ```bash
 # Status and discovery
-bossa icloud status [path]           # Show file status
-bossa icloud list [path]             # List files with status
-bossa icloud find-evictable [path]   # Find large local files
+bossa icloud status [path]              # Show file status / directory summary
+bossa icloud list [path]                # List files with status (--local, --cloud)
+bossa icloud find-evictable [path]      # Find large local files (-m/--min-size)
 
 # Operations
-bossa icloud evict <path>            # Evict file/folder
-bossa icloud download <path>         # Download file/folder
-
-# Storage overview
-bossa storage status                 # Show local + T9 + iCloud usage
-bossa storage audit                  # Find optimization opportunities
+bossa icloud evict <path>               # Evict file/folder (-r, --min-size, --dry-run)
+bossa icloud download <path>            # Download file/folder (-r)
 ```
 
-**Implementation location:** `src/commands/icloud.rs`
+**Features implemented:**
 
-**CLI structure:**
-
-```rust
-#[derive(Subcommand)]
-pub enum ICloudCommand {
-    /// Show status of iCloud files
-    Status {
-        #[arg(default_value = "~")]
-        path: String,
-    },
-    /// Evict files to free local space
-    Evict {
-        path: String,
-        #[arg(long)]
-        recursive: bool,
-        #[arg(long)]
-        min_size: Option<String>,
-        #[arg(long)]
-        dry_run: bool,
-    },
-    /// Download files from iCloud
-    Download {
-        path: String,
-        #[arg(long)]
-        recursive: bool,
-    },
-    /// Find large files that could be evicted
-    FindEvictable {
-        #[arg(default_value = "~/Library/Mobile Documents/com~apple~CloudDocs")]
-        path: String,
-        #[arg(long, default_value = "100MB")]
-        min_size: String,
-    },
-}
-```
+- Path expansion (`~` support)
+- Human-readable size parsing (`100MB`, `1GB`)
+- Recursive operations with `--recursive` flag
+- Dry-run mode for evict
+- Filtering (local-only, cloud-only)
+- Colored output with status indicators
 
 ---
 

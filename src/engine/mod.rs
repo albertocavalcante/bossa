@@ -14,4 +14,3 @@ pub mod executor;
 pub mod planner;
 
 pub use executor::{execute, ExecuteOptions};
-pub use planner::ExecutionPlanExt;
