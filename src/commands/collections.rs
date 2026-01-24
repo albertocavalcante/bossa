@@ -28,6 +28,7 @@ pub enum CollectionsCommand {
     Snapshot { name: String },
     Add { collection: String, url: String, name: Option<String>, clone: bool },
     Rm { collection: String, repo: String, delete: bool },
+    Clean { name: String, yes: bool, dry_run: bool },
 }
 
 pub fn run(ctx: &Context, cmd: CollectionsCommand) -> Result<()> {
@@ -44,6 +45,9 @@ pub fn run(ctx: &Context, cmd: CollectionsCommand) -> Result<()> {
         }
         CollectionsCommand::Rm { collection, repo, delete } => {
             rm(ctx, &collection, &repo, delete)
+        }
+        CollectionsCommand::Clean { name, yes, dry_run } => {
+            clean(ctx, &name, yes, dry_run)
         }
     }
 }
@@ -649,4 +653,160 @@ fn rm(_ctx: &Context, collection_name: &str, repo_name: &str, delete: bool) -> R
     }
 
     Ok(())
+}
+
+// ============================================================================
+// Clean - Delete all clones from disk, preserve config
+// ============================================================================
+
+fn clean(_ctx: &Context, collection_name: &str, skip_confirm: bool, dry_run: bool) -> Result<()> {
+    ui::header(&format!("Clean Collection: {}", collection_name));
+
+    let config = BossaConfig::load()?;
+    let collection = config.find_collection(collection_name)
+        .with_context(|| format!("Collection '{}' not found", collection_name))?;
+
+    let root = collection.expanded_path()?;
+
+    if !root.exists() {
+        ui::info("Collection directory does not exist. Nothing to clean.");
+        return Ok(());
+    }
+
+    // Scan for cloned repos (directories with .git)
+    let pb = progress::spinner("Scanning for cloned repositories...");
+
+    let mut cloned_repos: Vec<(String, PathBuf, u64)> = Vec::new();
+
+    for entry in fs::read_dir(&root)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if !path.is_dir() {
+            continue;
+        }
+
+        if !path.join(".git").exists() {
+            continue;
+        }
+
+        let name = entry.file_name().to_string_lossy().to_string();
+        let size = dir_size(&path).unwrap_or(0);
+        cloned_repos.push((name, path, size));
+    }
+
+    progress::finish_success(&pb, "Scan complete");
+
+    if cloned_repos.is_empty() {
+        ui::info("No cloned repositories found. Nothing to clean.");
+        return Ok(());
+    }
+
+    // Calculate total size
+    let total_size: u64 = cloned_repos.iter().map(|(_, _, s)| s).sum();
+    let total_size_str = format_size(total_size);
+
+    println!();
+    ui::kv("Path", &root.display().to_string());
+    ui::kv("Cloned repos", &cloned_repos.len().to_string());
+    ui::kv("Total size", &total_size_str);
+    println!();
+
+    if dry_run {
+        ui::info("Dry run - repos that would be deleted:");
+        for (name, _, size) in &cloned_repos {
+            println!("  {} {} ({})", "−".red(), name, format_size(*size).dimmed());
+        }
+        println!();
+        ui::dim(&format!("Would free {} of disk space", total_size_str));
+        ui::dim("Run without --dry-run to actually delete");
+        return Ok(());
+    }
+
+    // Show warning
+    println!("  {} This will DELETE {} cloned repositories from disk.", "⚠".yellow(), cloned_repos.len());
+    println!("  {} Config will be PRESERVED (re-clone with 'bossa collections sync {}')", "✓".green(), collection_name);
+    println!();
+
+    // Confirmation
+    if !skip_confirm {
+        print!("  Type '{}' to confirm: ", format!("clean {}", collection_name).bold());
+        std::io::Write::flush(&mut std::io::stdout())?;
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+
+        let expected = format!("clean {}", collection_name);
+        if input.trim() != expected {
+            println!();
+            ui::warn("Aborted. No changes made.");
+            return Ok(());
+        }
+    }
+
+    println!();
+
+    // Delete repos
+    let mut deleted = 0;
+    let mut freed: u64 = 0;
+
+    for (name, path, size) in &cloned_repos {
+        let pb = progress::spinner(&format!("Deleting {}...", name));
+
+        match fs::remove_dir_all(path) {
+            Ok(()) => {
+                progress::finish_success(&pb, &format!("Deleted {}", name));
+                deleted += 1;
+                freed += size;
+            }
+            Err(e) => {
+                progress::finish_error(&pb, &format!("Failed to delete {}: {}", name, e));
+            }
+        }
+    }
+
+    println!();
+    ui::success(&format!("Cleaned {} repositories (freed {})", deleted, format_size(freed)));
+    ui::dim(&format!("Config preserved. Run 'bossa collections sync {}' to re-clone.", collection_name));
+
+    Ok(())
+}
+
+/// Calculate directory size recursively
+fn dir_size(path: &PathBuf) -> Result<u64> {
+    let mut size = 0;
+
+    if path.is_file() {
+        return Ok(fs::metadata(path)?.len());
+    }
+
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_file() {
+            size += fs::metadata(&path)?.len();
+        } else if path.is_dir() {
+            size += dir_size(&path)?;
+        }
+    }
+
+    Ok(size)
+}
+
+/// Format bytes as human-readable size
+fn format_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
 }

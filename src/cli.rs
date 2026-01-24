@@ -69,6 +69,10 @@ pub enum Command {
     #[command(subcommand)]
     Collections(CollectionsCommand),
 
+    /// Content manifest - hash files, find duplicates
+    #[command(subcommand)]
+    Manifest(ManifestCommand),
+
     /// [DEPRECATED] Manage reference repositories (use 'collections' instead)
     #[command(subcommand)]
     Refs(RefsCommand),
@@ -335,6 +339,57 @@ pub enum CollectionsCommand {
         repo: String,
 
         /// Delete local clone
+        #[arg(long)]
+        delete: bool,
+    },
+
+    /// Clean collection (delete clones from disk, preserve config)
+    Clean {
+        /// Collection name
+        name: String,
+
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+
+        /// Show what would be deleted without deleting
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+// ============================================================================
+// Manifest Commands
+// ============================================================================
+
+#[derive(Debug, Subcommand)]
+pub enum ManifestCommand {
+    /// Scan directory and build content hash manifest
+    Scan {
+        /// Path to scan (e.g., /Volumes/T9, ~/dev/refs)
+        path: String,
+
+        /// Force re-scan all files (ignore cached hashes)
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// Show manifest statistics
+    Stats {
+        /// Path to show stats for
+        path: String,
+    },
+
+    /// Find and optionally delete duplicate files
+    Duplicates {
+        /// Path to check for duplicates
+        path: String,
+
+        /// Minimum file size to consider (bytes, default 1KB)
+        #[arg(long, default_value = "1024")]
+        min_size: u64,
+
+        /// Interactively delete duplicates (keeps first, deletes rest)
         #[arg(long)]
         delete: bool,
     },
