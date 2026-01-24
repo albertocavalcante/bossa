@@ -119,20 +119,20 @@ name = "bossa"
 version = "0.1.1"
 dependencies = [
  "anyhow",
- "blake3",
  "chrono",
  "clap",
  "clap_complete",
  "colored",
  "console 0.16.2",
+ "declarative",
  "dialoguer",
  "dirs",
  "env_logger",
  "icloud",
  "indicatif",
  "log",
+ "manifest",
  "rayon",
- "rusqlite",
  "serde",
  "serde_json",
  "shellexpand",
@@ -314,6 +314,17 @@ name = "crossbeam-utils"
 version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
+
+[[package]]
+name = "declarative"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rayon",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "dialoguer"
@@ -623,6 +634,19 @@ name = "log"
 version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
+
+[[package]]
+name = "manifest"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "rusqlite",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.18",
+ "walkdir",
+]
 
 [[package]]
 name = "memchr"

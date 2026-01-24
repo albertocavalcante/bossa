@@ -106,20 +106,22 @@ impl MacOSDefault {
 
         let args = ["write", &self.domain, &self.key, type_flag, &value_str];
 
-        let output = if self.requires_sudo {
-            ctx.sudo
+        let (success, stderr) = if self.requires_sudo {
+            let output = ctx
+                .sudo
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("Sudo required but not available"))?
-                .run("defaults", &args)?
+                .run("defaults", &args)?;
+            (output.success, output.stderr_str())
         } else {
-            Command::new("defaults")
+            let output = Command::new("defaults")
                 .args(args)
                 .output()
-                .context("Failed to execute defaults write")?
+                .context("Failed to execute defaults write")?;
+            (output.status.success(), String::from_utf8_lossy(&output.stderr).to_string())
         };
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+        if !success {
             bail!("defaults write failed: {}", stderr.trim());
         }
 

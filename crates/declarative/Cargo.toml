@@ -1,0 +1,24 @@
+[package]
+name = "declarative"
+version = "0.1.0"
+authors = ["Alberto Cavalcante"]
+categories = ["development-tools", "config"]
+edition = "2024"
+keywords = ["declarative", "config", "resource", "state", "convergence"]
+license = "MIT"
+rust-version = "1.85"
+description = "Declarative resource management - define desired state, detect current state, converge"
+
+[dependencies]
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Parallelism
+rayon = "1.11"
+
+# Serialization (for types)
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"

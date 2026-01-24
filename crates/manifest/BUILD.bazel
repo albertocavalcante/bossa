@@ -1,0 +1,46 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test", "rust_doc", "rust_clippy")
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+
+package(default_visibility = ["//visibility:public"])
+
+# Export Cargo.toml for reference
+exports_files(["Cargo.toml"])
+
+# manifest library crate
+rust_library(
+    name = "manifest",
+    srcs = glob(["src/**/*.rs"]),
+    crate_root = "src/lib.rs",
+    edition = "2024",
+    aliases = aliases(),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    deps = [
+        "@crates//:blake3",
+        "@crates//:chrono",
+        "@crates//:rusqlite",
+        "@crates//:serde",
+        "@crates//:thiserror",
+        "@crates//:walkdir",
+    ],
+)
+
+# Unit tests
+rust_test(
+    name = "manifest_test",
+    crate = ":manifest",
+    deps = [
+        "@crates//:tempfile",
+    ],
+)
+
+# Clippy linting
+rust_clippy(
+    name = "manifest_clippy",
+    deps = [":manifest"],
+)
+
+# Documentation
+rust_doc(
+    name = "manifest_doc",
+    crate = ":manifest",
+)

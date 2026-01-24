@@ -1,9 +1,10 @@
-//! Diff computation and display
+//! Diff computation and display - bossa-specific UI
 
-use crate::resource::{Resource, ResourceDiff, ResourceState};
+use crate::resource::Resource;
 use colored::Colorize;
+use declarative::{ResourceDiff, ResourceState};
 
-/// Compute diffs for all resources in parallel where possible
+/// Compute diffs for all resources
 pub fn compute_diffs(resources: &[Box<dyn Resource>]) -> Vec<ResourceDiff> {
     resources
         .iter()

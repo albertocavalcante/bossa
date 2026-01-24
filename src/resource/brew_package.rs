@@ -118,19 +118,21 @@ impl BrewPackage {
             BrewPackageType::Cask => vec!["install", "--cask", &self.name],
         };
 
-        let output = if self.requires_sudo {
-            ctx.sudo
+        let (success, stderr) = if self.requires_sudo {
+            let output = ctx
+                .sudo
                 .ok_or_else(|| anyhow::anyhow!("Sudo required but not available"))?
-                .run("brew", &args)?
+                .run("brew", &args)?;
+            (output.success, output.stderr_str())
         } else {
-            Command::new("brew")
+            let output = Command::new("brew")
                 .args(&args)
                 .output()
-                .context("Failed to run brew install")?
+                .context("Failed to run brew install")?;
+            (output.status.success(), String::from_utf8_lossy(&output.stderr).to_string())
         };
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+        if !success {
             bail!("brew install failed: {}", stderr.trim());
         }
 

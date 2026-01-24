@@ -8,7 +8,8 @@
 
 #![allow(dead_code)]
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
+use declarative::{CommandOutput, SudoClassifier, SudoProvider};
 use serde::{Deserialize, Serialize};
 use std::process::{Command, Output};
 
@@ -42,6 +43,17 @@ impl SudoConfig {
     /// Check if an operation requires sudo
     pub fn operation_requires_sudo(&self, op: &str) -> bool {
         self.operations.iter().any(|o| o == op)
+    }
+}
+
+/// Implement SudoClassifier for SudoConfig
+impl SudoClassifier for SudoConfig {
+    fn requires_sudo(&self, resource_type: &str, resource_id: &str) -> bool {
+        match resource_type {
+            "brew_cask" => self.cask_requires_sudo(resource_id),
+            "macos_default" => self.default_requires_sudo(resource_id),
+            _ => false,
+        }
     }
 }
 
@@ -80,8 +92,8 @@ impl SudoContext {
             .unwrap_or(false)
     }
 
-    /// Run a command with sudo
-    pub fn run(&self, cmd: &str, args: &[&str]) -> Result<Output> {
+    /// Run a command with sudo (internal)
+    fn run_internal(&self, cmd: &str, args: &[&str]) -> Result<Output> {
         if !self.validated {
             bail!("Sudo context not validated");
         }
@@ -97,7 +109,7 @@ impl SudoContext {
 
     /// Run a command with sudo and capture output
     pub fn run_capture(&self, cmd: &str, args: &[&str]) -> Result<String> {
-        let output = self.run(cmd, args)?;
+        let output = self.run_internal(cmd, args)?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -109,8 +121,16 @@ impl SudoContext {
 
     /// Run a command with sudo, returning success/failure
     pub fn run_status(&self, cmd: &str, args: &[&str]) -> Result<bool> {
-        let output = self.run(cmd, args)?;
+        let output = self.run_internal(cmd, args)?;
         Ok(output.status.success())
+    }
+}
+
+/// Implement SudoProvider for SudoContext
+impl SudoProvider for SudoContext {
+    fn run(&self, cmd: &str, args: &[&str]) -> Result<CommandOutput> {
+        let output = self.run_internal(cmd, args)?;
+        Ok(output.into())
     }
 }
 
@@ -142,5 +162,19 @@ mod tests {
         assert!(config.cask_requires_sudo("docker"));
         assert!(config.cask_requires_sudo("1password"));
         assert!(!config.cask_requires_sudo("raycast"));
+    }
+
+    #[test]
+    fn test_sudo_classifier() {
+        let config = SudoConfig {
+            casks: vec!["docker".to_string()],
+            defaults: vec!["com.apple.system".to_string()],
+            ..Default::default()
+        };
+
+        assert!(config.requires_sudo("brew_cask", "docker"));
+        assert!(!config.requires_sudo("brew_cask", "raycast"));
+        assert!(config.requires_sudo("macos_default", "com.apple.system"));
+        assert!(!config.requires_sudo("brew_formula", "ripgrep"));
     }
 }

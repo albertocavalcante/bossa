@@ -1,4 +1,4 @@
-//! Execution engine - applies resources with parallelism and sudo batching
+//! Execution engine - bossa-specific executor with UI integration
 
 use anyhow::Result;
 use colored::Colorize;
@@ -8,11 +8,11 @@ use std::sync::Arc;
 use crate::progress;
 use crate::resource::{ApplyContext, ApplyResult, Resource};
 use crate::sudo::SudoContext;
+use declarative::{ExecutionPlan, SudoProvider};
 
 use super::differ::{compute_diffs, display_diff, display_sudo_boundary};
-use super::planner::ExecutionPlan;
 
-/// Options for execution
+/// Options for execution (bossa-specific, includes `yes` for confirmation skip)
 #[derive(Debug, Clone)]
 pub struct ExecuteOptions {
     /// Don't make changes, just show what would happen
@@ -57,7 +57,7 @@ impl ExecuteSummary {
     }
 }
 
-/// Execute the plan
+/// Execute the plan with bossa's UI integration
 pub fn execute(plan: ExecutionPlan, opts: ExecuteOptions) -> Result<ExecuteSummary> {
     // 1. Compute diffs for all resources
     let unprivileged_diffs = compute_diffs(&plan.unprivileged);
@@ -131,10 +131,10 @@ pub fn execute(plan: ExecutionPlan, opts: ExecuteOptions) -> Result<ExecuteSumma
     }
 
     // 6. Restart services
-    if !plan.restart_services.is_empty() {
+    if !plan.post_actions.is_empty() {
         println!();
         println!("  {} Restarting services...", "→".cyan());
-        for service in &plan.restart_services {
+        for service in &plan.post_actions {
             restart_service(service)?;
         }
     }
@@ -163,10 +163,13 @@ fn execute_parallel(
 
     pool.install(|| {
         resources.par_iter().for_each(|resource| {
+            // Convert SudoContext to trait object for ApplyContext
+            let sudo_provider: Option<&dyn SudoProvider> = sudo.map(|s| s as &dyn SudoProvider);
+
             let mut ctx = ApplyContext {
                 dry_run: false,
                 verbose,
-                sudo,
+                sudo: sudo_provider,
             };
 
             let result = match resource.apply(&mut ctx) {

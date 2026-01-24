@@ -49,13 +49,13 @@ rayon = "1.11"
 env_logger = "0.11"
 log = "0.4"
 
-# Content hashing & manifest
-blake3 = "1"
-rusqlite = { version = "0.35", features = ["bundled"] }
+# Filesystem
 walkdir = "2"
 
 # Workspace crates
+declarative = { path = "crates/declarative" }
 icloud = { path = "crates/icloud" }
+manifest = { path = "crates/manifest" }
 
 [dev-dependencies]
 tempfile = "3"
