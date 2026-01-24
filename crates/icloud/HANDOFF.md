@@ -19,6 +19,9 @@ The `icloud` crate provides non-destructive iCloud Drive file management:
 | Bazel build          | ✅ Done | Full build support                   |
 | Unit tests           | ✅ Done | 6 tests passing                      |
 | Documentation        | ✅ Done | Safety docs, README                  |
+| **CLI Integration**  | ✅ Done | `bossa icloud` commands              |
+| **Recursive ops**    | ✅ Done | `-r` flag for directories            |
+| **Progress bar**     | ✅ Done | Visual feedback for bulk operations  |
 
 ### Architecture
 
@@ -39,6 +42,16 @@ crates/icloud/
 └── README.md               # User documentation
 ```
 
+### CLI Commands (in bossa)
+
+```bash
+bossa icloud status [path]              # Show file/directory summary
+bossa icloud list [path]                # List files (--local, --cloud)
+bossa icloud find-evictable [path]      # Find large files (-m/--min-size)
+bossa icloud evict <path>               # Evict (-r, --min-size, --dry-run)
+bossa icloud download <path>            # Download (-r)
+```
+
 ### Safety Guarantees
 
 **CRITICAL**: This crate NEVER deletes files from iCloud. This is by design:
@@ -53,197 +66,37 @@ There are NO delete operations. The `brctl` tool itself has no delete functional
 
 ## TODO: Next Steps
 
-### 1. Native FFI Backend (High Priority)
+### 1. Better Status Detection (Recommended Next)
 
-Add a native backend using Rust's `objc` crate to call `NSFileManager` directly instead of shelling out to `brctl`.
+Current status detection is basic. Improve accuracy using `mdls`:
 
-**Why:**
+**Why this first:**
 
-- Better performance (no process spawn overhead)
-- Richer metadata access
-- Better error information
-- More reliable status detection
+- Smaller change than FFI, immediate UX improvement
+- More accurate cloud-only detection
+- Can show upload/download progress
 
 **Implementation:**
 
-```rust
-// crates/icloud/src/backend/native.rs
-use objc::{class, msg_send, sel, sel_impl};
-use objc::runtime::Object;
-
-pub struct NativeBackend {
-    file_manager: *mut Object,
-}
-
-impl NativeBackend {
-    pub fn new() -> Result<Self> {
-        unsafe {
-            let fm: *mut Object = msg_send![class!(NSFileManager), defaultManager];
-            Ok(Self { file_manager: fm })
-        }
-    }
-}
-
-impl Backend for NativeBackend {
-    fn evict(&self, path: &Path) -> Result<()> {
-        unsafe {
-            let url = path_to_nsurl(path)?;
-            let mut error: *mut Object = std::ptr::null_mut();
-            let success: bool = msg_send![
-                self.file_manager,
-                evictUbiquitousItemAtURL: url
-                error: &mut error
-            ];
-            if success {
-                Ok(())
-            } else {
-                Err(nseerror_to_error(error))
-            }
-        }
-    }
-
-    // ... similar for download, status
-}
-```
-
-**Dependencies to add:**
-
-```toml
-[dependencies]
-objc = { version = "0.2", optional = true }
-objc-foundation = { version = "0.1", optional = true }
-block = { version = "0.1", optional = true }
-
-[features]
-default = ["brctl"]
-brctl = []
-native = ["objc", "objc-foundation", "block"]
-```
-
-**References:**
-
-- Apple docs: https://developer.apple.com/documentation/foundation/filemanager/1409696-evictubiquitousitem
-- objc crate: https://docs.rs/objc/latest/objc/
-
----
-
-### 2. Better Status Detection (High Priority)
-
-Current status detection is basic (checks file size and xattrs). Improve it to accurately detect:
-
-- Cloud-only (evicted) files
-- Files currently downloading
-- Files currently uploading
-- Upload/download progress percentage
-
-**Implementation approach:**
-
-Use `NSMetadataQuery` to get accurate iCloud status:
-
-```rust
-// Key attributes to query:
-// - NSMetadataUbiquitousItemDownloadingStatusKey
-// - NSMetadataUbiquitousItemIsDownloadingKey
-// - NSMetadataUbiquitousItemPercentDownloadedKey
-// - NSMetadataUbiquitousItemIsUploadingKey
-// - NSMetadataUbiquitousItemPercentUploadedKey
-```
-
-Or use `mdls` command more comprehensively:
-
 ```bash
 mdls -name kMDItemIsUbiquitous \
-     -name kMDItemFSContentChangeDate \
-     -name com_apple_metadata_kMDItemIsUploading \
+     -name com_apple_metadata_kMDItemDownloadingStatus \
+     -name com_apple_metadata_kMDItemIsDownloading \
+     -name com_apple_metadata_kMDItemPercentDownloaded \
      /path/to/file
 ```
 
----
+**Changes needed:**
 
-### 3. ✅ Bossa CLI Integration (DONE)
-
-CLI commands have been implemented in `src/commands/icloud.rs`:
-
-```bash
-# Status and discovery
-bossa icloud status [path]              # Show file status / directory summary
-bossa icloud list [path]                # List files with status (--local, --cloud)
-bossa icloud find-evictable [path]      # Find large local files (-m/--min-size)
-
-# Operations
-bossa icloud evict <path>               # Evict file/folder (-r, --min-size, --dry-run)
-bossa icloud download <path>            # Download file/folder (-r)
-```
-
-**Features implemented:**
-
-- Path expansion (`~` support)
-- Human-readable size parsing (`100MB`, `1GB`)
-- Recursive operations with `--recursive` flag
-- Dry-run mode for evict
-- Filtering (local-only, cloud-only)
-- Colored output with status indicators
+- Add `mdls` parsing to `backend/brctl.rs`
+- Update `FileStatus` to include progress info
+- Update CLI to show progress percentages
 
 ---
 
-### 4. Recursive Operations (Medium Priority)
+### 2. Integration Tests (Medium Priority)
 
-Add proper recursive support for directories:
-
-```rust
-impl Client {
-    /// Recursively evict all files in a directory
-    pub fn evict_recursive(&self, path: &Path, options: &EvictOptions) -> Result<BulkResult> {
-        let mut result = BulkResult::default();
-
-        for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
-            if entry.file_type().is_file() {
-                match self.evict(entry.path()) {
-                    Ok(()) => result.add_success(/* size */),
-                    Err(e) if e.is_already_done() => result.add_skip(),
-                    Err(e) => result.add_failure(entry.path().to_path_buf(), e.to_string()),
-                }
-            }
-        }
-
-        Ok(result)
-    }
-}
-```
-
-**Dependencies:** Add `walkdir` to the crate.
-
----
-
-### 5. Progress Tracking (Medium Priority)
-
-Add progress callbacks for long-running operations:
-
-```rust
-pub trait ProgressCallback: Send + Sync {
-    fn on_start(&self, total_files: usize, total_bytes: u64);
-    fn on_file_start(&self, path: &Path, size: u64);
-    fn on_file_complete(&self, path: &Path, success: bool);
-    fn on_complete(&self, result: &BulkResult);
-}
-
-impl Client {
-    pub fn evict_with_progress<P: ProgressCallback>(
-        &self,
-        paths: &[&Path],
-        options: &EvictOptions,
-        progress: &P,
-    ) -> Result<BulkResult> {
-        // ...
-    }
-}
-```
-
----
-
-### 6. Integration Tests (Medium Priority)
-
-Add integration tests that work with real iCloud Drive:
+Add tests that work with real iCloud Drive:
 
 ```rust
 // tests/integration.rs
@@ -254,99 +107,96 @@ fn test_real_icloud_evict_and_download() {
     let client = Client::new().unwrap();
     let root = client.icloud_root().unwrap();
 
-    // Create a test file
     let test_file = root.join("__icloud_crate_test__.txt");
     std::fs::write(&test_file, "test content").unwrap();
 
     // Wait for sync...
     std::thread::sleep(Duration::from_secs(5));
 
-    // Test evict
     client.evict(&test_file).unwrap();
-
-    // Verify status
     let status = client.status(&test_file).unwrap();
     assert!(status.state.is_cloud_only());
 
-    // Test download
     client.download(&test_file).unwrap();
-
-    // Cleanup
     std::fs::remove_file(&test_file).unwrap();
 }
 ```
 
 ---
 
-### 7. Katharsis Integration (Low Priority)
+### 3. Native FFI Backend (Defer)
 
-Consider adding iCloud support to Katharsis (Swift menu bar app) as discussed:
+Add native backend using `objc` crate for `NSFileManager`.
 
-**Rationale:**
+**Defer because:**
 
-- Katharsis is already Swift (native API access)
-- Has menu bar UI for status display
-- Has FSEvents monitoring infrastructure
-- Thematically aligned ("cleansing" = freeing space)
+- brctl backend works fine
+- FFI adds complexity and unsafe code
+- Only worth it if brctl becomes a bottleneck
 
-**If proceeding:**
-
-- Add `icloud` module to Katharsis
-- Reuse the same CLI command structure
-- Add menu bar status for iCloud sync
-- Add drag & drop eviction
-
----
-
-### 8. Error Recovery (Low Priority)
-
-Add retry logic for transient failures:
+**If needed later:**
 
 ```rust
-impl Client {
-    pub fn evict_with_retry(
-        &self,
-        path: &Path,
-        max_retries: usize,
-        delay: Duration,
-    ) -> Result<()> {
-        let mut last_error = None;
-
-        for attempt in 0..=max_retries {
-            match self.evict(path) {
-                Ok(()) => return Ok(()),
-                Err(e) if e.is_transient() => {
-                    last_error = Some(e);
-                    if attempt < max_retries {
-                        std::thread::sleep(delay);
-                    }
-                }
-                Err(e) => return Err(e),
-            }
+// crates/icloud/src/backend/native.rs
+impl Backend for NativeBackend {
+    fn evict(&self, path: &Path) -> Result<()> {
+        unsafe {
+            let url = path_to_nsurl(path)?;
+            let success: bool = msg_send![
+                self.file_manager,
+                evictUbiquitousItemAtURL: url
+                error: &mut error
+            ];
+            // ...
         }
-
-        Err(last_error.unwrap())
     }
 }
 ```
 
 ---
 
-### 9. Configuration (Low Priority)
+### 4. Storage Overview Command (New Idea)
 
-Add configuration support for default behaviors:
+Add unified storage view combining all sources:
+
+```bash
+bossa storage status
+
+Storage Overview
+────────────────
+  Local SSD:     245 GB used / 500 GB (49%)
+  iCloud Drive:  3.2 GB local, 15 GB cloud
+  T9 External:   1.2 TB used / 2 TB (60%)
+
+Optimization opportunities:
+  - 3.2 GB evictable from iCloud (bossa icloud find-evictable)
+  - 2.1 GB duplicates on T9 (bossa manifest duplicates /Volumes/T9)
+```
+
+---
+
+### 5. Cross-Storage Duplicate Detection (Future)
+
+Find duplicates across iCloud + T9 + local:
+
+```bash
+bossa storage duplicates
+
+Cross-storage duplicates:
+  file.pdf (100 MB)
+    ★ /Volumes/T9/archive/file.pdf
+    ✗ ~/Library/Mobile Documents/.../file.pdf (evictable)
+```
+
+---
+
+### 6. Configuration (Low Priority)
 
 ```toml
 # ~/.config/bossa/config.toml
 
 [icloud]
-# Default minimum size for find-evictable
 min_evictable_size = "100MB"
-
-# Auto-evict files older than N days
-auto_evict_after_days = 30
-
-# Paths to never evict
 protected_paths = [
   "~/Library/Mobile Documents/com~apple~CloudDocs/Important",
 ]
@@ -354,20 +204,14 @@ protected_paths = [
 
 ---
 
-### 10. Publish to crates.io (Future)
+### 7. Publish to crates.io (Future)
 
-When the API stabilizes:
+When API stabilizes:
 
-1. Update `Cargo.toml` with full metadata
-2. Add `LICENSE` file to crate directory
-3. Add `CHANGELOG.md`
-4. Publish: `cargo publish -p icloud`
-
-Consider renaming to avoid conflicts:
-
-- `icloud-drive`
-- `macos-icloud`
-- `icloud-rs`
+1. Rename to `icloud-drive` or `macos-icloud`
+2. Add LICENSE file
+3. Add CHANGELOG.md
+4. `cargo publish -p icloud`
 
 ---
 
@@ -377,12 +221,10 @@ Consider renaming to avoid conflicts:
 # Run unit tests
 cargo test -p icloud
 
-# Run with Bazel
-bazel test //crates/icloud:icloud_test
-
-# Run examples
-cargo run -p icloud --example status
-cargo run -p icloud --example evict -- --large
+# Run CLI
+cargo run -- icloud status
+cargo run -- icloud find-evictable -m 50MB
+cargo run -- icloud evict ~/path/to/file --dry-run
 
 # Build docs
 cargo doc -p icloud --open
@@ -390,37 +232,29 @@ cargo doc -p icloud --open
 
 ---
 
-## Key Files to Understand
+## Key Files
 
-| File                   | Purpose                                                |
-| ---------------------- | ------------------------------------------------------ |
-| `src/lib.rs`           | Main `Client` API, safety documentation                |
-| `src/backend/mod.rs`   | `Backend` trait definition                             |
-| `src/backend/brctl.rs` | Current implementation using brctl CLI                 |
-| `src/error.rs`         | Error types with `is_transient()`, `is_already_done()` |
-| `src/types.rs`         | `FileStatus`, `DownloadState`, options structs         |
-
----
-
-## Important Safety Notes
-
-1. **NEVER add delete functionality** - This is intentional. The crate only manages local copies.
-
-2. **Always verify iCloud path** - Check `is_in_icloud()` before operations.
-
-3. **Handle "not synced" errors gracefully** - Files that are still uploading cannot be evicted.
-
-4. **Test with real iCloud** - Mock tests are useful but real integration tests catch edge cases.
+| File                                 | Purpose                              |
+| ------------------------------------ | ------------------------------------ |
+| `crates/icloud/src/lib.rs`           | Client API, safety docs              |
+| `crates/icloud/src/backend/brctl.rs` | brctl CLI implementation             |
+| `src/commands/icloud.rs`             | CLI command implementations          |
+| `src/ui.rs`                          | Shared utilities (format_size, etc.) |
 
 ---
 
-## Contact / Context
+## Recent Changes
 
-This crate was created as part of bossa's storage management features. The original discussion included:
+- **b934adf**: Refactored CLI with shared utilities, progress bar, better error handling
+- **21d2823**: Initial CLI integration with all commands
+- **897e023**: Extracted manifest and declarative crates
 
-- Checking T9 external drive usage
-- Managing iCloud Drive space
-- Finding duplicates across storage locations
-- Potential integration with Katharsis (Swift app)
+---
 
-See conversation context for full background on design decisions.
+## Recommendation
+
+**Next step: Better status detection (#1)**
+
+This gives immediate user value with moderate effort. The `mdls` approach is simpler than FFI and will make the status/list commands more accurate.
+
+After that, consider the storage overview command (#4) to tie together iCloud, manifest, and T9 storage into a unified view.
