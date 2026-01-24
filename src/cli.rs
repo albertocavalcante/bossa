@@ -1,7 +1,7 @@
 #![allow(dead_code)]
-#![allow(clippy::inherent_to_string)]
 
 use clap::{Parser, Subcommand, ValueEnum};
+use std::fmt;
 use clap_complete::Shell;
 
 #[derive(Parser)]
@@ -420,12 +420,13 @@ impl Target {
     pub fn matches_type(&self, resource_type: &str) -> bool {
         self.resource_type == resource_type
     }
+}
 
-    /// Get the full target string (e.g., "collections.refs")
-    pub fn to_string(&self) -> String {
+impl fmt::Display for Target {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.name {
-            Some(name) => format!("{}.{}", self.resource_type, name),
-            None => self.resource_type.clone(),
+            Some(name) => write!(f, "{}.{}", self.resource_type, name),
+            None => write!(f, "{}", self.resource_type),
         }
     }
 }
