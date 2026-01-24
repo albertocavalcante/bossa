@@ -1,3 +1,7 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
 [package]
 name = "bossa"
 version = "0.1.1"
@@ -49,6 +53,9 @@ log = "0.4"
 blake3 = "1"
 rusqlite = { version = "0.35", features = ["bundled"] }
 walkdir = "2"
+
+# Workspace crates
+icloud = { path = "crates/icloud" }
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,0 +1,27 @@
+[package]
+name = "icloud"
+version = "0.1.0"
+authors = ["Alberto Cavalcante"]
+categories = ["filesystem", "os::macos-apis"]
+edition = "2024"
+keywords = ["icloud", "macos", "cloud", "storage"]
+license = "MIT"
+rust-version = "1.85"
+description = "Rust library for iCloud Drive file management (evict, download, status)"
+
+[features]
+default = ["brctl"]
+brctl = []
+# native = ["objc", "objc-foundation", "block"]  # Future: native FFI
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+# Future: native FFI support
+# objc = { version = "0.2", optional = true }
+# objc-foundation = { version = "0.1", optional = true }
+# block = { version = "0.1", optional = true }
+
+[dev-dependencies]
+tempfile = "3"

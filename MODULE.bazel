@@ -18,7 +18,8 @@ use_repo(rust, "rust_toolchains")
 
 register_toolchains("@rust_toolchains//:all")
 
-# Crate universe - read dependencies from Cargo.toml
+# Crate universe - read dependencies from Cargo.toml (workspace root)
+# Workspace members are automatically discovered from Cargo.toml [workspace] section
 crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
 crate.from_cargo(
     name = "crates",
