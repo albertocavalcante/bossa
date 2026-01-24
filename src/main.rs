@@ -13,7 +13,7 @@ mod ui;
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use cli::{AddCommand, Cli, Command, RmCommand, CollectionsCommand, RefsCommand};
+use cli::{AddCommand, Cli, Command, RmCommand, CollectionsCommand, ManifestCommand, RefsCommand};
 use std::io;
 
 /// Global context for the application
@@ -111,8 +111,25 @@ fn main() -> Result<()> {
                 CollectionsCommand::Rm { collection, repo, delete } => {
                     commands::collections::CollectionsCommand::Rm { collection, repo, delete }
                 }
+                CollectionsCommand::Clean { name, yes, dry_run } => {
+                    commands::collections::CollectionsCommand::Clean { name, yes, dry_run }
+                }
             };
             commands::collections::run(&ctx, collections_cmd)
+        }
+        Command::Manifest(cmd) => {
+            let manifest_cmd = match cmd {
+                ManifestCommand::Scan { path, force } => {
+                    commands::manifest::ManifestCommand::Scan { path, force }
+                }
+                ManifestCommand::Stats { path } => {
+                    commands::manifest::ManifestCommand::Stats { path }
+                }
+                ManifestCommand::Duplicates { path, min_size, delete } => {
+                    commands::manifest::ManifestCommand::Duplicates { path, min_size, delete }
+                }
+            };
+            commands::manifest::run(manifest_cmd)
         }
         Command::Refs(cmd) => {
             // Show deprecation warning
