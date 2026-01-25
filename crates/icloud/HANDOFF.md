@@ -238,7 +238,7 @@ cargo doc -p icloud --open
 
 ## Recent Changes
 
-- **[pending]**: Improved status detection using block allocation (replaces unreliable xattr/mdls approach)
+- **200999d**: Improved status detection using block allocation (replaces unreliable xattr/mdls approach)
 - **b934adf**: Refactored CLI with shared utilities, progress bar, better error handling
 - **21d2823**: Initial CLI integration with all commands
 - **897e023**: Extracted manifest and declarative crates
