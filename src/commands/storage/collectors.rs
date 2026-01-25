@@ -93,10 +93,10 @@ pub fn collect_manifest_stats() -> Result<Vec<ManifestInfo>> {
     if let Ok(entries) = fs::read_dir(&manifest_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if is_manifest_db(&path) {
-                if let Some(info) = load_manifest_info(&path) {
-                    manifests.push(info);
-                }
+            if is_manifest_db(&path)
+                && let Some(info) = load_manifest_info(&path)
+            {
+                manifests.push(info);
             }
         }
     }

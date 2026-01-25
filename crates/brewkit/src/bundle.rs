@@ -43,14 +43,14 @@ pub fn parse_verbose_output(output: &str) -> BundleResult {
             result.skipped.push(name);
         }
         // Failure patterns
-        else if line.starts_with("Error:") || line.contains(" failed") {
-            if let Some(name) = extract_error_package(line) {
-                result.failed.push((name, line.to_string()));
-            }
-        } else if line.contains("No available formula") || line.contains("No cask with this name") {
-            if let Some(name) = extract_quoted_name(line) {
-                result.failed.push((name, line.to_string()));
-            }
+        else if (line.starts_with("Error:") || line.contains(" failed"))
+            && let Some(name) = extract_error_package(line)
+        {
+            result.failed.push((name, line.to_string()));
+        } else if (line.contains("No available formula") || line.contains("No cask with this name"))
+            && let Some(name) = extract_quoted_name(line)
+        {
+            result.failed.push((name, line.to_string()));
         }
     }
 

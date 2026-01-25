@@ -47,14 +47,14 @@ fn status() -> Result<()> {
 
         // Show cache root size
         let cache_root = config.cache_root();
-        if cache_root.exists() {
-            if let Ok(size) = dir_size(&cache_root) {
-                println!(
-                    "    Cache root: {} ({})",
-                    cache_root.display(),
-                    format_size(size)
-                );
-            }
+        if cache_root.exists()
+            && let Ok(size) = dir_size(&cache_root)
+        {
+            println!(
+                "    Cache root: {} ({})",
+                cache_root.display(),
+                format_size(size)
+            );
         }
     } else {
         println!(
@@ -555,10 +555,10 @@ fn check_symlink_status(source: &Path, target: &Path) -> SymlinkStatus {
     }
 
     if source.is_symlink() {
-        if let Ok(link_target) = fs::read_link(source) {
-            if link_target == target && target.exists() {
-                return SymlinkStatus::Valid;
-            }
+        if let Ok(link_target) = fs::read_link(source)
+            && link_target == target && target.exists()
+        {
+            return SymlinkStatus::Valid;
         }
         return SymlinkStatus::Broken;
     }

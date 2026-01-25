@@ -256,11 +256,11 @@ fn evict_single_file(
         return Ok(());
     }
 
-    if let Some(min) = min_bytes {
-        if status.size.map(|s| s < min).unwrap_or(true) {
-            ui::info(&format!("Skipping: file smaller than {}", ui::format_size(min)));
-            return Ok(());
-        }
+    if let Some(min) = min_bytes
+        && status.size.map(|s| s < min).unwrap_or(true)
+    {
+        ui::info(&format!("Skipping: file smaller than {}", ui::format_size(min)));
+        return Ok(());
     }
 
     let size_str = status.size.map(ui::format_size).unwrap_or_else(|| "?".to_string());
@@ -519,16 +519,16 @@ where
         }
 
         // Skip hidden files
-        if let Some(name) = entry.file_name().to_str() {
-            if name.starts_with('.') {
-                continue;
-            }
+        if let Some(name) = entry.file_name().to_str()
+            && name.starts_with('.')
+        {
+            continue;
         }
 
-        if let Ok(status) = client.status(entry.path()) {
-            if filter(&status) {
-                results.push(status);
-            }
+        if let Ok(status) = client.status(entry.path())
+            && filter(&status)
+        {
+            results.push(status);
         }
     }
 

@@ -440,7 +440,7 @@ fn hash_file(path: &Path) -> std::io::Result<String> {
 /// Uses the last path component, replacing invalid characters.
 pub fn path_to_name(path: &Path) -> String {
     path.file_name()
-        .or_else(|| path.components().last().map(|c| c.as_os_str()))
+        .or_else(|| path.components().next_back().map(|c| c.as_os_str()))
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "default".to_string())
         .replace(['/', '\\', ':'], "_")

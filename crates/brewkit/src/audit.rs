@@ -68,12 +68,13 @@ fn audit_type(
 
     // Find version mismatches
     for pkg in &declared {
-        if let Some(declared_version) = &pkg.version {
-            if let Some(installed_pkg) = installed.iter().find(|i| i.name.to_lowercase() == pkg.name.to_lowercase()) {
-                if !versions_match(declared_version, &installed_pkg.version) {
-                    result.mismatched.push(((*pkg).clone(), installed_pkg.clone()));
-                }
-            }
+        if let Some(declared_version) = &pkg.version
+            && let Some(installed_pkg) = installed
+                .iter()
+                .find(|i| i.name.to_lowercase() == pkg.name.to_lowercase())
+            && !versions_match(declared_version, &installed_pkg.version)
+        {
+            result.mismatched.push(((*pkg).clone(), installed_pkg.clone()));
         }
     }
 

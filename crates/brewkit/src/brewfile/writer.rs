@@ -124,10 +124,10 @@ fn write_package(output: &mut String, package: &Package, options: &WriteOptions)
     }
 
     // Add version comment if present and requested
-    if options.include_versions {
-        if let Some(version) = &package.version {
-            write!(output, " # {}", version).unwrap();
-        }
+    if options.include_versions
+        && let Some(version) = &package.version
+    {
+        write!(output, " # {}", version).unwrap();
     }
 
     writeln!(output).unwrap();

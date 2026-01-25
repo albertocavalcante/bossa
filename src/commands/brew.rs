@@ -468,11 +468,10 @@ fn list(filter_type: Option<String>) -> Result<()> {
         brewkit::PackageType::from_directive(t)
     });
 
-    if filter_type.is_some() && filter.is_none() {
-        ui::error(&format!(
-            "Unknown package type: {}",
-            filter_type.as_ref().unwrap()
-        ));
+    if let Some(ref ft) = filter_type
+        && filter.is_none()
+    {
+        ui::error(&format!("Unknown package type: {}", ft));
         ui::info("Valid types: tap, brew, cask, mas, vscode");
         return Ok(());
     }

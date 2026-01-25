@@ -139,10 +139,10 @@ fn matches_filter(
         }
     }
 
-    if let Some(n) = name {
-        if !resource.id().contains(n) {
-            return false;
-        }
+    if let Some(n) = name
+        && !resource.id().contains(n)
+    {
+        return false;
     }
 
     true

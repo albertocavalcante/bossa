@@ -6,7 +6,7 @@ categories = ["development-tools", "config"]
 edition = "2024"
 keywords = ["homebrew", "brew", "package-manager", "macos"]
 license = "MIT"
-rust-version = "1.85"
+rust-version = "1.90"
 description = "Pure Rust library for Homebrew package management"
 
 [dependencies]

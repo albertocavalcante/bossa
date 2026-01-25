@@ -45,13 +45,12 @@ pub trait Backend: Send + Sync {
                         continue;
                     }
 
-                    if let Some(min_size) = options.min_size {
-                        if let Some(size) = status.size {
-                            if size < min_size {
-                                result.add_skip();
-                                continue;
-                            }
-                        }
+                    if let Some(min_size) = options.min_size
+                        && let Some(size) = status.size
+                        && size < min_size
+                    {
+                        result.add_skip();
+                        continue;
                     }
 
                     match self.evict(path) {

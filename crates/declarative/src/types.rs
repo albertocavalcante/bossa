@@ -4,18 +4,13 @@ use serde::{Deserialize, Serialize};
 use std::process::Output;
 
 /// Requirement level for sudo/elevated privileges
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum SudoRequirement {
     /// No elevated privileges needed
+    #[default]
     None,
     /// Elevated privileges required with a reason
     Required { reason: String },
-}
-
-impl Default for SudoRequirement {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// Current or desired state of a resource

@@ -6,7 +6,7 @@ categories = ["filesystem", "database"]
 edition = "2024"
 keywords = ["manifest", "hash", "duplicates", "storage", "blake3"]
 license = "MIT"
-rust-version = "1.85"
+rust-version = "1.90"
 description = "Content hashing and duplicate detection for storage volumes"
 
 [dependencies]

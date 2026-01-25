@@ -259,12 +259,11 @@ fn check_t9() -> bool {
         // Check if refs symlink points to T9
         if let Some(home) = dirs::home_dir() {
             let refs_path = home.join("dev/refs");
-            if refs_path.is_symlink() {
-                if let Ok(target) = std::fs::read_link(&refs_path) {
-                    if target.to_string_lossy().contains("T9") {
-                        println!("  {} refs symlinked to T9", "✓".green());
-                    }
-                }
+            if refs_path.is_symlink()
+                && let Ok(target) = std::fs::read_link(&refs_path)
+                && target.to_string_lossy().contains("T9")
+            {
+                println!("  {} refs symlinked to T9", "✓".green());
             }
         }
 

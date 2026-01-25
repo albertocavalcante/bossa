@@ -1,0 +1,33 @@
+[package]
+name = "toolchain"
+version = "0.1.0"
+authors = ["Alberto Cavalcante"]
+categories = ["development-tools", "command-line-utilities"]
+edition = "2024"
+keywords = ["buck2", "bazel", "build-tools", "installer"]
+license = "MIT"
+rust-version = "1.90"
+description = "Pure Rust library for installing and managing build tools (Buck2, Bazel, etc.)"
+
+[dependencies]
+# Error handling
+thiserror = "2"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP client (minimal, blocking)
+ureq = { version = "3", features = ["json"] }
+
+# Zstd decompression (pure Rust)
+zstd = "0.13"
+
+# Paths
+dirs = "6"
+
+# Find executables in PATH
+which = "7"
+
+[dev-dependencies]
+tempfile = "3"

@@ -4,12 +4,12 @@ resolver = "3"
 
 [package]
 name = "bossa"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Alberto Cavalcante"]
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/albertocavalcante/bossa"
-rust-version = "1.85"
+rust-version = "1.90"
 description = "Unified CLI for managing dev environment - workspaces, refs, packages"
 
 [dependencies]
@@ -58,6 +58,7 @@ declarative = { path = "crates/declarative" }
 icloud = { path = "crates/icloud" }
 libc = "0.2.180"
 manifest = { path = "crates/manifest" }
+toolchain = { path = "crates/toolchain" }
 
 [dev-dependencies]
 tempfile = "3"

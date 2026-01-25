@@ -6,7 +6,7 @@ categories = ["filesystem", "os::macos-apis"]
 edition = "2024"
 keywords = ["icloud", "macos", "cloud", "storage"]
 license = "MIT"
-rust-version = "1.85"
+rust-version = "1.90"
 description = "Rust library for iCloud Drive file management (evict, download, status)"
 
 [features]

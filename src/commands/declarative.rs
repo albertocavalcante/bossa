@@ -284,11 +284,11 @@ fn show_collections_status(
 
         ui::dim(&format!("    Path: {}", collection.path));
 
-        if failed > 0 && !ctx.quiet {
-            if let Some(state) = collection_state {
-                for (name, error) in &state.failed_repos {
-                    println!("      {} {} - {}", "✗".red(), name, error.dimmed());
-                }
+        if failed > 0 && !ctx.quiet
+            && let Some(state) = collection_state
+        {
+            for (name, error) in &state.failed_repos {
+                println!("      {} {} - {}", "✗".red(), name, error.dimmed());
             }
         }
     }
@@ -1123,10 +1123,10 @@ fn get_cloned_repos(root: &Path) -> Result<Vec<String>> {
         let entry = entry?;
         let path = entry.path();
 
-        if path.is_dir() && path.join(".git").exists() {
-            if let Some(name) = entry.file_name().to_str() {
-                repos.push(name.to_string());
-            }
+        if path.is_dir() && path.join(".git").exists()
+            && let Some(name) = entry.file_name().to_str()
+        {
+            repos.push(name.to_string());
         }
     }
 

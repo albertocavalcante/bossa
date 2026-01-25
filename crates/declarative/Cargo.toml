@@ -6,7 +6,7 @@ categories = ["development-tools", "config"]
 edition = "2024"
 keywords = ["declarative", "config", "resource", "state", "convergence"]
 license = "MIT"
-rust-version = "1.85"
+rust-version = "1.90"
 description = "Declarative resource management - define desired state, detect current state, converge"
 
 [dependencies]

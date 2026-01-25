@@ -288,18 +288,18 @@ fn parse_installed_formulas(json: &serde_json::Value) -> Result<Vec<InstalledPac
         let name = formula["name"].as_str().unwrap_or_default();
         let installed_versions = formula["installed"].as_array();
 
-        if let Some(versions) = installed_versions {
-            if let Some(first) = versions.first() {
-                let version = first["version"].as_str().unwrap_or_default();
-                let on_request = first["installed_on_request"].as_bool().unwrap_or(false);
+        if let Some(versions) = installed_versions
+            && let Some(first) = versions.first()
+        {
+            let version = first["version"].as_str().unwrap_or_default();
+            let on_request = first["installed_on_request"].as_bool().unwrap_or(false);
 
-                installed.push(InstalledPackage {
-                    name: name.to_string(),
-                    package_type: PackageType::Brew,
-                    version: version.to_string(),
-                    installed_on_request: on_request,
-                });
-            }
+            installed.push(InstalledPackage {
+                name: name.to_string(),
+                package_type: PackageType::Brew,
+                version: version.to_string(),
+                installed_on_request: on_request,
+            });
         }
     }
 
@@ -342,19 +342,19 @@ fn parse_bundle_output(stdout: &str, stderr: &str, success: bool) -> Result<Bund
             if let Some(name) = extract_package_name(line) {
                 result.installed.push(name);
             }
-        } else if line.contains("already installed") || line.starts_with("Using ") {
-            if let Some(name) = extract_package_name(line) {
-                result.skipped.push(name);
-            }
-        } else if line.starts_with("Upgrading ") {
-            if let Some(name) = extract_package_name(line) {
-                result.upgraded.push(name);
-            }
-        } else if line.contains("Error:") || line.contains("failed") {
-            if let Some(name) = extract_package_name(line) {
-                let error_msg = line.to_string();
-                result.failed.push((name, error_msg));
-            }
+        } else if (line.contains("already installed") || line.starts_with("Using "))
+            && let Some(name) = extract_package_name(line)
+        {
+            result.skipped.push(name);
+        } else if line.starts_with("Upgrading ")
+            && let Some(name) = extract_package_name(line)
+        {
+            result.upgraded.push(name);
+        } else if (line.contains("Error:") || line.contains("failed"))
+            && let Some(name) = extract_package_name(line)
+        {
+            let error_msg = line.to_string();
+            result.failed.push((name, error_msg));
         }
     }
 

@@ -188,21 +188,21 @@ fn parse_option_value(value_str: &str) -> (String, &str) {
     let value_str = value_str.trim();
 
     // Double-quoted string
-    if let Some(stripped) = value_str.strip_prefix('"') {
-        if let Some(end) = stripped.find('"') {
-            let value = &stripped[..end];
-            let rest = &stripped[end + 1..];
-            return (value.to_string(), rest);
-        }
+    if let Some(stripped) = value_str.strip_prefix('"')
+        && let Some(end) = stripped.find('"')
+    {
+        let value = &stripped[..end];
+        let rest = &stripped[end + 1..];
+        return (value.to_string(), rest);
     }
 
     // Single-quoted string
-    if let Some(stripped) = value_str.strip_prefix('\'') {
-        if let Some(end) = stripped.find('\'') {
-            let value = &stripped[..end];
-            let rest = &stripped[end + 1..];
-            return (value.to_string(), rest);
-        }
+    if let Some(stripped) = value_str.strip_prefix('\'')
+        && let Some(end) = stripped.find('\'')
+    {
+        let value = &stripped[..end];
+        let rest = &stripped[end + 1..];
+        return (value.to_string(), rest);
     }
 
     // Ruby symbol (:something)

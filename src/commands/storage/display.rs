@@ -180,14 +180,14 @@ pub fn show_hints(icloud_stats: &Option<ICloudStats>, manifests: &[ManifestInfo]
     let mut hints: Vec<String> = Vec::new();
 
     // iCloud evictable hint
-    if let Some(stats) = icloud_stats {
-        if stats.evictable_bytes >= HINT_MIN_SIZE {
-            hints.push(format!(
-                "Evict {} from iCloud: {}",
-                ui::format_size(stats.evictable_bytes),
-                "bossa icloud find-evictable".cyan()
-            ));
-        }
+    if let Some(stats) = icloud_stats
+        && stats.evictable_bytes >= HINT_MIN_SIZE
+    {
+        hints.push(format!(
+            "Evict {} from iCloud: {}",
+            ui::format_size(stats.evictable_bytes),
+            "bossa icloud find-evictable".cyan()
+        ));
     }
 
     // Manifest duplicates hint
