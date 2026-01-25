@@ -152,7 +152,7 @@ fn execute_parallel(
     verbose: bool,
     sudo: Option<&SudoContext>,
 ) -> Result<Vec<ApplyResult>> {
-    let pb = progress::clone_bar(resources.len() as u64);
+    let pb = progress::clone_bar(resources.len() as u64, "Applying");
     let results: Arc<std::sync::Mutex<Vec<ApplyResult>>> =
         Arc::new(std::sync::Mutex::new(Vec::new()));
 

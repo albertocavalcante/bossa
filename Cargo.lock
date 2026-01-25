@@ -152,6 +152,7 @@ dependencies = [
  "shellexpand",
  "similar",
  "tempfile",
+ "termkit",
  "thiserror 2.0.18",
  "toml",
  "toolchain",
@@ -1321,6 +1322,14 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "termkit"
+version = "0.1.0"
+dependencies = [
+ "colored",
+ "indicatif",
 ]
 
 [[package]]

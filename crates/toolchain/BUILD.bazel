@@ -1,0 +1,47 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test", "rust_doc", "rust_clippy")
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+
+package(default_visibility = ["//visibility:public"])
+
+# Export Cargo.toml for reference
+exports_files(["Cargo.toml"])
+
+# toolchain library crate
+rust_library(
+    name = "toolchain",
+    srcs = glob(["src/**/*.rs"]),
+    crate_root = "src/lib.rs",
+    edition = "2024",
+    aliases = aliases(),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    deps = [
+        "@crates//:dirs",
+        "@crates//:serde",
+        "@crates//:serde_json",
+        "@crates//:thiserror",
+        "@crates//:ureq",
+        "@crates//:which",
+        "@crates//:zstd",
+    ],
+)
+
+# Unit tests
+rust_test(
+    name = "toolchain_test",
+    crate = ":toolchain",
+    deps = [
+        "@crates//:tempfile",
+    ],
+)
+
+# Clippy linting
+rust_clippy(
+    name = "toolchain_clippy",
+    deps = [":toolchain"],
+)
+
+# Documentation
+rust_doc(
+    name = "toolchain_doc",
+    crate = ":toolchain",
+)

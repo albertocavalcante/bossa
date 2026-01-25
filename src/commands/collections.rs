@@ -161,7 +161,7 @@ fn sync(ctx: &Context, collection_name: &str, jobs: usize, retries: usize, dry_r
     }
 
     // Clone in parallel with progress bar
-    let pb = progress::clone_bar(repos_to_clone.len() as u64);
+    let pb = progress::clone_bar(repos_to_clone.len() as u64, "Cloning");
     let cloned = Arc::new(AtomicUsize::new(0));
     let failed = Arc::new(AtomicUsize::new(0));
     let failed_repos: Arc<std::sync::Mutex<Vec<(String, String)>>> =

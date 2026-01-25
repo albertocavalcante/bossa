@@ -1,0 +1,39 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test", "rust_doc", "rust_clippy")
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+
+package(default_visibility = ["//visibility:public"])
+
+# Export Cargo.toml for reference
+exports_files(["Cargo.toml"])
+
+# termkit library crate
+rust_library(
+    name = "termkit",
+    srcs = glob(["src/**/*.rs"]),
+    crate_root = "src/lib.rs",
+    edition = "2024",
+    aliases = aliases(),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    deps = [
+        "@crates//:colored",
+        "@crates//:indicatif",
+    ],
+)
+
+# Unit tests
+rust_test(
+    name = "termkit_test",
+    crate = ":termkit",
+)
+
+# Clippy linting
+rust_clippy(
+    name = "termkit_clippy",
+    deps = [":termkit"],
+)
+
+# Documentation
+rust_doc(
+    name = "termkit_doc",
+    crate = ":termkit",
+)

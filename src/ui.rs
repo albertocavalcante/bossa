@@ -1,130 +1,22 @@
-#![allow(dead_code)]
+//! UI utilities for bossa CLI.
+//!
+//! This module re-exports termkit functions and adds bossa-specific utilities.
 
-use colored::Colorize;
+// Re-export all termkit functionality
+#[allow(unused_imports)]
+pub use termkit::format::human_size as format_size;
+#[allow(unused_imports)]
+pub use termkit::format::parse_size;
+#[allow(unused_imports)]
+pub use termkit::format::truncate_path;
+#[allow(unused_imports)]
+pub use termkit::layout::{header, kv, section, step};
+#[allow(unused_imports)]
+pub use termkit::messages::{dim, error, info, success, warn};
 
-/// Print an info message
-pub fn info(msg: &str) {
-    println!("{} {}", "ℹ".blue(), msg);
-}
-
-/// Print a success message
-pub fn success(msg: &str) {
-    println!("{} {}", "✓".green(), msg);
-}
-
-/// Print a warning message
-pub fn warn(msg: &str) {
-    println!("{} {}", "⚠".yellow(), msg);
-}
-
-/// Print an error message
-pub fn error(msg: &str) {
-    eprintln!("{} {}", "✗".red(), msg);
-}
-
-/// Print a dim/muted message
-pub fn dim(msg: &str) {
-    println!("  {}", msg.dimmed());
-}
-
-/// Print a header/title
-pub fn header(title: &str) {
-    println!();
-    println!("{}", title.bold());
-    println!("{}", "─".repeat(title.len()).dimmed());
-}
-
-/// Print a section header
-pub fn section(title: &str) {
-    println!();
-    println!("{}", title.cyan().bold());
-}
-
-/// Print a key-value pair
-pub fn kv(key: &str, value: &str) {
-    println!("  {}: {}", key.dimmed(), value);
-}
-
-/// Print a step indicator
-pub fn step(num: usize, total: usize, msg: &str) {
-    println!("{} {}", format!("[{}/{}]", num, total).blue().bold(), msg);
-}
-
-// ============================================================================
-// Size Formatting
-// ============================================================================
-
-const KB: u64 = 1024;
-const MB: u64 = KB * 1024;
-const GB: u64 = MB * 1024;
-const TB: u64 = GB * 1024;
-
-/// Format bytes as human-readable size
-pub fn format_size(bytes: u64) -> String {
-    if bytes >= TB {
-        format!("{:.2} TB", bytes as f64 / TB as f64)
-    } else if bytes >= GB {
-        format!("{:.1} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.1} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{} B", bytes)
-    }
-}
-
-/// Parse human-readable size string (e.g., "100MB", "1GB", "500")
-///
-/// Supports suffixes: B, KB, MB, GB, TB (case-insensitive)
-/// Returns bytes as u64
-pub fn parse_size(size_str: &str) -> Result<u64, String> {
-    let size_str = size_str.trim().to_uppercase();
-
-    if size_str.is_empty() {
-        return Err("Empty size string".to_string());
-    }
-
-    let (num_str, multiplier) = if let Some(num) = size_str.strip_suffix("TB") {
-        (num, TB)
-    } else if let Some(num) = size_str.strip_suffix("GB") {
-        (num, GB)
-    } else if let Some(num) = size_str.strip_suffix("MB") {
-        (num, MB)
-    } else if let Some(num) = size_str.strip_suffix("KB") {
-        (num, KB)
-    } else if let Some(num) = size_str.strip_suffix('B') {
-        (num, 1u64)
-    } else {
-        // Assume bytes if no suffix
-        (size_str.as_str(), 1u64)
-    };
-
-    let num: f64 = num_str
-        .trim()
-        .parse()
-        .map_err(|_| format!("Invalid number in size: '{}'", num_str.trim()))?;
-
-    if num < 0.0 {
-        return Err(format!("Size cannot be negative: {}", num));
-    }
-
-    Ok((num * multiplier as f64) as u64)
-}
-
-/// Truncate a path string for display, keeping the end
-pub fn truncate_path(path: &str, max_len: usize) -> String {
-    if path.len() <= max_len {
-        path.to_string()
-    } else if max_len <= 3 {
-        "...".to_string()
-    } else {
-        format!("...{}", &path[path.len() - max_len + 3..])
-    }
-}
-
-/// Print the bossa banner
+/// Print the bossa banner.
 pub fn banner() {
+    use colored::Colorize;
     println!(
         "{}",
         r#"

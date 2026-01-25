@@ -514,7 +514,7 @@ fn apply_collection(
     fs::create_dir_all(&root)?;
 
     // Clone in parallel
-    let pb = progress::clone_bar(repos_to_clone.len() as u64);
+    let pb = progress::clone_bar(repos_to_clone.len() as u64, "Cloning");
     let cloned = Arc::new(AtomicUsize::new(0));
     let failed = Arc::new(AtomicUsize::new(0));
     let failed_repos: Arc<std::sync::Mutex<Vec<(String, String)>>> =
