@@ -185,18 +185,37 @@ impl Backend for NativeBackend {
 
 ---
 
-### 5. Cross-Storage Duplicate Detection (Future)
+### 5. ~~Cross-Storage Duplicate Detection~~ ✅ DONE
 
-Find duplicates across iCloud + T9 + local:
+Implemented `bossa storage duplicates` command:
 
 ```bash
-bossa storage duplicates
+bossa storage duplicates [--min-size 1048576]
 
-Cross-storage duplicates:
-  file.pdf (100 MB)
-    ★ /Volumes/T9/archive/file.pdf
-    ✗ ~/Library/Mobile Documents/.../file.pdf (evictable)
+Cross-Storage Duplicates
+  Comparing 2 manifests (min size: 1.0 MB)
+
+  T9 ↔ icloud
+
+      100.0 MB file.pdf
+             ↳ archive/file.pdf
+
+    Total: 5 files (500.0 MB)
+
+Summary
+  Total: 5 duplicate files (500.0 MB)
+
+  → Files on T9 can be safely evicted from iCloud
+    bossa icloud evict <path> --dry-run
 ```
+
+**What was done:**
+
+- Added `CrossManifestDuplicate` type in `crates/manifest/src/types.rs`
+- Added `Manifest::compare_with()` method using SQL ATTACH DATABASE for efficient comparison
+- Added `StorageCommand::Duplicates` CLI variant
+- Implemented pairwise manifest comparison with display of top 10 per pair
+- Added 3 unit tests for cross-manifest comparison
 
 ---
 
@@ -248,13 +267,16 @@ cargo doc -p icloud --open
 | ------------------------------------ | ------------------------------------ |
 | `crates/icloud/src/lib.rs`           | Client API, safety docs              |
 | `crates/icloud/src/backend/brctl.rs` | brctl CLI implementation             |
-| `src/commands/icloud.rs`             | CLI command implementations          |
+| `crates/manifest/src/lib.rs`         | Manifest API, cross-manifest compare |
+| `src/commands/icloud.rs`             | iCloud CLI commands                  |
+| `src/commands/storage.rs`            | Storage status & duplicates commands |
 | `src/ui.rs`                          | Shared utilities (format_size, etc.) |
 
 ---
 
 ## Recent Changes
 
+- **0f2330f**: Added `bossa storage duplicates` cross-storage duplicate detection
 - **f30c842**: Added `bossa storage status` unified storage overview command
 - **200999d**: Improved status detection using block allocation (replaces unreliable xattr/mdls approach)
 - **b934adf**: Refactored CLI with shared utilities, progress bar, better error handling
@@ -265,9 +287,9 @@ cargo doc -p icloud --open
 
 ## Recommendation
 
-**Next step: Integration tests (#3) or Cross-storage duplicates (#5)**
+**Next step: Integration tests (#3) or iCloud-aware eviction**
 
-The core iCloud functionality and storage overview are complete. Next priorities:
+The core iCloud functionality, storage overview, and cross-storage duplicates are complete. Next priorities:
 
 1. **Integration tests** - Real iCloud tests to catch edge cases
-2. **Cross-storage duplicates** - Find files that exist on both iCloud and T9, allowing safe eviction
+2. **iCloud-aware eviction** - `bossa icloud evict --from-duplicates` to evict only files that have backups on T9
