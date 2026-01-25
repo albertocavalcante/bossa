@@ -348,8 +348,11 @@ fn show_hints(icloud_stats: &Option<ICloudStats>, manifests: &[ManifestInfo]) {
 // Cross-Storage Duplicates
 // ============================================================================
 
-/// Find duplicates across all scanned manifests
-pub fn duplicates(min_size: u64) -> Result<()> {
+/// Find duplicates across scanned manifests
+///
+/// If `filter` is empty, compares all manifests. Otherwise, only compares
+/// the specified manifests.
+pub fn duplicates(filter: &[String], min_size: u64) -> Result<()> {
     ui::header("Cross-Storage Duplicates");
 
     let manifest_dir = config::config_dir()?.join("manifests");
@@ -359,7 +362,7 @@ pub fn duplicates(min_size: u64) -> Result<()> {
     }
 
     // Collect all manifest paths
-    let manifests: Vec<(String, std::path::PathBuf)> = fs::read_dir(&manifest_dir)?
+    let all_manifests: Vec<(String, std::path::PathBuf)> = fs::read_dir(&manifest_dir)?
         .flatten()
         .filter_map(|entry| {
             let path = entry.path();
@@ -376,13 +379,43 @@ pub fn duplicates(min_size: u64) -> Result<()> {
         })
         .collect();
 
+    // Filter manifests if specified
+    let manifests: Vec<(String, std::path::PathBuf)> = if filter.is_empty() {
+        all_manifests
+    } else {
+        let filter_lower: Vec<String> = filter.iter().map(|s| s.to_lowercase()).collect();
+        let filtered: Vec<_> = all_manifests
+            .into_iter()
+            .filter(|(name, _)| filter_lower.contains(&name.to_lowercase()))
+            .collect();
+
+        // Check for missing manifests
+        for requested in &filter_lower {
+            if !filtered.iter().any(|(n, _)| n.to_lowercase() == *requested) {
+                ui::warn(&format!("Manifest '{}' not found", requested));
+            }
+        }
+
+        filtered
+    };
+
     if manifests.len() < 2 {
         ui::warn("Need at least 2 scanned manifests to compare.");
-        println!("  Scan more storage with: {}", "bossa manifest scan <path>".cyan());
+        if !filter.is_empty() {
+            println!("  Requested: {}", filter.join(", ").cyan());
+        }
+        println!("  Available manifests:");
+        list_available_manifests(&manifest_dir)?;
         return Ok(());
     }
 
-    println!("  Comparing {} manifests (min size: {})\n", manifests.len(), ui::format_size(min_size));
+    let manifest_names: Vec<&str> = manifests.iter().map(|(n, _)| n.as_str()).collect();
+    println!(
+        "  Comparing {} manifests: {} (min size: {})\n",
+        manifests.len(),
+        manifest_names.join(", ").cyan(),
+        ui::format_size(min_size)
+    );
 
     let mut total_duplicates = 0u64;
     let mut total_size = 0u64;
@@ -499,6 +532,29 @@ fn compare_manifests(
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/// List available manifest names
+fn list_available_manifests(manifest_dir: &std::path::Path) -> Result<()> {
+    let mut names: Vec<String> = fs::read_dir(manifest_dir)?
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if path.extension().map(|e| e == "db").unwrap_or(false) {
+                path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+    names.sort();
+
+    for name in names {
+        println!("    - {}", name.cyan());
+    }
+    Ok(())
+}
 
 /// Calculate percentage safely, avoiding division by zero
 fn calc_percent(part: u64, total: u64) -> u32 {

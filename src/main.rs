@@ -154,7 +154,9 @@ fn main() -> Result<()> {
         Command::Storage(cmd) => {
             match cmd {
                 StorageCommand::Status => commands::storage::status(),
-                StorageCommand::Duplicates { min_size } => commands::storage::duplicates(min_size),
+                StorageCommand::Duplicates { manifests, min_size } => {
+                    commands::storage::duplicates(&manifests, min_size)
+                }
             }
         }
         Command::Refs(cmd) => {

@@ -414,6 +414,10 @@ pub enum StorageCommand {
 
     /// Find duplicates across storage locations (requires scanned manifests)
     Duplicates {
+        /// Manifest names to compare (e.g., "icloud t9"). If empty, compares all.
+        #[arg(value_name = "MANIFEST")]
+        manifests: Vec<String>,
+
         /// Minimum file size to consider (bytes, default 1MB)
         #[arg(long, default_value = "1048576")]
         min_size: u64,
