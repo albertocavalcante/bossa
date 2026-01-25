@@ -1,0 +1,43 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test", "rust_doc", "rust_clippy")
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+
+package(default_visibility = ["//visibility:public"])
+
+# Export Cargo.toml for reference
+exports_files(["Cargo.toml"])
+
+# brewkit library crate
+rust_library(
+    name = "brewkit",
+    srcs = glob(["src/**/*.rs"]),
+    crate_root = "src/lib.rs",
+    edition = "2024",
+    aliases = aliases(),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    deps = [
+        "@crates//:serde",
+        "@crates//:serde_json",
+        "@crates//:thiserror",
+    ],
+)
+
+# Unit tests
+rust_test(
+    name = "brewkit_test",
+    crate = ":brewkit",
+    deps = [
+        "@crates//:tempfile",
+    ],
+)
+
+# Clippy linting
+rust_clippy(
+    name = "brewkit_clippy",
+    deps = [":brewkit"],
+)
+
+# Documentation
+rust_doc(
+    name = "brewkit_doc",
+    crate = ":brewkit",
+)

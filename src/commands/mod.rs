@@ -5,6 +5,7 @@ pub mod declarative;
 pub mod crud;
 
 // Core commands
+pub mod brew;
 pub mod caches;
 pub mod collections;
 pub mod doctor;

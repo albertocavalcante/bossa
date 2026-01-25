@@ -53,6 +53,7 @@ log = "0.4"
 walkdir = "2"
 
 # Workspace crates
+brewkit = { path = "crates/brewkit" }
 declarative = { path = "crates/declarative" }
 icloud = { path = "crates/icloud" }
 libc = "0.2.180"

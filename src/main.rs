@@ -159,6 +159,7 @@ fn main() -> Result<()> {
                 }
             }
         }
+        Command::Brew(cmd) => commands::brew::run(&ctx, cmd),
         Command::Refs(cmd) => {
             // Show deprecation warning
             ui::warn("'bossa refs' is deprecated. Use 'bossa collections <subcommand> refs' instead.");

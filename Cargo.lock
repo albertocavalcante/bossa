@@ -119,6 +119,7 @@ name = "bossa"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "brewkit",
  "chrono",
  "clap",
  "clap_complete",
@@ -142,6 +143,16 @@ dependencies = [
  "thiserror 2.0.18",
  "toml",
  "walkdir",
+]
+
+[[package]]
+name = "brewkit"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

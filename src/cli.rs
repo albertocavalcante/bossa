@@ -81,6 +81,10 @@ pub enum Command {
     #[command(subcommand, name = "storage")]
     Storage(StorageCommand),
 
+    /// Homebrew package management
+    #[command(subcommand)]
+    Brew(BrewCommand),
+
     /// [DEPRECATED] Manage reference repositories (use 'collections' instead)
     #[command(subcommand)]
     Refs(RefsCommand),
@@ -438,6 +442,49 @@ pub enum StorageCommand {
         /// Maximum duplicates to show per comparison (0 = unlimited)
         #[arg(long, default_value = "10")]
         limit: usize,
+    },
+}
+
+// ============================================================================
+// Brew Commands
+// ============================================================================
+
+#[derive(Debug, Subcommand)]
+pub enum BrewCommand {
+    /// Apply Brewfile - install missing packages
+    Apply {
+        /// Only install essential packages (taps + core formulas, no casks/mas/vscode)
+        #[arg(long)]
+        essential: bool,
+
+        /// Preview what would be installed without doing it
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Path to Brewfile (defaults to ~/dotfiles/Brewfile)
+        #[arg(long, short)]
+        file: Option<String>,
+    },
+
+    /// Capture installed packages to Brewfile
+    Capture {
+        /// Output path (defaults to ~/dotfiles/Brewfile)
+        #[arg(long)]
+        output: Option<String>,
+    },
+
+    /// Detect drift between installed packages and Brewfile
+    Audit {
+        /// Path to Brewfile (defaults to ~/dotfiles/Brewfile)
+        #[arg(long, short)]
+        file: Option<String>,
+    },
+
+    /// List installed Homebrew packages
+    List {
+        /// Filter by package type (tap, brew, cask, mas, vscode)
+        #[arg(long, short)]
+        r#type: Option<String>,
     },
 }
 

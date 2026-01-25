@@ -11,6 +11,7 @@ rust_binary(
     crate_root = "src/main.rs",
     edition = "2024",
     deps = all_crate_deps(normal = True) + [
+        "//crates/brewkit",
         "//crates/declarative",
         "//crates/icloud",
         "//crates/manifest",

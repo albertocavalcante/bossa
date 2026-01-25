@@ -1,0 +1,21 @@
+[package]
+name = "brewkit"
+version = "0.1.0"
+authors = ["Alberto Cavalcante"]
+categories = ["development-tools", "config"]
+edition = "2024"
+keywords = ["homebrew", "brew", "package-manager", "macos"]
+license = "MIT"
+rust-version = "1.85"
+description = "Pure Rust library for Homebrew package management"
+
+[dependencies]
+# Error handling
+thiserror = "2"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
