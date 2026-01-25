@@ -38,8 +38,8 @@ mod types;
 
 pub use error::{Error, Result};
 pub use types::{
-    DuplicateGroup, DuplicateStats, ManifestStats, NoProgress, ProgressCallback, ScanProgress,
-    ScanResult,
+    CrossManifestDuplicate, DuplicateGroup, DuplicateStats, ManifestStats, NoProgress,
+    ProgressCallback, ScanProgress, ScanResult,
 };
 
 use blake3::Hasher;
@@ -278,6 +278,62 @@ impl Manifest {
             |row| row.get(0),
         )?;
         Ok(size as u64)
+    }
+
+    /// Find files that exist in both this manifest and another
+    ///
+    /// Uses SQL ATTACH DATABASE for efficient cross-manifest comparison.
+    ///
+    /// # Arguments
+    /// * `other_db_path` - Path to the other manifest database
+    /// * `min_size` - Minimum file size to consider (in bytes)
+    ///
+    /// # Returns
+    /// A list of `CrossManifestDuplicate`s, sorted by size (descending)
+    ///
+    /// # Errors
+    /// Returns an error if `other_db_path` does not exist or cannot be attached.
+    pub fn compare_with(
+        &self,
+        other_db_path: &Path,
+        min_size: u64,
+    ) -> Result<Vec<CrossManifestDuplicate>> {
+        // Validate the other database exists
+        if !other_db_path.exists() {
+            return Err(Error::PathNotFound(other_db_path.to_path_buf()));
+        }
+
+        // Attach the other database
+        self.conn.execute(
+            "ATTACH DATABASE ?1 AS other",
+            [other_db_path.to_string_lossy().as_ref()],
+        )?;
+
+        // Find matching hashes across both manifests
+        let mut stmt = self.conn.prepare(
+            "SELECT m.hash, m.size, m.path, o.path
+             FROM files m
+             INNER JOIN other.files o ON m.hash = o.hash
+             WHERE m.size >= ?1
+             ORDER BY m.size DESC",
+        )?;
+
+        let duplicates = stmt
+            .query_map([min_size as i64], |row| {
+                Ok(CrossManifestDuplicate {
+                    hash: row.get(0)?,
+                    size: row.get::<_, i64>(1)? as u64,
+                    source_path: row.get(2)?,
+                    other_path: row.get(3)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Detach the other database
+        self.conn.execute("DETACH DATABASE other", [])?;
+
+        Ok(duplicates)
     }
 
     /// Get duplicate statistics
@@ -525,5 +581,100 @@ mod tests {
 
         assert_eq!(result.pruned, 1);
         assert_eq!(manifest.file_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_compare_with() {
+        let tmp = TempDir::new().unwrap();
+
+        // Create two separate scan directories
+        let dir_a = tmp.path().join("storage_a");
+        let dir_b = tmp.path().join("storage_b");
+        std::fs::create_dir(&dir_a).unwrap();
+        std::fs::create_dir(&dir_b).unwrap();
+
+        // Create files - "shared content" exists in both, others are unique
+        std::fs::write(dir_a.join("shared.txt"), "shared content").unwrap();
+        std::fs::write(dir_a.join("unique_a.txt"), "only in A").unwrap();
+
+        std::fs::write(dir_b.join("also_shared.txt"), "shared content").unwrap();
+        std::fs::write(dir_b.join("unique_b.txt"), "only in B").unwrap();
+
+        // Create and populate manifests
+        let db_a = tmp.path().join("manifest_a.db");
+        let db_b = tmp.path().join("manifest_b.db");
+
+        let manifest_a = Manifest::open(&db_a).unwrap();
+        manifest_a.scan(&dir_a, false, &mut NoProgress).unwrap();
+
+        let manifest_b = Manifest::open(&db_b).unwrap();
+        manifest_b.scan(&dir_b, false, &mut NoProgress).unwrap();
+
+        // Compare manifests
+        let cross_dups = manifest_a.compare_with(&db_b, 0).unwrap();
+
+        assert_eq!(cross_dups.len(), 1);
+        assert_eq!(cross_dups[0].source_path, "shared.txt");
+        assert_eq!(cross_dups[0].other_path, "also_shared.txt");
+        assert_eq!(cross_dups[0].size, 14); // "shared content".len()
+    }
+
+    #[test]
+    fn test_compare_with_min_size() {
+        let tmp = TempDir::new().unwrap();
+
+        let dir_a = tmp.path().join("storage_a");
+        let dir_b = tmp.path().join("storage_b");
+        std::fs::create_dir(&dir_a).unwrap();
+        std::fs::create_dir(&dir_b).unwrap();
+
+        // Create small shared file (5 bytes) and large shared file (100 bytes)
+        std::fs::write(dir_a.join("small.txt"), "small").unwrap();
+        std::fs::write(dir_a.join("large.txt"), "x".repeat(100)).unwrap();
+
+        std::fs::write(dir_b.join("small.txt"), "small").unwrap();
+        std::fs::write(dir_b.join("large.txt"), "x".repeat(100)).unwrap();
+
+        let db_a = tmp.path().join("manifest_a.db");
+        let db_b = tmp.path().join("manifest_b.db");
+
+        let manifest_a = Manifest::open(&db_a).unwrap();
+        manifest_a.scan(&dir_a, false, &mut NoProgress).unwrap();
+
+        let manifest_b = Manifest::open(&db_b).unwrap();
+        manifest_b.scan(&dir_b, false, &mut NoProgress).unwrap();
+
+        // With min_size=50, only large file should match
+        let cross_dups = manifest_a.compare_with(&db_b, 50).unwrap();
+
+        assert_eq!(cross_dups.len(), 1);
+        assert_eq!(cross_dups[0].source_path, "large.txt");
+        assert_eq!(cross_dups[0].size, 100);
+    }
+
+    #[test]
+    fn test_compare_with_missing_database() {
+        let tmp = TempDir::new().unwrap();
+
+        // Create manifest A
+        let dir_a = tmp.path().join("storage_a");
+        std::fs::create_dir(&dir_a).unwrap();
+        std::fs::write(dir_a.join("file.txt"), "content").unwrap();
+
+        let db_a = tmp.path().join("manifest_a.db");
+        let manifest_a = Manifest::open(&db_a).unwrap();
+        manifest_a.scan(&dir_a, false, &mut NoProgress).unwrap();
+
+        // Try to compare with non-existent database
+        let missing_db = tmp.path().join("does_not_exist.db");
+        let result = manifest_a.compare_with(&missing_db, 0);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::PathNotFound(path) => {
+                assert_eq!(path, missing_db);
+            }
+            other => panic!("Expected PathNotFound error, got: {:?}", other),
+        }
     }
 }

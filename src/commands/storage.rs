@@ -345,6 +345,158 @@ fn show_hints(icloud_stats: &Option<ICloudStats>, manifests: &[ManifestInfo]) {
 }
 
 // ============================================================================
+// Cross-Storage Duplicates
+// ============================================================================
+
+/// Find duplicates across all scanned manifests
+pub fn duplicates(min_size: u64) -> Result<()> {
+    ui::header("Cross-Storage Duplicates");
+
+    let manifest_dir = config::config_dir()?.join("manifests");
+    if !manifest_dir.exists() {
+        ui::warn("No manifests found. Scan storage first with: bossa manifest scan <path>");
+        return Ok(());
+    }
+
+    // Collect all manifest paths
+    let manifests: Vec<(String, std::path::PathBuf)> = fs::read_dir(&manifest_dir)?
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if path.extension().map(|e| e == "db").unwrap_or(false) {
+                let name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                Some((name, path))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if manifests.len() < 2 {
+        ui::warn("Need at least 2 scanned manifests to compare.");
+        println!("  Scan more storage with: {}", "bossa manifest scan <path>".cyan());
+        return Ok(());
+    }
+
+    println!("  Comparing {} manifests (min size: {})\n", manifests.len(), ui::format_size(min_size));
+
+    let mut total_duplicates = 0u64;
+    let mut total_size = 0u64;
+
+    // Compare all pairs of manifests
+    for i in 0..manifests.len() {
+        for j in (i + 1)..manifests.len() {
+            let (name_a, path_a) = &manifests[i];
+            let (name_b, path_b) = &manifests[j];
+
+            match compare_manifests(path_a, path_b, name_a, name_b, min_size) {
+                Ok((count, size)) => {
+                    total_duplicates += count;
+                    total_size += size;
+                }
+                Err(e) => {
+                    ui::dim(&format!("  Error comparing {} vs {}: {}", name_a, name_b, e));
+                }
+            }
+        }
+    }
+
+    // Summary
+    println!();
+    if total_duplicates > 0 {
+        ui::section("Summary");
+        ui::kv(
+            "Total",
+            &format!(
+                "{} duplicate files ({})",
+                total_duplicates,
+                ui::format_size(total_size)
+            ),
+        );
+        println!();
+        println!(
+            "  {} Files on T9 can be safely evicted from iCloud",
+            "→".dimmed()
+        );
+        println!(
+            "    {}",
+            "bossa icloud evict <path> --dry-run".cyan()
+        );
+    } else {
+        ui::dim("  No cross-storage duplicates found.");
+    }
+
+    Ok(())
+}
+
+/// Compare two manifests and print duplicates
+fn compare_manifests(
+    path_a: &std::path::Path,
+    path_b: &std::path::Path,
+    name_a: &str,
+    name_b: &str,
+    min_size: u64,
+) -> Result<(u64, u64)> {
+    let manifest_a = manifest::Manifest::open(path_a)
+        .context(format!("Failed to open manifest: {}", name_a))?;
+
+    let cross_dups = manifest_a
+        .compare_with(path_b, min_size)
+        .context(format!("Failed to compare {} with {}", name_a, name_b))?;
+
+    if cross_dups.is_empty() {
+        return Ok((0, 0));
+    }
+
+    // Group duplicates by size for better display
+    let count = cross_dups.len() as u64;
+    let total_size: u64 = cross_dups.iter().map(|d| d.size).sum();
+
+    println!(
+        "  {} {} {}\n",
+        name_a.green(),
+        "↔".dimmed(),
+        name_b.blue()
+    );
+
+    // Show top duplicates (limit to 10 for readability)
+    let display_limit = 10;
+    for dup in cross_dups.iter().take(display_limit) {
+        println!(
+            "    {} {}",
+            format!("{:>10}", ui::format_size(dup.size)).dimmed(),
+            dup.source_path
+        );
+        println!(
+            "             {} {}",
+            "↳".dimmed(),
+            dup.other_path.dimmed()
+        );
+    }
+
+    if count > display_limit as u64 {
+        println!(
+            "    {} ... and {} more",
+            " ".repeat(10),
+            count - display_limit as u64
+        );
+    }
+
+    println!(
+        "\n    {} {} files ({})\n",
+        "Total:".bold(),
+        count,
+        ui::format_size(total_size)
+    );
+
+    Ok((count, total_size))
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 

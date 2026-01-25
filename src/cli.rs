@@ -411,6 +411,13 @@ pub enum ManifestCommand {
 pub enum StorageCommand {
     /// Show unified storage overview
     Status,
+
+    /// Find duplicates across storage locations (requires scanned manifests)
+    Duplicates {
+        /// Minimum file size to consider (bytes, default 1MB)
+        #[arg(long, default_value = "1048576")]
+        min_size: u64,
+    },
 }
 
 // ============================================================================

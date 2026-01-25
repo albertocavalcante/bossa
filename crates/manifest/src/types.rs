@@ -16,6 +16,23 @@ pub struct DuplicateGroup {
     pub count: usize,
 }
 
+/// A file that exists in multiple manifests (cross-storage duplicate)
+///
+/// When comparing manifests A and B via `manifest_a.compare_with(path_b, min_size)`:
+/// - `source_path` is always from the calling manifest (A)
+/// - `other_path` is always from the compared manifest (B)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossManifestDuplicate {
+    /// BLAKE3 hash of the file content
+    pub hash: String,
+    /// Size of the file in bytes
+    pub size: u64,
+    /// Path in the calling manifest (relative to its scan root)
+    pub source_path: String,
+    /// Path in the compared manifest (relative to its scan root)
+    pub other_path: String,
+}
+
 impl DuplicateGroup {
     /// Calculate total wasted space (all copies except one)
     pub fn wasted_space(&self) -> u64 {
