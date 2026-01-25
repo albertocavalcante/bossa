@@ -13,7 +13,7 @@ mod ui;
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use cli::{AddCommand, Cli, Command, RmCommand, CollectionsCommand, ICloudCommand, ManifestCommand, RefsCommand};
+use cli::{AddCommand, Cli, Command, RmCommand, CollectionsCommand, ICloudCommand, ManifestCommand, RefsCommand, StorageCommand};
 use std::io;
 
 /// Global context for the application
@@ -150,6 +150,11 @@ fn main() -> Result<()> {
                 }
             };
             commands::icloud::run(icloud_cmd)
+        }
+        Command::Storage(cmd) => {
+            match cmd {
+                StorageCommand::Status => commands::storage::status(),
+            }
         }
         Command::Refs(cmd) => {
             // Show deprecation warning

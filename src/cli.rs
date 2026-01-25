@@ -77,6 +77,10 @@ pub enum Command {
     #[command(subcommand, name = "icloud")]
     ICloud(ICloudCommand),
 
+    /// Unified storage overview (SSD, iCloud, external drives)
+    #[command(subcommand, name = "storage")]
+    Storage(StorageCommand),
+
     /// [DEPRECATED] Manage reference repositories (use 'collections' instead)
     #[command(subcommand)]
     Refs(RefsCommand),
@@ -397,6 +401,16 @@ pub enum ManifestCommand {
         #[arg(long)]
         delete: bool,
     },
+}
+
+// ============================================================================
+// Storage Commands
+// ============================================================================
+
+#[derive(Debug, Subcommand)]
+pub enum StorageCommand {
+    /// Show unified storage overview
+    Status,
 }
 
 // ============================================================================

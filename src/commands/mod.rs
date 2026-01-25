@@ -12,3 +12,4 @@ pub mod icloud;
 pub mod manifest;
 pub mod migrate;
 pub mod nova;
+pub mod storage;

@@ -87,7 +87,44 @@ Implemented block-based detection which is more reliable than mdls:
 
 ---
 
-### 2. Integration Tests (Medium Priority)
+### 2. ~~Storage Overview Command~~ ✅ DONE
+
+Implemented `bossa storage status` command - unified view of all storage:
+
+```
+Storage Overview
+────────────────
+
+Local SSD
+  Used: 220.8 GB / 228.3 GB (96%)
+  Available: 7.4 GB
+
+iCloud Drive
+  Local: 0 B (0 files downloaded)
+  Cloud-only: 3.8 GB (309 files evicted)
+
+T9 External
+  Status: Mounted ✓
+  Used: 18.1 GB / 1.64 TB (1%)
+
+Scanned Manifests
+        1.8 GB     2768 files │ tmp │ 241 dups (104.6 MB)
+
+Hints
+  → Clean 104.6 MB in duplicates: bossa manifest duplicates <path>
+```
+
+**Features:**
+
+- Local SSD space via `statvfs`
+- iCloud summary (local/cloud-only/evictable)
+- T9 external drive status and space
+- Scanned manifest summaries with duplicate stats
+- Actionable optimization hints with commands
+
+---
+
+### 3. Integration Tests (Medium Priority)
 
 Add tests that work with real iCloud Drive:
 
@@ -117,7 +154,7 @@ fn test_real_icloud_evict_and_download() {
 
 ---
 
-### 3. Native FFI Backend (Defer)
+### 4. Native FFI Backend (Defer)
 
 Add native backend using `objc` crate for `NSFileManager`.
 
@@ -148,26 +185,6 @@ impl Backend for NativeBackend {
 
 ---
 
-### 4. Storage Overview Command (New Idea)
-
-Add unified storage view combining all sources:
-
-```bash
-bossa storage status
-
-Storage Overview
-────────────────
-  Local SSD:     245 GB used / 500 GB (49%)
-  iCloud Drive:  3.2 GB local, 15 GB cloud
-  T9 External:   1.2 TB used / 2 TB (60%)
-
-Optimization opportunities:
-  - 3.2 GB evictable from iCloud (bossa icloud find-evictable)
-  - 2.1 GB duplicates on T9 (bossa manifest duplicates /Volumes/T9)
-```
-
----
-
 ### 5. Cross-Storage Duplicate Detection (Future)
 
 Find duplicates across iCloud + T9 + local:
@@ -183,7 +200,7 @@ Cross-storage duplicates:
 
 ---
 
-### 6. Configuration (Low Priority)
+### 6. Configuration (Low Priority, Deferred)
 
 ```toml
 # ~/.config/bossa/config.toml
@@ -238,6 +255,7 @@ cargo doc -p icloud --open
 
 ## Recent Changes
 
+- **[pending]**: Added `bossa storage status` unified storage overview command
 - **200999d**: Improved status detection using block allocation (replaces unreliable xattr/mdls approach)
 - **b934adf**: Refactored CLI with shared utilities, progress bar, better error handling
 - **21d2823**: Initial CLI integration with all commands
@@ -247,8 +265,9 @@ cargo doc -p icloud --open
 
 ## Recommendation
 
-**Next step: Storage overview command (#4)**
+**Next step: Integration tests (#3) or Cross-storage duplicates (#5)**
 
-Now that status detection is reliable, the logical next step is the unified storage overview command (`bossa storage status`) to tie together iCloud, manifest, and T9 storage into a single view with optimization hints.
+The core iCloud functionality and storage overview are complete. Next priorities:
 
-Alternatively, integration tests (#2) would be valuable for catching edge cases.
+1. **Integration tests** - Real iCloud tests to catch edge cases
+2. **Cross-storage duplicates** - Find files that exist on both iCloud and T9, allowing safe eviction

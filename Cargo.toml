@@ -55,6 +55,7 @@ walkdir = "2"
 # Workspace crates
 declarative = { path = "crates/declarative" }
 icloud = { path = "crates/icloud" }
+libc = "0.2.180"
 manifest = { path = "crates/manifest" }
 
 [dev-dependencies]
