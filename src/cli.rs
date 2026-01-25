@@ -413,14 +413,31 @@ pub enum StorageCommand {
     Status,
 
     /// Find duplicates across storage locations (requires scanned manifests)
+    ///
+    /// Compare files across different storage locations to find duplicates.
+    /// Requires manifests to be scanned first with `bossa manifest scan <path>`.
+    ///
+    /// Examples:
+    ///   bossa storage duplicates              # Compare all manifests
+    ///   bossa storage duplicates icloud t9    # Compare only iCloud vs T9
+    ///   bossa storage duplicates --list       # Show available manifests
     Duplicates {
         /// Manifest names to compare (e.g., "icloud t9"). If empty, compares all.
+        /// Use --list to see available manifest names.
         #[arg(value_name = "MANIFEST")]
         manifests: Vec<String>,
 
-        /// Minimum file size to consider (bytes, default 1MB)
+        /// List available manifests and exit (don't compare)
+        #[arg(long, short)]
+        list: bool,
+
+        /// Minimum file size to consider (e.g., 1048576 for 1MB)
         #[arg(long, default_value = "1048576")]
         min_size: u64,
+
+        /// Maximum duplicates to show per comparison (0 = unlimited)
+        #[arg(long, default_value = "10")]
+        limit: usize,
     },
 }
 

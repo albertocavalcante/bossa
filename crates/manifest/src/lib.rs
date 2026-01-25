@@ -677,4 +677,44 @@ mod tests {
             other => panic!("Expected PathNotFound error, got: {:?}", other),
         }
     }
+
+    #[test]
+    fn test_compare_with_empty_manifests() {
+        let tmp = TempDir::new().unwrap();
+
+        // Create two empty manifests (no files scanned)
+        let db_a = tmp.path().join("empty_a.db");
+        let db_b = tmp.path().join("empty_b.db");
+
+        let _manifest_a = Manifest::open(&db_a).unwrap();
+        let _manifest_b = Manifest::open(&db_b).unwrap();
+
+        // Re-open and compare - should return empty, not error
+        let manifest_a = Manifest::open(&db_a).unwrap();
+        let result = manifest_a.compare_with(&db_b, 0).unwrap();
+
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_compare_with_one_empty_manifest() {
+        let tmp = TempDir::new().unwrap();
+
+        // Create manifest A with files
+        let dir_a = tmp.path().join("storage_a");
+        std::fs::create_dir(&dir_a).unwrap();
+        std::fs::write(dir_a.join("file.txt"), "content").unwrap();
+
+        let db_a = tmp.path().join("manifest_a.db");
+        let manifest_a = Manifest::open(&db_a).unwrap();
+        manifest_a.scan(&dir_a, false, &mut NoProgress).unwrap();
+
+        // Create empty manifest B
+        let db_b = tmp.path().join("empty_b.db");
+        let _manifest_b = Manifest::open(&db_b).unwrap();
+
+        // Compare - should return empty since B has no files
+        let result = manifest_a.compare_with(&db_b, 0).unwrap();
+        assert_eq!(result.len(), 0);
+    }
 }

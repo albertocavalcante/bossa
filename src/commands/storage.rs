@@ -350,21 +350,144 @@ fn show_hints(icloud_stats: &Option<ICloudStats>, manifests: &[ManifestInfo]) {
 
 /// Find duplicates across scanned manifests
 ///
-/// If `filter` is empty, compares all manifests. Otherwise, only compares
-/// the specified manifests.
-pub fn duplicates(filter: &[String], min_size: u64) -> Result<()> {
-    ui::header("Cross-Storage Duplicates");
-
+/// # Arguments
+/// * `filter` - Manifest names to compare. If empty, compares all.
+/// * `list_only` - If true, just list available manifests and exit.
+/// * `min_size` - Minimum file size to consider.
+/// * `display_limit` - Maximum duplicates to show per comparison (0 = unlimited).
+pub fn duplicates(filter: &[String], list_only: bool, min_size: u64, display_limit: usize) -> Result<()> {
     let manifest_dir = config::config_dir()?.join("manifests");
+
+    // Handle missing manifest directory
     if !manifest_dir.exists() {
-        ui::warn("No manifests found. Scan storage first with: bossa manifest scan <path>");
+        ui::header("Cross-Storage Duplicates");
+        ui::warn("No manifests found.");
+        println!();
+        println!("  Scan storage first:");
+        println!("    {} {}", "$".dimmed(), "bossa manifest scan /Volumes/T9".cyan());
+        println!("    {} {}", "$".dimmed(), "bossa manifest scan ~/Library/Mobile\\ Documents/com~apple~CloudDocs".cyan());
         return Ok(());
     }
 
-    // Collect all manifest paths
-    let all_manifests: Vec<(String, std::path::PathBuf)> = fs::read_dir(&manifest_dir)?
-        .flatten()
+    // Collect all available manifests
+    let all_manifests = collect_manifests(&manifest_dir)?;
+
+    // Handle --list flag
+    if list_only {
+        ui::header("Available Manifests");
+        if all_manifests.is_empty() {
+            ui::dim("  No manifests found.");
+        } else {
+            for (name, path) in &all_manifests {
+                // Get basic stats
+                if let Ok(m) = manifest::Manifest::open(path) {
+                    if let Ok(stats) = m.stats() {
+                        println!(
+                            "  {} {} files ({})",
+                            format!("{:>12}", name).cyan(),
+                            stats.file_count,
+                            ui::format_size(stats.total_size)
+                        );
+                    } else {
+                        println!("  {}", name.cyan());
+                    }
+                } else {
+                    println!("  {} {}", name.cyan(), "(error opening)".red());
+                }
+            }
+        }
+        println!();
+        println!("  Scan more storage:");
+        println!("    {} {}", "$".dimmed(), "bossa manifest scan <path>".cyan());
+        return Ok(());
+    }
+
+    ui::header("Cross-Storage Duplicates");
+
+    // Filter manifests if names specified
+    let (manifests, not_found) = filter_manifests(all_manifests, filter);
+
+    // Report any manifests that weren't found (show original input)
+    for (original, _) in &not_found {
+        ui::warn(&format!("Manifest '{}' not found (case-insensitive search)", original));
+    }
+
+    // Need at least 2 manifests to compare
+    if manifests.len() < 2 {
+        ui::warn("Need at least 2 manifests to compare.");
+        println!();
+        if !filter.is_empty() {
+            println!("  Requested: {}", filter.join(", "));
+        }
+        println!("  Available: {}", "bossa storage duplicates --list".cyan());
+        return Ok(());
+    }
+
+    // Show what we're comparing
+    let manifest_names: Vec<&str> = manifests.iter().map(|(n, _)| n.as_str()).collect();
+    println!(
+        "  Comparing: {} (min size: {})\n",
+        manifest_names.join(", ").cyan(),
+        ui::format_size(min_size)
+    );
+
+    let mut total_duplicates = 0u64;
+    let mut total_size = 0u64;
+    let mut comparison_errors = Vec::new();
+
+    // Compare all pairs of manifests
+    for i in 0..manifests.len() {
+        for j in (i + 1)..manifests.len() {
+            let (name_a, path_a) = &manifests[i];
+            let (name_b, path_b) = &manifests[j];
+
+            match compare_manifests(path_a, path_b, name_a, name_b, min_size, display_limit) {
+                Ok((count, size)) => {
+                    total_duplicates += count;
+                    total_size += size;
+                }
+                Err(e) => {
+                    comparison_errors.push(format!("{} vs {}: {}", name_a, name_b, e));
+                }
+            }
+        }
+    }
+
+    // Report any comparison errors
+    if !comparison_errors.is_empty() {
+        ui::section("Errors");
+        for err in &comparison_errors {
+            println!("  {} {}", "✗".red(), err);
+        }
+        println!();
+    }
+
+    // Summary
+    if total_duplicates > 0 {
+        ui::section("Summary");
+        ui::kv(
+            "Total",
+            &format!(
+                "{} duplicate files across storages ({})",
+                total_duplicates,
+                ui::format_size(total_size)
+            ),
+        );
+        println!();
+        println!("  {} Files backed up on T9 can be safely evicted from iCloud:", "Tip:".bold());
+        println!("    {} {}", "$".dimmed(), "bossa icloud evict <path> --dry-run".cyan());
+    } else if comparison_errors.is_empty() {
+        ui::dim("  No cross-storage duplicates found.");
+    }
+
+    Ok(())
+}
+
+/// Collect all manifest databases from the manifest directory
+fn collect_manifests(manifest_dir: &std::path::Path) -> Result<Vec<(String, std::path::PathBuf)>> {
+    let mut manifests: Vec<(String, std::path::PathBuf)> = fs::read_dir(manifest_dir)?
         .filter_map(|entry| {
+            let entry = entry.ok()?;
             let path = entry.path();
             if path.extension().map(|e| e == "db").unwrap_or(false) {
                 let name = path
@@ -379,91 +502,44 @@ pub fn duplicates(filter: &[String], min_size: u64) -> Result<()> {
         })
         .collect();
 
-    // Filter manifests if specified
-    let manifests: Vec<(String, std::path::PathBuf)> = if filter.is_empty() {
-        all_manifests
-    } else {
-        let filter_lower: Vec<String> = filter.iter().map(|s| s.to_lowercase()).collect();
-        let filtered: Vec<_> = all_manifests
-            .into_iter()
-            .filter(|(name, _)| filter_lower.contains(&name.to_lowercase()))
-            .collect();
+    manifests.sort_by(|(a, _), (b, _)| a.cmp(b));
+    Ok(manifests)
+}
 
-        // Check for missing manifests
-        for requested in &filter_lower {
-            if !filtered.iter().any(|(n, _)| n.to_lowercase() == *requested) {
-                ui::warn(&format!("Manifest '{}' not found", requested));
+/// A manifest entry: (name, path)
+type ManifestEntry = (String, std::path::PathBuf);
+
+/// Filter manifests by name (case-insensitive)
+///
+/// Returns (matched_manifests, not_found_with_original_input)
+#[allow(clippy::type_complexity)]
+fn filter_manifests(
+    all_manifests: Vec<ManifestEntry>,
+    filter: &[String],
+) -> (Vec<ManifestEntry>, Vec<(String, String)>) {
+    if filter.is_empty() {
+        return (all_manifests, Vec::new());
+    }
+
+    let mut matched = Vec::new();
+    let mut not_found = Vec::new();
+
+    for requested in filter {
+        let requested_lower = requested.to_lowercase();
+        if let Some(m) = all_manifests
+            .iter()
+            .find(|(name, _)| name.to_lowercase() == requested_lower)
+        {
+            // Avoid duplicates in matched list
+            if !matched.iter().any(|(n, _): &(String, _)| n == &m.0) {
+                matched.push(m.clone());
             }
-        }
-
-        filtered
-    };
-
-    if manifests.len() < 2 {
-        ui::warn("Need at least 2 scanned manifests to compare.");
-        if !filter.is_empty() {
-            println!("  Requested: {}", filter.join(", ").cyan());
-        }
-        println!("  Available manifests:");
-        list_available_manifests(&manifest_dir)?;
-        return Ok(());
-    }
-
-    let manifest_names: Vec<&str> = manifests.iter().map(|(n, _)| n.as_str()).collect();
-    println!(
-        "  Comparing {} manifests: {} (min size: {})\n",
-        manifests.len(),
-        manifest_names.join(", ").cyan(),
-        ui::format_size(min_size)
-    );
-
-    let mut total_duplicates = 0u64;
-    let mut total_size = 0u64;
-
-    // Compare all pairs of manifests
-    for i in 0..manifests.len() {
-        for j in (i + 1)..manifests.len() {
-            let (name_a, path_a) = &manifests[i];
-            let (name_b, path_b) = &manifests[j];
-
-            match compare_manifests(path_a, path_b, name_a, name_b, min_size) {
-                Ok((count, size)) => {
-                    total_duplicates += count;
-                    total_size += size;
-                }
-                Err(e) => {
-                    ui::dim(&format!("  Error comparing {} vs {}: {}", name_a, name_b, e));
-                }
-            }
+        } else {
+            not_found.push((requested.clone(), requested_lower));
         }
     }
 
-    // Summary
-    println!();
-    if total_duplicates > 0 {
-        ui::section("Summary");
-        ui::kv(
-            "Total",
-            &format!(
-                "{} duplicate files ({})",
-                total_duplicates,
-                ui::format_size(total_size)
-            ),
-        );
-        println!();
-        println!(
-            "  {} Files on T9 can be safely evicted from iCloud",
-            "→".dimmed()
-        );
-        println!(
-            "    {}",
-            "bossa icloud evict <path> --dry-run".cyan()
-        );
-    } else {
-        ui::dim("  No cross-storage duplicates found.");
-    }
-
-    Ok(())
+    (matched, not_found)
 }
 
 /// Compare two manifests and print duplicates
@@ -473,6 +549,7 @@ fn compare_manifests(
     name_a: &str,
     name_b: &str,
     min_size: u64,
+    display_limit: usize,
 ) -> Result<(u64, u64)> {
     let manifest_a = manifest::Manifest::open(path_a)
         .context(format!("Failed to open manifest: {}", name_a))?;
@@ -485,20 +562,20 @@ fn compare_manifests(
         return Ok((0, 0));
     }
 
-    // Group duplicates by size for better display
     let count = cross_dups.len() as u64;
     let total_size: u64 = cross_dups.iter().map(|d| d.size).sum();
 
+    // Header showing which manifests are being compared with clear labeling
     println!(
         "  {} {} {}\n",
-        name_a.green(),
+        format!("{} (source)", name_a).green(),
         "↔".dimmed(),
-        name_b.blue()
+        format!("{} (also exists)", name_b).blue()
     );
 
-    // Show top duplicates (limit to 10 for readability)
-    let display_limit = 10;
-    for dup in cross_dups.iter().take(display_limit) {
+    // Show duplicates (respect display_limit, 0 = unlimited)
+    let limit = if display_limit == 0 { usize::MAX } else { display_limit };
+    for dup in cross_dups.iter().take(limit) {
         println!(
             "    {} {}",
             format!("{:>10}", ui::format_size(dup.size)).dimmed(),
@@ -506,54 +583,28 @@ fn compare_manifests(
         );
         println!(
             "             {} {}",
-            "↳".dimmed(),
+            "└─".dimmed(),
             dup.other_path.dimmed()
         );
     }
 
-    if count > display_limit as u64 {
+    if count > limit as u64 {
         println!(
-            "    {} ... and {} more",
+            "    {}  ... and {} more (use {} to see all)",
             " ".repeat(10),
-            count - display_limit as u64
+            count - limit as u64,
+            "--limit 0".cyan()
         );
     }
 
     println!(
         "\n    {} {} files ({})\n",
-        "Total:".bold(),
+        "Subtotal:".bold(),
         count,
         ui::format_size(total_size)
     );
 
     Ok((count, total_size))
-}
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-/// List available manifest names
-fn list_available_manifests(manifest_dir: &std::path::Path) -> Result<()> {
-    let mut names: Vec<String> = fs::read_dir(manifest_dir)?
-        .flatten()
-        .filter_map(|entry| {
-            let path = entry.path();
-            if path.extension().map(|e| e == "db").unwrap_or(false) {
-                path.file_stem()
-                    .and_then(|s| s.to_str())
-                    .map(|s| s.to_string())
-            } else {
-                None
-            }
-        })
-        .collect();
-    names.sort();
-
-    for name in names {
-        println!("    - {}", name.cyan());
-    }
-    Ok(())
 }
 
 /// Calculate percentage safely, avoiding division by zero
