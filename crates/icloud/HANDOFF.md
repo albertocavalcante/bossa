@@ -255,7 +255,7 @@ cargo doc -p icloud --open
 
 ## Recent Changes
 
-- **[pending]**: Added `bossa storage status` unified storage overview command
+- **f30c842**: Added `bossa storage status` unified storage overview command
 - **200999d**: Improved status detection using block allocation (replaces unreliable xattr/mdls approach)
 - **b934adf**: Refactored CLI with shared utilities, progress bar, better error handling
 - **21d2823**: Initial CLI integration with all commands
