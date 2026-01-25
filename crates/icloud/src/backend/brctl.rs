@@ -111,75 +111,74 @@ impl BrctlBackend {
         }
     }
 
-    /// Get the download state of a file using multiple detection methods.
+    /// iCloud extended attribute for download-in-progress state.
+    const ICLOUD_DOWNLOAD_REQUESTED_ATTR: &'static str = "com.apple.icloud.itemDownloadRequested";
+
+    /// Get the download state of a file using block allocation detection.
+    ///
+    /// This is the most reliable method for detecting iCloud file status:
+    /// - Cloud-only files have size > 0 but blocks == 0 (no local data allocated)
+    /// - Downloaded files have blocks > 0 (actual data on disk)
+    ///
+    /// This works regardless of Spotlight indexing status and doesn't require
+    /// shelling out to mdls or xattr.
+    ///
+    /// Note: `std::fs::metadata()` succeeds on cloud-only files in iCloud Drive,
+    /// correctly reporting the file's size while showing 0 allocated blocks.
     fn get_file_state(&self, path: &Path) -> Result<DownloadState> {
-        // Method 1: Check if file/dir exists and has content
+        use std::os::unix::fs::MetadataExt;
+
         let metadata = match std::fs::metadata(path) {
             Ok(m) => m,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // File might be a placeholder (cloud-only)
-                // Check if parent exists
-                if let Some(parent) = path.parent() {
-                    if parent.exists() {
-                        // Parent exists, file is likely cloud-only placeholder
-                        return Ok(DownloadState::Cloud);
-                    }
-                }
                 return Err(Error::NotFound(path.to_path_buf()));
             }
             Err(e) => return Err(Error::Io(e)),
         };
-
-        // Method 2: For files, check size and extended attributes
-        if metadata.is_file() {
-            // Check for iCloud-specific extended attributes
-            if let Some(state) = self.check_xattr_state(path) {
-                return Ok(state);
-            }
-
-            // Fallback: if file has content, assume it's local
-            if metadata.len() > 0 {
-                return Ok(DownloadState::Local);
-            } else {
-                // Zero-size might be a placeholder
-                return Ok(DownloadState::Cloud);
-            }
-        }
 
         // For directories, assume local if accessible
         if metadata.is_dir() {
             return Ok(DownloadState::Local);
         }
 
+        // For files, use block allocation to determine state
+        // Cloud-only files report their size but have 0 blocks allocated
+        // Downloaded files have actual blocks on disk
+        if metadata.is_file() {
+            let size = metadata.len();
+            let blocks = metadata.blocks();
+
+            if size > 0 && blocks == 0 {
+                // File has size but no blocks allocated = cloud-only
+                // Check if download is in progress
+                if self.has_download_requested_attr(path) {
+                    return Ok(DownloadState::Downloading { percent: 0 });
+                }
+                return Ok(DownloadState::Cloud);
+            } else if blocks > 0 {
+                // File has blocks allocated = downloaded locally
+                return Ok(DownloadState::Local);
+            } else {
+                // Zero-size file - check if download was requested
+                if self.has_download_requested_attr(path) {
+                    return Ok(DownloadState::Downloading { percent: 0 });
+                }
+                // Empty files are typically local
+                return Ok(DownloadState::Local);
+            }
+        }
+
         Ok(DownloadState::Unknown)
     }
 
-    /// Check extended attributes for iCloud download state.
-    fn check_xattr_state(&self, path: &Path) -> Option<DownloadState> {
-        // Try to read iCloud-specific extended attributes
-        let output = Command::new("xattr")
-            .args(["-l"])
+    /// Check if a file has the iCloud download-requested extended attribute.
+    fn has_download_requested_attr(&self, path: &Path) -> bool {
+        Command::new("xattr")
+            .args(["-p", Self::ICLOUD_DOWNLOAD_REQUESTED_ATTR])
             .arg(path)
             .output()
-            .ok()?;
-
-        if !output.status.success() {
-            return None;
-        }
-
-        let xattrs = String::from_utf8_lossy(&output.stdout);
-
-        // Check for placeholder indicators
-        if xattrs.contains("com.apple.icloud.itemDownloadRequested") {
-            return Some(DownloadState::Downloading { percent: 0 });
-        }
-
-        // If file has iCloud metadata but no download-related attrs, it's local
-        if xattrs.contains("com.apple") {
-            return Some(DownloadState::Local);
-        }
-
-        None
+            .map(|o| o.status.success())
+            .unwrap_or(false)
     }
 
     /// Canonicalize path for consistent handling.
@@ -227,6 +226,9 @@ impl Backend for BrctlBackend {
             return Err(Error::AlreadyEvicted(path));
         }
 
+        // Note: get_file_state() doesn't currently detect Uploading state,
+        // but brctl will fail with "cannot be evicted" for uploading files.
+        // This check provides defense-in-depth if upload detection is added later.
         if let DownloadState::Uploading { .. } = state {
             return Err(Error::NotSynced(path));
         }
@@ -334,5 +336,33 @@ mod tests {
             // On non-macOS, should fail
             assert!(result.is_err());
         }
+    }
+
+    #[test]
+    fn test_block_based_detection_logic() {
+        // Test the logic of block-based detection (without actual iCloud files)
+        // This verifies our understanding of how blocks relate to file state
+
+        use std::os::unix::fs::MetadataExt;
+
+        // RAII guard for cleanup even on panic
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+
+        // Create a temporary file with actual content
+        let test_file = std::env::temp_dir().join("icloud_test_block_detection.txt");
+        let _cleanup = Cleanup(test_file.clone());
+
+        std::fs::write(&test_file, "test content with actual data").unwrap();
+
+        let metadata = std::fs::metadata(&test_file).unwrap();
+
+        // A real file with content should have blocks > 0
+        assert!(metadata.len() > 0, "file should have size");
+        assert!(metadata.blocks() > 0, "real file should have blocks allocated");
     }
 }

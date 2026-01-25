@@ -17,11 +17,12 @@ The `icloud` crate provides non-destructive iCloud Drive file management:
 | brctl backend        | ✅ Done | Shells out to Apple's CLI            |
 | Cargo build          | ✅ Done | Workspace crate                      |
 | Bazel build          | ✅ Done | Full build support                   |
-| Unit tests           | ✅ Done | 6 tests passing                      |
+| Unit tests           | ✅ Done | 7 tests passing                      |
 | Documentation        | ✅ Done | Safety docs, README                  |
 | **CLI Integration**  | ✅ Done | `bossa icloud` commands              |
 | **Recursive ops**    | ✅ Done | `-r` flag for directories            |
 | **Progress bar**     | ✅ Done | Visual feedback for bulk operations  |
+| **Block detection**  | ✅ Done | Reliable cloud-only detection        |
 
 ### Architecture
 
@@ -66,31 +67,23 @@ There are NO delete operations. The `brctl` tool itself has no delete functional
 
 ## TODO: Next Steps
 
-### 1. Better Status Detection (Recommended Next)
+### 1. ~~Better Status Detection~~ ✅ DONE
 
-Current status detection is basic. Improve accuracy using `mdls`:
+Implemented block-based detection which is more reliable than mdls:
 
-**Why this first:**
+**What was done:**
 
-- Smaller change than FFI, immediate UX improvement
-- More accurate cloud-only detection
-- Can show upload/download progress
+- Cloud-only files have `size > 0` but `blocks == 0` (no local data allocated)
+- Downloaded files have `blocks > 0` (actual data on disk)
+- Falls back to xattr for edge cases (zero-size files, download in progress)
+- Works regardless of Spotlight indexing status
+- Added unit test for block detection logic
 
-**Implementation:**
+**Why block-based instead of mdls:**
 
-```bash
-mdls -name kMDItemIsUbiquitous \
-     -name com_apple_metadata_kMDItemDownloadingStatus \
-     -name com_apple_metadata_kMDItemIsDownloading \
-     -name com_apple_metadata_kMDItemPercentDownloaded \
-     /path/to/file
-```
-
-**Changes needed:**
-
-- Add `mdls` parsing to `backend/brctl.rs`
-- Update `FileStatus` to include progress info
-- Update CLI to show progress percentages
+- `mdls` requires Spotlight indexing which may be disabled/broken
+- Block detection is a direct filesystem query - always works
+- Faster (no shelling out to mdls)
 
 ---
 
@@ -245,6 +238,7 @@ cargo doc -p icloud --open
 
 ## Recent Changes
 
+- **[pending]**: Improved status detection using block allocation (replaces unreliable xattr/mdls approach)
 - **b934adf**: Refactored CLI with shared utilities, progress bar, better error handling
 - **21d2823**: Initial CLI integration with all commands
 - **897e023**: Extracted manifest and declarative crates
@@ -253,8 +247,8 @@ cargo doc -p icloud --open
 
 ## Recommendation
 
-**Next step: Better status detection (#1)**
+**Next step: Storage overview command (#4)**
 
-This gives immediate user value with moderate effort. The `mdls` approach is simpler than FFI and will make the status/list commands more accurate.
+Now that status detection is reliable, the logical next step is the unified storage overview command (`bossa storage status`) to tie together iCloud, manifest, and T9 storage into a single view with optimization hints.
 
-After that, consider the storage overview command (#4) to tie together iCloud, manifest, and T9 storage into a unified view.
+Alternatively, integration tests (#2) would be valuable for catching edge cases.

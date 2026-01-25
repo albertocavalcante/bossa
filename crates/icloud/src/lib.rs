@@ -295,9 +295,9 @@ impl Client {
 /// Expand ~ in paths and return the expanded path.
 fn expand_path(path: &Path) -> PathBuf {
     let path_str = path.to_string_lossy();
-    if path_str.starts_with("~/") {
+    if let Some(rest) = path_str.strip_prefix("~/") {
         if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home).join(&path_str[2..]);
+            return PathBuf::from(home).join(rest);
         }
     }
     path.to_path_buf()
