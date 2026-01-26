@@ -68,6 +68,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@888c2e1ea69ab0d4330cbf0af1ecc7b68f368cc1 # stable
         with:
+          toolchain: stable
           components: rustfmt, clippy
 
       - name: Check formatting
@@ -101,6 +102,8 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@888c2e1ea69ab0d4330cbf0af1ecc7b68f368cc1 # stable
+        with:
+          toolchain: stable
 
       - name: Cache Cargo
         uses: actions/cache@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
@@ -135,6 +138,8 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@888c2e1ea69ab0d4330cbf0af1ecc7b68f368cc1 # stable
+        with:
+          toolchain: stable
 
       - name: Cache Cargo
         uses: actions/cache@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
