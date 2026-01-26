@@ -48,3 +48,18 @@ bazel-test:
 
 # Run all checks (CI-style)
 ci: check test
+
+# Serve mdBook docs locally
+docs-serve:
+    mdbook serve docs --hostname 127.0.0.1 --port 3000
+
+# Open local mdBook docs (assumes docs-serve is running)
+docs-open:
+    open http://127.0.0.1:3000
+
+# Serve and open mdBook docs in one command
+docs-preview:
+    mdbook serve docs --hostname 127.0.0.1 --port 3000 &
+    sleep 1
+    open http://127.0.0.1:3000
+    wait

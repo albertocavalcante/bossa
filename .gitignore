@@ -4,3 +4,6 @@
 # Bazel
 /bazel-*
 /.bazel-cache
+
+# mdBook
+/docs/book

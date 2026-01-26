@@ -1,0 +1,25 @@
+[book]
+title = "Bossa Documentation"
+description = "Unified CLI for managing your dev environment"
+authors = ["Alberto Cavalcante"]
+language = "en"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/albertocavalcante/bossa"
+git-repository-icon = "fa-github"
+edit-url-template = "https://github.com/albertocavalcante/bossa/edit/main/docs/{path}"
+
+[output.html.search]
+enable = true
+limit-results = 30
+teaser-word-count = 30
+use-hierarchical-headers = true
+
+[output.html.fold]
+enable = true
+level = 1

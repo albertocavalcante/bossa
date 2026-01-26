@@ -972,7 +972,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "pintui"
 version = "0.1.0"
-source = "git+https://github.com/albertocavalcante/pintui#6e412905f82be38857cf205d4623bbbfd5b61c10"
+source = "git+https://github.com/albertocavalcante/pintui?rev=6e412905#6e412905f82be38857cf205d4623bbbfd5b61c10"
 dependencies = [
  "colored",
  "indicatif",
