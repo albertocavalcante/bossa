@@ -972,7 +972,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "pintui"
 version = "0.1.0"
-source = "git+https://github.com/albertocavalcante/pintui#6e412905f82be38857cf205d4623bbbfd5b61c10"
+source = "git+https://github.com/albertocavalcante/pintui?rev=6e412905#6e412905f82be38857cf205d4623bbbfd5b61c10"
 dependencies = [
  "colored",
  "indicatif",
@@ -1656,11 +1656,10 @@ dependencies = [
 
 [[package]]
 name = "which"
-version = "7.0.3"
+version = "8.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24d643ce3fd3e5b54854602a080f34fb10ab75e0b813ee32d00ca2b44fa74762"
+checksum = "d3fabb953106c3c8eea8306e4393700d7657561cb43122571b172bbfb7c7ba1d"
 dependencies = [
- "either",
  "env_home",
  "rustix",
  "winsafe",
