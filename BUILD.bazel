@@ -15,7 +15,6 @@ rust_binary(
         "//crates/declarative",
         "//crates/icloud",
         "//crates/manifest",
-        "//crates/termkit",
         "//crates/toolchain",
     ],
 )

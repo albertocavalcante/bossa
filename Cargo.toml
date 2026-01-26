@@ -58,7 +58,7 @@ declarative = { path = "crates/declarative" }
 icloud = { path = "crates/icloud" }
 libc = "0.2.180"
 manifest = { path = "crates/manifest" }
-termkit = { path = "crates/termkit" }
+pintui = { git = "https://github.com/albertocavalcante/pintui", rev = "6e412905" }
 toolchain = { path = "crates/toolchain" }
 
 [dev-dependencies]

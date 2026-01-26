@@ -1,18 +1,18 @@
 //! UI utilities for bossa CLI.
 //!
-//! This module re-exports termkit functions and adds bossa-specific utilities.
+//! This module re-exports pintui functions and adds bossa-specific utilities.
 
-// Re-export all termkit functionality
+// Re-export all pintui functionality
 #[allow(unused_imports)]
-pub use termkit::format::human_size as format_size;
+pub use pintui::format::human_size as format_size;
 #[allow(unused_imports)]
-pub use termkit::format::parse_size;
+pub use pintui::format::parse_size;
 #[allow(unused_imports)]
-pub use termkit::format::truncate_path;
+pub use pintui::format::truncate_path;
 #[allow(unused_imports)]
-pub use termkit::layout::{header, kv, section, step};
+pub use pintui::layout::{header, kv, section, step};
 #[allow(unused_imports)]
-pub use termkit::messages::{dim, error, info, success, warn};
+pub use pintui::messages::{dim, error, info, success, warn};
 
 /// Print the bossa banner.
 pub fn banner() {
