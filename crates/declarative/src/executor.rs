@@ -136,10 +136,7 @@ fn execute_parallel<P: ProgressCallback>(
     pool.install(|| {
         resources.par_iter().for_each(|resource| {
             let result = apply_resource(resource.as_ref(), verbose, sudo);
-            results
-                .lock()
-                .unwrap()
-                .push((resource.id(), result));
+            results.lock().unwrap().push((resource.id(), result));
         });
     });
 
@@ -185,13 +182,7 @@ pub fn execute_simple<S: SudoProvider>(
 ) -> Result<ExecuteSummary> {
     use crate::context::{AutoConfirm, NoProgress};
 
-    execute(
-        plan,
-        opts,
-        sudo_provider,
-        &mut NoProgress,
-        &mut AutoConfirm,
-    )
+    execute(plan, opts, sudo_provider, &mut NoProgress, &mut AutoConfirm)
 }
 
 #[cfg(test)]

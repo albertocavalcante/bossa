@@ -6,4 +6,4 @@ pub mod parser;
 pub mod writer;
 
 pub use parser::{parse_file, parse_string};
-pub use writer::{write_file, write_string, WriteOptions};
+pub use writer::{WriteOptions, write_file, write_string};

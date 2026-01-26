@@ -13,4 +13,4 @@ pub mod differ;
 pub mod executor;
 pub mod planner;
 
-pub use executor::{execute, ExecuteOptions};
+pub use executor::{ExecuteOptions, execute};

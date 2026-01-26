@@ -130,7 +130,9 @@ impl DiffSummary {
 }
 
 /// Group diffs by resource type
-pub fn group_by_type(diffs: &[ResourceDiff]) -> std::collections::HashMap<String, Vec<&ResourceDiff>> {
+pub fn group_by_type(
+    diffs: &[ResourceDiff],
+) -> std::collections::HashMap<String, Vec<&ResourceDiff>> {
     let mut groups: std::collections::HashMap<String, Vec<&ResourceDiff>> =
         std::collections::HashMap::new();
     for diff in diffs {

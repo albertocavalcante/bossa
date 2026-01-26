@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use clap::{Parser, Subcommand, ValueEnum};
-use std::fmt;
 use clap_complete::Shell;
+use std::fmt;
 
 #[derive(Parser)]
 #[command(name = "bossa")]

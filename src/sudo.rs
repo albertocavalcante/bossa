@@ -8,7 +8,7 @@
 
 #![allow(dead_code)]
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use declarative::{CommandOutput, SudoClassifier, SudoProvider};
 use serde::{Deserialize, Serialize};
 use std::process::{Command, Output};

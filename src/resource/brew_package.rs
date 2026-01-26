@@ -129,7 +129,10 @@ impl BrewPackage {
                 .args(&args)
                 .output()
                 .context("Failed to run brew install")?;
-            (output.status.success(), String::from_utf8_lossy(&output.stderr).to_string())
+            (
+                output.status.success(),
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            )
         };
 
         if !success {

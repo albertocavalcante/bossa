@@ -523,7 +523,8 @@ mod tests {
                 },
                 ReleaseAsset {
                     name: "buck2-x86_64-unknown-linux-gnu.zst".to_string(),
-                    download_url: "https://example.com/buck2-x86_64-unknown-linux-gnu.zst".to_string(),
+                    download_url: "https://example.com/buck2-x86_64-unknown-linux-gnu.zst"
+                        .to_string(),
                     size: 52 * 1024 * 1024, // 52 MB
                 },
             ],

@@ -88,14 +88,20 @@ mod tests {
 
     #[test]
     fn test_disk_space_used() {
-        let ds = DiskSpace { total: 100, available: 30 };
+        let ds = DiskSpace {
+            total: 100,
+            available: 30,
+        };
         assert_eq!(ds.used(), 70);
     }
 
     #[test]
     fn test_disk_space_used_underflow() {
         // Edge case: available > total (shouldn't happen, but handle gracefully)
-        let ds = DiskSpace { total: 30, available: 100 };
+        let ds = DiskSpace {
+            total: 30,
+            available: 100,
+        };
         assert_eq!(ds.used(), 0);
     }
 }

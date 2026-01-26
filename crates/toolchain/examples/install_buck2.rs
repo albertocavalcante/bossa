@@ -39,10 +39,10 @@ fn main() {
             println!("  Version: {}", result.version);
             println!("  Path:    {}", result.path.display());
 
-            if result.was_upgrade {
-                if let Some(prev) = result.previous_version {
-                    println!("  Upgraded from: {}", prev);
-                }
+            if result.was_upgrade
+                && let Some(prev) = result.previous_version
+            {
+                println!("  Upgraded from: {}", prev);
             }
         }
         Err(e) => {

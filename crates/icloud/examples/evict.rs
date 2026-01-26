@@ -23,7 +23,11 @@ fn main() -> icloud::Result<()> {
 
         println!("Found {} large local files:", evictable.len());
         for file in &evictable {
-            println!("  {} ({} bytes)", file.path.display(), file.size.unwrap_or(0));
+            println!(
+                "  {} ({} bytes)",
+                file.path.display(),
+                file.size.unwrap_or(0)
+            );
         }
 
         print!("\nEvict all? [y/N]: ");

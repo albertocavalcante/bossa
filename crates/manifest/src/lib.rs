@@ -43,7 +43,7 @@ pub use types::{
 };
 
 use blake3::Hasher;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
@@ -264,19 +264,19 @@ impl Manifest {
 
     /// Get total file count
     pub fn file_count(&self) -> Result<u64> {
-        let count: i64 =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))?;
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))?;
         Ok(count as u64)
     }
 
     /// Get total size of all files
     pub fn total_size(&self) -> Result<u64> {
-        let size: i64 = self.conn.query_row(
-            "SELECT COALESCE(SUM(size), 0) FROM files",
-            [],
-            |row| row.get(0),
-        )?;
+        let size: i64 =
+            self.conn
+                .query_row("SELECT COALESCE(SUM(size), 0) FROM files", [], |row| {
+                    row.get(0)
+                })?;
         Ok(size as u64)
     }
 
@@ -403,8 +403,7 @@ impl Manifest {
         for (id, path) in rows {
             let full_path = base_path.join(&path);
             if !full_path.exists() {
-                self.conn
-                    .execute("DELETE FROM files WHERE id = ?1", [id])?;
+                self.conn.execute("DELETE FROM files WHERE id = ?1", [id])?;
                 removed += 1;
             }
         }

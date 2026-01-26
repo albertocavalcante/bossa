@@ -240,7 +240,9 @@ impl Error {
         Error::CommandFailed {
             message: format!(
                 "brew command failed{}",
-                package_name.map(|n| format!(" for {}", n)).unwrap_or_default()
+                package_name
+                    .map(|n| format!(" for {}", n))
+                    .unwrap_or_default()
             ),
             stderr: stderr.trim().to_string(),
         }
@@ -277,7 +279,10 @@ mod tests {
 
     #[test]
     fn test_from_brew_output_not_found() {
-        let err = Error::from_brew_output("Error: No available formula with the name \"foo\"", Some("foo"));
+        let err = Error::from_brew_output(
+            "Error: No available formula with the name \"foo\"",
+            Some("foo"),
+        );
         assert_eq!(err.category(), ErrorCategory::NotFound);
         assert!(!err.is_retryable());
     }

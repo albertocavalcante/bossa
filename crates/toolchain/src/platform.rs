@@ -75,10 +75,7 @@ pub fn is_musl() -> bool {
     }
 
     // Check if /lib/ld-musl-* exists
-    let musl_paths = [
-        "/lib/ld-musl-x86_64.so.1",
-        "/lib/ld-musl-aarch64.so.1",
-    ];
+    let musl_paths = ["/lib/ld-musl-x86_64.so.1", "/lib/ld-musl-aarch64.so.1"];
 
     musl_paths.iter().any(|p| std::path::Path::new(p).exists())
 }

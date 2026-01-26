@@ -215,9 +215,7 @@ fn evict(path: &str, recursive: bool, min_size: Option<&str>, dry_run: bool) -> 
     }
 
     let min_bytes = min_size
-        .map(|s| {
-            ui::parse_size(s).map_err(|e| anyhow::anyhow!("Invalid size '{}': {}", s, e))
-        })
+        .map(|s| ui::parse_size(s).map_err(|e| anyhow::anyhow!("Invalid size '{}': {}", s, e)))
         .transpose()?;
 
     if dry_run {
@@ -259,11 +257,17 @@ fn evict_single_file(
     if let Some(min) = min_bytes
         && status.size.map(|s| s < min).unwrap_or(true)
     {
-        ui::info(&format!("Skipping: file smaller than {}", ui::format_size(min)));
+        ui::info(&format!(
+            "Skipping: file smaller than {}",
+            ui::format_size(min)
+        ));
         return Ok(());
     }
 
-    let size_str = status.size.map(ui::format_size).unwrap_or_else(|| "?".to_string());
+    let size_str = status
+        .size
+        .map(ui::format_size)
+        .unwrap_or_else(|| "?".to_string());
 
     if dry_run {
         println!("  Would evict: {} ({})", path.display(), size_str);
@@ -308,7 +312,10 @@ fn evict_directory(
 
     if dry_run {
         for file in &files {
-            let size_str = file.size.map(ui::format_size).unwrap_or_else(|| "?".to_string());
+            let size_str = file
+                .size
+                .map(ui::format_size)
+                .unwrap_or_else(|| "?".to_string());
             let rel_path = file.path.strip_prefix(path).unwrap_or(&file.path);
             println!("  Would evict: {} ({})", rel_path.display(), size_str);
         }
@@ -421,7 +428,10 @@ fn expand_path(path: &str) -> PathBuf {
 /// Print file status details
 fn print_file_status(file: &FileStatus) {
     let state_str = format_state(&file.state);
-    let size_str = file.size.map(ui::format_size).unwrap_or_else(|| "-".to_string());
+    let size_str = file
+        .size
+        .map(ui::format_size)
+        .unwrap_or_else(|| "-".to_string());
 
     ui::kv("Path", &file.path.display().to_string());
     ui::kv("Status", &state_str);

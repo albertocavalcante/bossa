@@ -40,7 +40,10 @@ impl ExecutionPlan {
     pub fn add_resource_explicit(&mut self, resource: BoxedResource) {
         use crate::types::SudoRequirement;
 
-        if matches!(resource.sudo_requirement(), SudoRequirement::Required { .. }) {
+        if matches!(
+            resource.sudo_requirement(),
+            SudoRequirement::Required { .. }
+        ) {
             self.privileged.push(resource);
         } else {
             self.unprivileged.push(resource);
@@ -154,17 +157,11 @@ mod tests {
 
     #[test]
     fn test_parse_target() {
-        assert_eq!(
-            parse_target("brew"),
-            (Some("brew".to_string()), None)
-        );
+        assert_eq!(parse_target("brew"), (Some("brew".to_string()), None));
         assert_eq!(
             parse_target("brew.ripgrep"),
             (Some("brew".to_string()), Some("ripgrep".to_string()))
         );
-        assert_eq!(
-            parse_target("a.b.c"),
-            (None, Some("a.b.c".to_string()))
-        );
+        assert_eq!(parse_target("a.b.c"), (None, Some("a.b.c".to_string())));
     }
 }

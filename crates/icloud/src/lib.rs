@@ -319,9 +319,7 @@ fn expand_and_validate_path(path: &Path) -> Result<PathBuf> {
     let absolute = if expanded.is_absolute() {
         expanded
     } else {
-        std::env::current_dir()
-            .map_err(Error::Io)?
-            .join(&expanded)
+        std::env::current_dir().map_err(Error::Io)?.join(&expanded)
     };
 
     Ok(absolute)

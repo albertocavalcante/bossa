@@ -307,10 +307,7 @@ mod tests {
 
             // Should not be in iCloud
             assert!(!backend.is_in_icloud(Path::new("/tmp/test.txt")));
-            assert!(!backend.is_in_icloud(Path::new(&format!(
-                "{}/Documents/test.txt",
-                home
-            ))));
+            assert!(!backend.is_in_icloud(Path::new(&format!("{}/Documents/test.txt", home))));
         }
     }
 
@@ -363,6 +360,9 @@ mod tests {
 
         // A real file with content should have blocks > 0
         assert!(metadata.len() > 0, "file should have size");
-        assert!(metadata.blocks() > 0, "real file should have blocks allocated");
+        assert!(
+            metadata.blocks() > 0,
+            "real file should have blocks allocated"
+        );
     }
 }

@@ -30,7 +30,10 @@ pub fn show_local_ssd() -> Result<()> {
 
     let stats = get_disk_space("/")?;
 
-    ui::kv("Used", &format_disk_usage(stats.used(), stats.total, ui::format_size));
+    ui::kv(
+        "Used",
+        &format_disk_usage(stats.used(), stats.total, ui::format_size),
+    );
     ui::kv("Available", &ui::format_size(stats.available));
 
     Ok(())
@@ -101,7 +104,10 @@ pub fn show_t9() -> Result<()> {
 
     match get_disk_space(T9_MOUNT) {
         Ok(stats) => {
-            ui::kv("Used", &format_disk_usage(stats.used(), stats.total, ui::format_size));
+            ui::kv(
+                "Used",
+                &format_disk_usage(stats.used(), stats.total, ui::format_size),
+            );
         }
         Err(e) => {
             ui::dim(&format!("Could not read space: {}", e));
@@ -215,7 +221,11 @@ pub fn show_hints(icloud_stats: &Option<ICloudStats>, manifests: &[ManifestInfo]
 /// Display help for scanning manifests
 pub fn show_scan_help() {
     println!("  Scan storage first:");
-    println!("    {} {}", "$".dimmed(), "bossa manifest scan /Volumes/T9".cyan());
+    println!(
+        "    {} {}",
+        "$".dimmed(),
+        "bossa manifest scan /Volumes/T9".cyan()
+    );
     println!(
         "    {} {}",
         "$".dimmed(),
@@ -226,5 +236,9 @@ pub fn show_scan_help() {
 /// Display help for adding more manifests
 pub fn show_add_manifest_help() {
     println!("  Scan more storage:");
-    println!("    {} {}", "$".dimmed(), "bossa manifest scan <path>".cyan());
+    println!(
+        "    {} {}",
+        "$".dimmed(),
+        "bossa manifest scan <path>".cyan()
+    );
 }

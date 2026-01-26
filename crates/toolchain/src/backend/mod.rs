@@ -56,7 +56,8 @@ pub trait Backend: Send + Sync {
     /// # Errors
     ///
     /// Returns `Error::DownloadFailed` if the asset cannot be downloaded.
-    fn download_asset(&self, tool: Tool, release: &Release, platform: &Platform) -> Result<Vec<u8>>;
+    fn download_asset(&self, tool: Tool, release: &Release, platform: &Platform)
+    -> Result<Vec<u8>>;
 }
 
 /// Mock backend for testing without network access.
@@ -154,7 +155,12 @@ impl Backend for MockBackend {
             })
     }
 
-    fn download_asset(&self, tool: Tool, release: &Release, platform: &Platform) -> Result<Vec<u8>> {
+    fn download_asset(
+        &self,
+        tool: Tool,
+        release: &Release,
+        platform: &Platform,
+    ) -> Result<Vec<u8>> {
         let binary_name = tool.binary_name();
         let expected_name = format!("{}-{}.zst", binary_name, platform.triple);
 
@@ -168,10 +174,13 @@ impl Backend for MockBackend {
             })?;
 
         let assets = self.assets.lock().unwrap();
-        assets.get(&asset.name).cloned().ok_or_else(|| Error::DownloadFailed {
-            tool: tool.to_string(),
-            message: format!("mock asset not configured: {}", asset.name),
-        })
+        assets
+            .get(&asset.name)
+            .cloned()
+            .ok_or_else(|| Error::DownloadFailed {
+                tool: tool.to_string(),
+                message: format!("mock asset not configured: {}", asset.name),
+            })
     }
 }
 
@@ -237,12 +246,17 @@ mod tests {
     #[test]
     fn test_mock_backend_download_asset() {
         let mut mock = MockBackend::with_buck2_releases();
-        mock.add_asset("buck2-aarch64-apple-darwin.zst", vec![0x28, 0xb5, 0x2f, 0xfd]);
+        mock.add_asset(
+            "buck2-aarch64-apple-darwin.zst",
+            vec![0x28, 0xb5, 0x2f, 0xfd],
+        );
 
         let release = mock.fetch_release(Tool::Buck2, "2024-01-15").unwrap();
         let platform = Platform::new("macos", "aarch64", "aarch64-apple-darwin");
 
-        let data = mock.download_asset(Tool::Buck2, &release, &platform).unwrap();
+        let data = mock
+            .download_asset(Tool::Buck2, &release, &platform)
+            .unwrap();
         assert_eq!(data, vec![0x28, 0xb5, 0x2f, 0xfd]);
     }
 

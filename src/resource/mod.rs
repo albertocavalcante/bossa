@@ -6,9 +6,7 @@
 #![allow(dead_code)]
 
 // Re-export core types from declarative crate
-pub use declarative::{
-    ApplyContext, ApplyResult, Resource, ResourceState, SudoRequirement,
-};
+pub use declarative::{ApplyContext, ApplyResult, Resource, ResourceState, SudoRequirement};
 
 // Bossa-specific resource implementations
 pub mod brew_package;

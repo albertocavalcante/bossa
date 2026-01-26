@@ -83,10 +83,10 @@ pub mod types;
 
 // Re-export main types at crate root
 pub use context::{
-    ApplyContext, AutoConfirm, AutoDecline, ConfirmCallback, NoProgress, NoSudo,
-    ProgressCallback, SudoClassifier, SudoProvider,
+    ApplyContext, AutoConfirm, AutoDecline, ConfirmCallback, NoProgress, NoSudo, ProgressCallback,
+    SudoClassifier, SudoProvider,
 };
-pub use diff::{compute_diffs, group_by_type, DiffSummary, ResourceDiff};
+pub use diff::{DiffSummary, ResourceDiff, compute_diffs, group_by_type};
 pub use executor::{execute, execute_simple};
 pub use planner::ExecutionPlan;
 pub use resource::{BoxedResource, Resource, ResourceExt};

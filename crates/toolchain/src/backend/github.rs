@@ -141,7 +141,12 @@ impl Backend for GitHubBackend {
         Ok(response.into())
     }
 
-    fn download_asset(&self, tool: Tool, release: &Release, platform: &Platform) -> Result<Vec<u8>> {
+    fn download_asset(
+        &self,
+        tool: Tool,
+        release: &Release,
+        platform: &Platform,
+    ) -> Result<Vec<u8>> {
         let asset = self.find_asset(tool, release, platform)?;
 
         // Download the asset with increased size limit

@@ -75,7 +75,10 @@ pub fn run(filter: &[String], list_only: bool, min_size: u64, display_limit: usi
 // ============================================================================
 
 /// Filter manifests by name (case-insensitive)
-fn filter_manifests(all_manifests: Vec<ManifestEntry>, filter: &[String]) -> (Vec<ManifestEntry>, Vec<String>) {
+fn filter_manifests(
+    all_manifests: Vec<ManifestEntry>,
+    filter: &[String],
+) -> (Vec<ManifestEntry>, Vec<String>) {
     if filter.is_empty() {
         return (all_manifests, Vec::new());
     }
@@ -90,7 +93,10 @@ fn filter_manifests(all_manifests: Vec<ManifestEntry>, filter: &[String]) -> (Ve
             .find(|m| m.name.to_lowercase() == requested_lower)
         {
             // Avoid duplicates in matched list
-            if !matched.iter().any(|existing: &ManifestEntry| existing.name == m.name) {
+            if !matched
+                .iter()
+                .any(|existing: &ManifestEntry| existing.name == m.name)
+            {
                 matched.push(m.clone());
             }
         } else {
@@ -103,7 +109,10 @@ fn filter_manifests(all_manifests: Vec<ManifestEntry>, filter: &[String]) -> (Ve
 
 fn report_missing_manifests(not_found: &[String]) {
     for name in not_found {
-        ui::warn(&format!("Manifest '{}' not found (case-insensitive search)", name));
+        ui::warn(&format!(
+            "Manifest '{}' not found (case-insensitive search)",
+            name
+        ));
     }
 }
 
@@ -119,7 +128,11 @@ struct ComparisonResults {
 }
 
 /// Run pairwise comparisons between all manifests
-fn run_comparisons(manifests: &[ManifestEntry], min_size: u64, display_limit: usize) -> ComparisonResults {
+fn run_comparisons(
+    manifests: &[ManifestEntry],
+    min_size: u64,
+    display_limit: usize,
+) -> ComparisonResults {
     // Show what we're comparing
     let names: Vec<&str> = manifests.iter().map(|m| m.name.as_str()).collect();
     println!(
@@ -146,7 +159,9 @@ fn run_comparisons(manifests: &[ManifestEntry], min_size: u64, display_limit: us
                     results.total_size += size;
                 }
                 Err(e) => {
-                    results.errors.push(format!("{} vs {}: {}", a.name, b.name, e));
+                    results
+                        .errors
+                        .push(format!("{} vs {}: {}", a.name, b.name, e));
                 }
             }
         }
@@ -164,8 +179,8 @@ fn compare_pair(
     min_size: u64,
     display_limit: usize,
 ) -> Result<(u64, u64)> {
-    let manifest_a = manifest::Manifest::open(path_a)
-        .context(format!("Failed to open manifest: {}", name_a))?;
+    let manifest_a =
+        manifest::Manifest::open(path_a).context(format!("Failed to open manifest: {}", name_a))?;
 
     let cross_dups = manifest_a
         .compare_with(path_b, min_size)
@@ -187,12 +202,21 @@ fn compare_pair(
     );
 
     // Display duplicates (respect limit, 0 = unlimited)
-    let effective_limit = if display_limit == 0 { usize::MAX } else { display_limit };
+    let effective_limit = if display_limit == 0 {
+        usize::MAX
+    } else {
+        display_limit
+    };
 
     for dup in cross_dups.iter().take(effective_limit) {
         println!(
             "    {} {}",
-            format!("{:>width$}", ui::format_size(dup.size), width = SIZE_COLUMN_WIDTH).dimmed(),
+            format!(
+                "{:>width$}",
+                ui::format_size(dup.size),
+                width = SIZE_COLUMN_WIDTH
+            )
+            .dimmed(),
             dup.source_path
         );
         println!(
@@ -252,8 +276,15 @@ fn display_results(results: &ComparisonResults) {
             ),
         );
         println!();
-        println!("  {} Files backed up on T9 can be safely evicted from iCloud:", "Tip:".bold());
-        println!("    {} {}", "$".dimmed(), "bossa icloud evict <path> --dry-run".cyan());
+        println!(
+            "  {} Files backed up on T9 can be safely evicted from iCloud:",
+            "Tip:".bold()
+        );
+        println!(
+            "    {} {}",
+            "$".dimmed(),
+            "bossa icloud evict <path> --dry-run".cyan()
+        );
     } else if results.errors.is_empty() {
         ui::dim("  No cross-storage duplicates found.");
     }

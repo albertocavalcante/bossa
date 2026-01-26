@@ -21,18 +21,29 @@ use crate::ui;
 
 #[derive(Debug)]
 pub enum ManifestCommand {
-    Scan { path: String, force: bool },
-    Stats { path: String },
-    Duplicates { path: String, min_size: u64, delete: bool },
+    Scan {
+        path: String,
+        force: bool,
+    },
+    Stats {
+        path: String,
+    },
+    Duplicates {
+        path: String,
+        min_size: u64,
+        delete: bool,
+    },
 }
 
 pub fn run(cmd: ManifestCommand) -> Result<()> {
     match cmd {
         ManifestCommand::Scan { path, force } => scan(&path, force),
         ManifestCommand::Stats { path } => stats(&path),
-        ManifestCommand::Duplicates { path, min_size, delete } => {
-            duplicates(&path, min_size, delete)
-        }
+        ManifestCommand::Duplicates {
+            path,
+            min_size,
+            delete,
+        } => duplicates(&path, min_size, delete),
     }
 }
 
@@ -154,12 +165,24 @@ fn stats(path_str: &str) -> Result<()> {
     ui::kv("Total files", &stats.file_count.to_string());
     ui::kv("Total size", &manifest::format_size(stats.total_size));
     println!();
-    ui::kv("Duplicate groups", &stats.duplicates.duplicate_groups.to_string());
-    ui::kv("Duplicate files", &stats.duplicates.duplicate_files.to_string());
-    ui::kv("Wasted space", &manifest::format_size(stats.duplicates.wasted_space));
+    ui::kv(
+        "Duplicate groups",
+        &stats.duplicates.duplicate_groups.to_string(),
+    );
+    ui::kv(
+        "Duplicate files",
+        &stats.duplicates.duplicate_files.to_string(),
+    );
+    ui::kv(
+        "Wasted space",
+        &manifest::format_size(stats.duplicates.wasted_space),
+    );
 
     if stats.duplicates.wasted_space > 0 {
-        ui::kv("Potential savings", &format!("{:.1}%", stats.savings_percentage()));
+        ui::kv(
+            "Potential savings",
+            &format!("{:.1}%", stats.savings_percentage()),
+        );
     }
 
     Ok(())
@@ -241,7 +264,11 @@ fn print_duplicate_group(index: usize, group: &DuplicateGroup) {
     println!();
 }
 
-fn delete_duplicates(base_path: &Path, manifest_db: &Manifest, groups: &[DuplicateGroup]) -> Result<()> {
+fn delete_duplicates(
+    base_path: &Path,
+    manifest_db: &Manifest,
+    groups: &[DuplicateGroup],
+) -> Result<()> {
     println!();
     ui::warn("Interactive deletion mode:");
     println!("  For each group, the first file (★) is kept, others (✗) are deleted.");

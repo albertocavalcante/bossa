@@ -34,7 +34,12 @@ pub trait ToolInstaller: Send + Sync {
     /// - The installation directory cannot be created
     /// - Writing the binary fails
     /// - Verification fails
-    fn install(&self, bytes: &[u8], platform: &Platform, options: &InstallOptions) -> Result<InstallResult>;
+    fn install(
+        &self,
+        bytes: &[u8],
+        platform: &Platform,
+        options: &InstallOptions,
+    ) -> Result<InstallResult>;
 
     /// Check if the tool is installed.
     ///

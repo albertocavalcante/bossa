@@ -4,10 +4,10 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 use std::path::PathBuf;
 
+use crate::Context as AppContext;
 use crate::cli::BrewCommand;
 use crate::progress;
 use crate::ui;
-use crate::Context as AppContext;
 
 pub fn run(_ctx: &AppContext, cmd: BrewCommand) -> Result<()> {
     match cmd {
@@ -31,7 +31,8 @@ fn default_brewfile_path() -> PathBuf {
 
 /// Get the Brewfile path, using the provided path or the default.
 fn get_brewfile_path(file: Option<String>) -> PathBuf {
-    file.map(PathBuf::from).unwrap_or_else(default_brewfile_path)
+    file.map(PathBuf::from)
+        .unwrap_or_else(default_brewfile_path)
 }
 
 /// Format a package type with color.
@@ -89,7 +90,9 @@ fn create_client() -> Result<brewkit::Client, String> {
 fn apply(essential: bool, dry_run: bool, file: Option<String>) -> Result<()> {
     if essential {
         ui::header("Installing Essential Packages");
-        ui::dim("Only taps and formulas will be installed (no casks, mas apps, or vscode extensions)");
+        ui::dim(
+            "Only taps and formulas will be installed (no casks, mas apps, or vscode extensions)",
+        );
     } else {
         ui::header("Installing All Packages");
     }
@@ -101,7 +104,9 @@ fn apply(essential: bool, dry_run: bool, file: Option<String>) -> Result<()> {
             brewfile_path.display()
         ));
         println!();
-        ui::info("Create a Brewfile or run 'bossa brew capture' to generate one from installed packages");
+        ui::info(
+            "Create a Brewfile or run 'bossa brew capture' to generate one from installed packages",
+        );
         return Ok(());
     }
 
@@ -133,10 +138,7 @@ fn apply(essential: bool, dry_run: bool, file: Option<String>) -> Result<()> {
         });
     }
 
-    progress::finish_success(
-        &pb,
-        &format!("Found {} packages", brewfile.packages.len()),
-    );
+    progress::finish_success(&pb, &format!("Found {} packages", brewfile.packages.len()));
     print_package_summary(&brewfile);
     println!();
 
@@ -435,7 +437,10 @@ fn audit(file: Option<String>) -> Result<()> {
     println!();
     ui::info("To fix drift:");
     if !result.missing.is_empty() {
-        println!("    Run {} to install missing packages", "bossa brew apply".cyan());
+        println!(
+            "    Run {} to install missing packages",
+            "bossa brew apply".cyan()
+        );
     }
     if !result.untracked.is_empty() {
         println!(
@@ -464,9 +469,9 @@ fn list(filter_type: Option<String>) -> Result<()> {
     };
 
     // Parse filter type
-    let filter = filter_type.as_ref().and_then(|t| {
-        brewkit::PackageType::from_directive(t)
-    });
+    let filter = filter_type
+        .as_ref()
+        .and_then(|t| brewkit::PackageType::from_directive(t));
 
     if let Some(ref ft) = filter_type
         && filter.is_none()

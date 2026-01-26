@@ -58,9 +58,9 @@ impl Backend for BrewBackend {
             PackageType::Cask => vec!["install", "--cask", package.name.as_str()],
             PackageType::Mas => {
                 // mas install <app_id>
-                let id = package.mas_id().ok_or_else(|| Error::Other(
-                    "mas package missing id".to_string()
-                ))?;
+                let id = package
+                    .mas_id()
+                    .ok_or_else(|| Error::Other("mas package missing id".to_string()))?;
                 return run_mas_install(id);
             }
             PackageType::Vscode => {
@@ -130,9 +130,9 @@ impl Backend for BrewBackend {
                 Ok(installed)
             }
             PackageType::Mas => {
-                let id = package.mas_id().ok_or_else(|| Error::Other(
-                    "mas package missing id".to_string()
-                ))?;
+                let id = package
+                    .mas_id()
+                    .ok_or_else(|| Error::Other("mas package missing id".to_string()))?;
                 is_mas_installed(id)
             }
             PackageType::Vscode => is_vscode_installed(&package.name),
@@ -251,8 +251,8 @@ impl Backend for BrewBackend {
 fn find_brew() -> Result<String> {
     // Check common locations
     let paths = [
-        "/opt/homebrew/bin/brew", // Apple Silicon
-        "/usr/local/bin/brew",    // Intel
+        "/opt/homebrew/bin/brew",              // Apple Silicon
+        "/usr/local/bin/brew",                 // Intel
         "/home/linuxbrew/.linuxbrew/bin/brew", // Linux
     ];
 
@@ -360,7 +360,9 @@ fn parse_bundle_output(stdout: &str, stderr: &str, success: bool) -> Result<Bund
 
     // If we couldn't parse anything but the command failed, report generic error
     if !success && result.failed.is_empty() && result.installed.is_empty() {
-        result.failed.push(("bundle".to_string(), stderr.to_string()));
+        result
+            .failed
+            .push(("bundle".to_string(), stderr.to_string()));
     }
 
     Ok(result)
@@ -379,10 +381,7 @@ fn extract_package_name(line: &str) -> Option<String> {
     if words.len() >= 2 {
         let name = words[1].trim_end_matches(':');
         // Skip if it's not a package name (contains special chars)
-        if !name.is_empty()
-            && !name.starts_with('-')
-            && !name.contains('=')
-        {
+        if !name.is_empty() && !name.starts_with('-') && !name.contains('=') {
             return Some(name.to_string());
         }
     }
@@ -557,9 +556,18 @@ mod tests {
 
     #[test]
     fn test_extract_package_name() {
-        assert_eq!(extract_package_name("Installing git"), Some("git".to_string()));
-        assert_eq!(extract_package_name("Installing git 2.40.0"), Some("git".to_string()));
-        assert_eq!(extract_package_name("Tapping homebrew/cask"), Some("homebrew/cask".to_string()));
+        assert_eq!(
+            extract_package_name("Installing git"),
+            Some("git".to_string())
+        );
+        assert_eq!(
+            extract_package_name("Installing git 2.40.0"),
+            Some("git".to_string())
+        );
+        assert_eq!(
+            extract_package_name("Tapping homebrew/cask"),
+            Some("homebrew/cask".to_string())
+        );
         assert_eq!(extract_package_name("Using curl"), Some("curl".to_string()));
     }
 

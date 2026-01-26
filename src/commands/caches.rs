@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use colored::Colorize;
 use std::fs;
 use std::os::unix::fs as unix_fs;
@@ -102,10 +102,7 @@ fn status() -> Result<()> {
         if let SymlinkStatus::Broken = status {
             println!("      {} Symlink target missing", "↳".dimmed());
         } else if let SymlinkStatus::NotSymlink = status {
-            println!(
-                "      {} Source exists but is not a symlink",
-                "↳".dimmed()
-            );
+            println!("      {} Source exists but is not a symlink", "↳".dimmed());
         }
     }
 
@@ -158,9 +155,8 @@ fn status() -> Result<()> {
 fn apply(dry_run: bool) -> Result<()> {
     ui::header("Applying Cache Configuration");
 
-    let config = CachesConfig::load().context(
-        "No caches.toml found. Run 'bossa caches init' to create one.",
-    )?;
+    let config = CachesConfig::load()
+        .context("No caches.toml found. Run 'bossa caches init' to create one.")?;
 
     // Check drive is mounted
     if !config.is_drive_mounted() {
@@ -222,7 +218,11 @@ fn apply(dry_run: bool) -> Result<()> {
                             .status()
                             .context("Failed to execute mv command")?;
                         if !status.success() {
-                            bail!("Failed to move {} to {}", source.display(), target.display());
+                            bail!(
+                                "Failed to move {} to {}",
+                                source.display(),
+                                target.display()
+                            );
                         }
                     }
 
@@ -236,10 +236,7 @@ fn apply(dry_run: bool) -> Result<()> {
             }
             SymlinkStatus::Broken => {
                 if dry_run {
-                    println!(
-                        "  [DRY] Would fix broken symlink: {}",
-                        symlink.name
-                    );
+                    println!("  [DRY] Would fix broken symlink: {}", symlink.name);
                 } else {
                     // Remove broken symlink and recreate
                     fs::remove_file(&source)?;
@@ -269,7 +266,11 @@ fn apply(dry_run: bool) -> Result<()> {
                         .status()
                         .context("Failed to execute mv command")?;
                     if !status.success() {
-                        bail!("Failed to move {} to {}", source.display(), target.display());
+                        bail!(
+                            "Failed to move {} to {}",
+                            source.display(),
+                            target.display()
+                        );
                     }
                     // Create symlink
                     unix_fs::symlink(&target, &source)?;
@@ -416,10 +417,7 @@ fn audit() -> Result<()> {
                 issues.push(format!("Broken symlink: {}", symlink.name));
             }
             SymlinkStatus::NotSymlink => {
-                issues.push(format!(
-                    "Source exists but not symlinked: {}",
-                    symlink.name
-                ));
+                issues.push(format!("Source exists but not symlinked: {}", symlink.name));
             }
         }
     }
@@ -457,17 +455,9 @@ fn doctor() -> Result<()> {
 
     // Check drive mounted
     if config.is_drive_mounted() {
-        println!(
-            "  {} {} mounted",
-            "✓".green(),
-            config.external_drive.name
-        );
+        println!("  {} {} mounted", "✓".green(), config.external_drive.name);
     } else {
-        println!(
-            "  {} {} not mounted",
-            "✗".red(),
-            config.external_drive.name
-        );
+        println!("  {} {} not mounted", "✗".red(), config.external_drive.name);
         all_ok = false;
     }
 
@@ -476,7 +466,11 @@ fn doctor() -> Result<()> {
     if cache_root.exists() {
         println!("  {} Cache root exists", "✓".green());
     } else {
-        println!("  {} Cache root missing: {}", "✗".red(), cache_root.display());
+        println!(
+            "  {} Cache root missing: {}",
+            "✗".red(),
+            cache_root.display()
+        );
         all_ok = false;
     }
 
@@ -556,7 +550,8 @@ fn check_symlink_status(source: &Path, target: &Path) -> SymlinkStatus {
 
     if source.is_symlink() {
         if let Ok(link_target) = fs::read_link(source)
-            && link_target == target && target.exists()
+            && link_target == target
+            && target.exists()
         {
             return SymlinkStatus::Valid;
         }
@@ -567,9 +562,7 @@ fn check_symlink_status(source: &Path, target: &Path) -> SymlinkStatus {
 }
 
 fn dir_size(path: &Path) -> Result<u64> {
-    let path_str = path
-        .to_str()
-        .context("Path contains invalid UTF-8")?;
+    let path_str = path.to_str().context("Path contains invalid UTF-8")?;
     let output = std::process::Command::new("du")
         .args(["-sk", path_str])
         .output()

@@ -13,7 +13,10 @@ mod ui;
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use cli::{AddCommand, Cli, Command, RmCommand, CollectionsCommand, ICloudCommand, ManifestCommand, RefsCommand, StorageCommand};
+use cli::{
+    AddCommand, Cli, CollectionsCommand, Command, ICloudCommand, ManifestCommand, RefsCommand,
+    RmCommand, StorageCommand,
+};
 use std::io;
 
 /// Global context for the application
@@ -95,22 +98,46 @@ fn main() -> Result<()> {
         Command::Collections(cmd) => {
             let collections_cmd = match cmd {
                 CollectionsCommand::List => commands::collections::CollectionsCommand::List,
-                CollectionsCommand::Status { name } => commands::collections::CollectionsCommand::Status { name },
-                CollectionsCommand::Sync { name, jobs, retries, dry_run } => {
-                    commands::collections::CollectionsCommand::Sync { name, jobs, retries, dry_run }
+                CollectionsCommand::Status { name } => {
+                    commands::collections::CollectionsCommand::Status { name }
                 }
+                CollectionsCommand::Sync {
+                    name,
+                    jobs,
+                    retries,
+                    dry_run,
+                } => commands::collections::CollectionsCommand::Sync {
+                    name,
+                    jobs,
+                    retries,
+                    dry_run,
+                },
                 CollectionsCommand::Audit { name, fix } => {
                     commands::collections::CollectionsCommand::Audit { name, fix }
                 }
                 CollectionsCommand::Snapshot { name } => {
                     commands::collections::CollectionsCommand::Snapshot { name }
                 }
-                CollectionsCommand::Add { collection, url, name, clone } => {
-                    commands::collections::CollectionsCommand::Add { collection, url, name, clone }
-                }
-                CollectionsCommand::Rm { collection, repo, delete } => {
-                    commands::collections::CollectionsCommand::Rm { collection, repo, delete }
-                }
+                CollectionsCommand::Add {
+                    collection,
+                    url,
+                    name,
+                    clone,
+                } => commands::collections::CollectionsCommand::Add {
+                    collection,
+                    url,
+                    name,
+                    clone,
+                },
+                CollectionsCommand::Rm {
+                    collection,
+                    repo,
+                    delete,
+                } => commands::collections::CollectionsCommand::Rm {
+                    collection,
+                    repo,
+                    delete,
+                },
                 CollectionsCommand::Clean { name, yes, dry_run } => {
                     commands::collections::CollectionsCommand::Clean { name, yes, dry_run }
                 }
@@ -125,44 +152,59 @@ fn main() -> Result<()> {
                 ManifestCommand::Stats { path } => {
                     commands::manifest::ManifestCommand::Stats { path }
                 }
-                ManifestCommand::Duplicates { path, min_size, delete } => {
-                    commands::manifest::ManifestCommand::Duplicates { path, min_size, delete }
-                }
+                ManifestCommand::Duplicates {
+                    path,
+                    min_size,
+                    delete,
+                } => commands::manifest::ManifestCommand::Duplicates {
+                    path,
+                    min_size,
+                    delete,
+                },
             };
             commands::manifest::run(manifest_cmd)
         }
         Command::ICloud(cmd) => {
             let icloud_cmd = match cmd {
-                ICloudCommand::Status { path } => {
-                    commands::icloud::ICloudCommand::Status { path }
-                }
+                ICloudCommand::Status { path } => commands::icloud::ICloudCommand::Status { path },
                 ICloudCommand::List { path, local, cloud } => {
                     commands::icloud::ICloudCommand::List { path, local, cloud }
                 }
                 ICloudCommand::FindEvictable { path, min_size } => {
                     commands::icloud::ICloudCommand::FindEvictable { path, min_size }
                 }
-                ICloudCommand::Evict { path, recursive, min_size, dry_run } => {
-                    commands::icloud::ICloudCommand::Evict { path, recursive, min_size, dry_run }
-                }
+                ICloudCommand::Evict {
+                    path,
+                    recursive,
+                    min_size,
+                    dry_run,
+                } => commands::icloud::ICloudCommand::Evict {
+                    path,
+                    recursive,
+                    min_size,
+                    dry_run,
+                },
                 ICloudCommand::Download { path, recursive } => {
                     commands::icloud::ICloudCommand::Download { path, recursive }
                 }
             };
             commands::icloud::run(icloud_cmd)
         }
-        Command::Storage(cmd) => {
-            match cmd {
-                StorageCommand::Status => commands::storage::status(),
-                StorageCommand::Duplicates { manifests, list, min_size, limit } => {
-                    commands::storage::duplicates(&manifests, list, min_size, limit)
-                }
-            }
-        }
+        Command::Storage(cmd) => match cmd {
+            StorageCommand::Status => commands::storage::status(),
+            StorageCommand::Duplicates {
+                manifests,
+                list,
+                min_size,
+                limit,
+            } => commands::storage::duplicates(&manifests, list, min_size, limit),
+        },
         Command::Brew(cmd) => commands::brew::run(&ctx, cmd),
         Command::Refs(cmd) => {
             // Show deprecation warning
-            ui::warn("'bossa refs' is deprecated. Use 'bossa collections <subcommand> refs' instead.");
+            ui::warn(
+                "'bossa refs' is deprecated. Use 'bossa collections <subcommand> refs' instead.",
+            );
             println!();
 
             // Forward to collections command with "refs" collection name
@@ -176,23 +218,22 @@ fn main() -> Result<()> {
                         dry_run: args.dry_run,
                     }
                 }
-                RefsCommand::List { filter: _, missing: _ } => {
+                RefsCommand::List {
+                    filter: _,
+                    missing: _,
+                } => {
                     // For list, just show status of refs collection
                     commands::collections::CollectionsCommand::Status {
                         name: "refs".to_string(),
                     }
                 }
-                RefsCommand::Snapshot => {
-                    commands::collections::CollectionsCommand::Snapshot {
-                        name: "refs".to_string(),
-                    }
-                }
-                RefsCommand::Audit { fix } => {
-                    commands::collections::CollectionsCommand::Audit {
-                        name: "refs".to_string(),
-                        fix,
-                    }
-                }
+                RefsCommand::Snapshot => commands::collections::CollectionsCommand::Snapshot {
+                    name: "refs".to_string(),
+                },
+                RefsCommand::Audit { fix } => commands::collections::CollectionsCommand::Audit {
+                    name: "refs".to_string(),
+                    fix,
+                },
                 RefsCommand::Add { url, name, clone } => {
                     commands::collections::CollectionsCommand::Add {
                         collection: "refs".to_string(),

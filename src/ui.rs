@@ -62,7 +62,10 @@ mod tests {
     #[test]
     fn test_format_size_gb() {
         assert_eq!(format_size(1024 * 1024 * 1024), "1.0 GB");
-        assert_eq!(format_size(1024 * 1024 * 1024 * 2 + 1024 * 1024 * 512), "2.5 GB");
+        assert_eq!(
+            format_size(1024 * 1024 * 1024 * 2 + 1024 * 1024 * 512),
+            "2.5 GB"
+        );
     }
 
     #[test]

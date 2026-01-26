@@ -60,13 +60,15 @@ pub mod tools;
 pub mod types;
 
 pub use error::{Error, ErrorCategory, Result};
-pub use types::{InstallOptions, InstallResult, InstalledTool, Platform, Release, ReleaseAsset, Tool};
+pub use types::{
+    InstallOptions, InstallResult, InstalledTool, Platform, Release, ReleaseAsset, Tool,
+};
 
+use backend::Backend;
 pub use backend::MockBackend;
 use backend::github::GitHubBackend;
-use backend::Backend;
-use tools::buck2::Buck2Installer;
 use tools::ToolInstaller;
+use tools::buck2::Buck2Installer;
 
 /// High-level client for toolchain operations.
 ///

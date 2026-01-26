@@ -147,7 +147,9 @@ fn extract_name(args: &str, line_num: usize) -> Result<(String, &str)> {
     }
 
     // Unquoted - take until comma or whitespace
-    let end = args.find(|c: char| c == ',' || c.is_whitespace()).unwrap_or(args.len());
+    let end = args
+        .find(|c: char| c == ',' || c.is_whitespace())
+        .unwrap_or(args.len());
     let name = &args[..end];
     let rest = &args[end..];
 
@@ -344,7 +346,8 @@ brew "git"
 
     #[test]
     fn test_parse_multiple_options() {
-        let brewfile = parse_string(r#"brew "nginx", restart_service: :changed, link: :force"#).unwrap();
+        let brewfile =
+            parse_string(r#"brew "nginx", restart_service: :changed, link: :force"#).unwrap();
         assert_eq!(brewfile.packages.len(), 1);
         assert_eq!(
             brewfile.packages[0].options.get("restart_service"),

@@ -27,7 +27,7 @@ fn main() -> icloud::Result<()> {
 
         let size = file
             .size
-            .map(|s| format_size(s))
+            .map(format_size)
             .unwrap_or_else(|| "    -".to_string());
 
         let type_indicator = if file.is_dir { "📁" } else { "📄" };

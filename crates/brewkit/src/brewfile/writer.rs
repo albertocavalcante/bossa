@@ -174,7 +174,10 @@ mod tests {
         brewfile.add(Package::brew("postgresql@14").with_option("restart_service", "changed"));
 
         let output = write_string(&brewfile, &WriteOptions::default());
-        assert_eq!(output, "brew \"postgresql@14\", restart_service: :changed\n");
+        assert_eq!(
+            output,
+            "brew \"postgresql@14\", restart_service: :changed\n"
+        );
     }
 
     #[test]

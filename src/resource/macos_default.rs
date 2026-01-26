@@ -118,7 +118,10 @@ impl MacOSDefault {
                 .args(args)
                 .output()
                 .context("Failed to execute defaults write")?;
-            (output.status.success(), String::from_utf8_lossy(&output.stderr).to_string())
+            (
+                output.status.success(),
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            )
         };
 
         if !success {

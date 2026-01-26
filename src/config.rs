@@ -271,7 +271,8 @@ pub fn detect_default_branch(url: &str) -> String {
         let stdout = String::from_utf8_lossy(&output.stdout);
         // Parse: ref: refs/heads/main	HEAD
         for line in stdout.lines() {
-            if line.starts_with("ref:") && line.contains("refs/heads/")
+            if line.starts_with("ref:")
+                && line.contains("refs/heads/")
                 && let Some(branch) = line.split("refs/heads/").nth(1)
                 && let Some(branch) = branch.split_whitespace().next()
             {

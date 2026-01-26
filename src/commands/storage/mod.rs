@@ -68,6 +68,11 @@ pub fn status() -> Result<()> {
 /// * `list_only` - If true, just list available manifests and exit.
 /// * `min_size` - Minimum file size to consider.
 /// * `display_limit` - Maximum duplicates to show per comparison (0 = unlimited).
-pub fn duplicates(filter: &[String], list_only: bool, min_size: u64, display_limit: usize) -> Result<()> {
+pub fn duplicates(
+    filter: &[String],
+    list_only: bool,
+    min_size: u64,
+    display_limit: usize,
+) -> Result<()> {
     duplicates::run(filter, list_only, min_size, display_limit)
 }

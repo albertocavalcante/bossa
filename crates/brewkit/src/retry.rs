@@ -47,7 +47,11 @@ impl RetryCallback for PrintCallback {
 ///
 /// # Returns
 /// The result of the operation, or the last error if all attempts failed.
-pub fn with_retry<T, F>(config: &RetryConfig, callback: Option<&dyn RetryCallback>, mut operation: F) -> Result<T>
+pub fn with_retry<T, F>(
+    config: &RetryConfig,
+    callback: Option<&dyn RetryCallback>,
+    mut operation: F,
+) -> Result<T>
 where
     F: FnMut() -> Result<T>,
 {
@@ -116,7 +120,9 @@ mod tests {
 
         let result: Result<()> = with_retry(&config, None, || {
             attempts_clone.set(attempts_clone.get() + 1);
-            Err(Error::NotFound { name: "foo".to_string() })
+            Err(Error::NotFound {
+                name: "foo".to_string(),
+            })
         });
 
         assert!(result.is_err());
@@ -139,7 +145,9 @@ mod tests {
             let current = attempts_clone.get();
             attempts_clone.set(current + 1);
             if current < 2 {
-                Err(Error::Network { message: "timeout".to_string() })
+                Err(Error::Network {
+                    message: "timeout".to_string(),
+                })
             } else {
                 Ok(42)
             }
@@ -162,7 +170,9 @@ mod tests {
 
         let result: Result<()> = with_retry(&config, None, || {
             attempts_clone.set(attempts_clone.get() + 1);
-            Err(Error::Network { message: "timeout".to_string() })
+            Err(Error::Network {
+                message: "timeout".to_string(),
+            })
         });
 
         assert!(result.is_err());
@@ -171,8 +181,8 @@ mod tests {
 
     #[test]
     fn test_callback_invoked() {
-        use std::sync::atomic::{AtomicU32, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
 
         struct CountingCallback(Arc<AtomicU32>);
         impl RetryCallback for CountingCallback {
@@ -192,7 +202,9 @@ mod tests {
         let callback = CountingCallback(callback_count.clone());
 
         let _: Result<()> = with_retry(&config, Some(&callback), || {
-            Err(Error::Network { message: "timeout".to_string() })
+            Err(Error::Network {
+                message: "timeout".to_string(),
+            })
         });
 
         // Callback should be called for each retry (not the first attempt, not the last)

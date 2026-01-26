@@ -8,8 +8,8 @@ use colored::Colorize;
 use crate::Context as AppContext;
 use crate::cli::NovaArgs;
 use crate::config;
-use crate::engine::{self, ExecuteOptions, ExecutionPlan};
 use crate::engine::planner::ExecutionPlanExt;
+use crate::engine::{self, ExecuteOptions, ExecutionPlan};
 use crate::resource::{
     BrewPackage, DefaultValue as ResDefaultValue, DockApp, DockFolder, FileHandler, GHExtension,
     MacOSDefault, PnpmPackage, Symlink, VSCodeExtension,

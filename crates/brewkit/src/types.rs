@@ -370,7 +370,9 @@ mod tests {
         assert!(result.is_success());
         assert_eq!(result.total(), 2);
 
-        result.failed.push(("foo".to_string(), "not found".to_string()));
+        result
+            .failed
+            .push(("foo".to_string(), "not found".to_string()));
         assert!(!result.is_success());
         assert_eq!(result.total(), 3);
     }

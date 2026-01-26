@@ -22,33 +22,64 @@ use crate::ui;
 #[derive(Debug)]
 pub enum CollectionsCommand {
     List,
-    Status { name: String },
-    Sync { name: String, jobs: usize, retries: usize, dry_run: bool },
-    Audit { name: String, fix: bool },
-    Snapshot { name: String },
-    Add { collection: String, url: String, name: Option<String>, clone: bool },
-    Rm { collection: String, repo: String, delete: bool },
-    Clean { name: String, yes: bool, dry_run: bool },
+    Status {
+        name: String,
+    },
+    Sync {
+        name: String,
+        jobs: usize,
+        retries: usize,
+        dry_run: bool,
+    },
+    Audit {
+        name: String,
+        fix: bool,
+    },
+    Snapshot {
+        name: String,
+    },
+    Add {
+        collection: String,
+        url: String,
+        name: Option<String>,
+        clone: bool,
+    },
+    Rm {
+        collection: String,
+        repo: String,
+        delete: bool,
+    },
+    Clean {
+        name: String,
+        yes: bool,
+        dry_run: bool,
+    },
 }
 
 pub fn run(ctx: &Context, cmd: CollectionsCommand) -> Result<()> {
     match cmd {
         CollectionsCommand::List => list(ctx),
         CollectionsCommand::Status { name } => status(ctx, &name),
-        CollectionsCommand::Sync { name, jobs, retries, dry_run } => {
-            sync(ctx, &name, jobs, retries, dry_run)
-        }
+        CollectionsCommand::Sync {
+            name,
+            jobs,
+            retries,
+            dry_run,
+        } => sync(ctx, &name, jobs, retries, dry_run),
         CollectionsCommand::Audit { name, fix } => audit(ctx, &name, fix),
         CollectionsCommand::Snapshot { name } => snapshot(ctx, &name),
-        CollectionsCommand::Add { collection, url, name, clone } => {
-            add(ctx, &collection, &url, name, clone)
-        }
-        CollectionsCommand::Rm { collection, repo, delete } => {
-            rm(ctx, &collection, &repo, delete)
-        }
-        CollectionsCommand::Clean { name, yes, dry_run } => {
-            clean(ctx, &name, yes, dry_run)
-        }
+        CollectionsCommand::Add {
+            collection,
+            url,
+            name,
+            clone,
+        } => add(ctx, &collection, &url, name, clone),
+        CollectionsCommand::Rm {
+            collection,
+            repo,
+            delete,
+        } => rm(ctx, &collection, &repo, delete),
+        CollectionsCommand::Clean { name, yes, dry_run } => clean(ctx, &name, yes, dry_run),
     }
 }
 
@@ -72,9 +103,18 @@ fn list(_ctx: &Context) -> Result<()> {
     for (name, collection) in &config.collections {
         let path = collection.expanded_path()?;
         let exists = path.exists();
-        let status = if exists { "✓".green() } else { "✗".yellow() };
+        let status = if exists {
+            "✓".green()
+        } else {
+            "✗".yellow()
+        };
 
-        println!("  {} {} ({})", status, name.bold(), collection.description.dimmed());
+        println!(
+            "  {} {} ({})",
+            status,
+            name.bold(),
+            collection.description.dimmed()
+        );
         println!("    Path: {}", path.display());
         println!("    Repos: {}", collection.repos.len());
         println!();
@@ -91,7 +131,8 @@ fn status(_ctx: &Context, name: &str) -> Result<()> {
     ui::header(&format!("Collection: {}", name));
 
     let config = BossaConfig::load()?;
-    let collection = config.find_collection(name)
+    let collection = config
+        .find_collection(name)
         .with_context(|| format!("Collection '{}' not found", name))?;
 
     let root = collection.expanded_path()?;
@@ -104,7 +145,11 @@ fn status(_ctx: &Context, name: &str) -> Result<()> {
     for repo in &collection.repos {
         let path = root.join(&repo.name);
         let exists = path.exists();
-        let status = if exists { "✓".green() } else { "✗".yellow() };
+        let status = if exists {
+            "✓".green()
+        } else {
+            "✗".yellow()
+        };
 
         println!(
             "  {} {} {}",
@@ -122,11 +167,18 @@ fn status(_ctx: &Context, name: &str) -> Result<()> {
 // Sync - Clone missing repos
 // ============================================================================
 
-fn sync(ctx: &Context, collection_name: &str, jobs: usize, retries: usize, dry_run: bool) -> Result<()> {
+fn sync(
+    ctx: &Context,
+    collection_name: &str,
+    jobs: usize,
+    retries: usize,
+    dry_run: bool,
+) -> Result<()> {
     ui::header(&format!("Syncing Collection: {}", collection_name));
 
     let config = BossaConfig::load()?;
-    let collection = config.find_collection(collection_name)
+    let collection = config
+        .find_collection(collection_name)
         .with_context(|| format!("Collection '{}' not found", collection_name))?;
 
     let root = collection.expanded_path()?;
@@ -135,7 +187,8 @@ fn sync(ctx: &Context, collection_name: &str, jobs: usize, retries: usize, dry_r
     fs::create_dir_all(&root)?;
 
     // Filter repos to clone (only those not on disk)
-    let repos_to_clone: Vec<_> = collection.repos
+    let repos_to_clone: Vec<_> = collection
+        .repos
         .iter()
         .filter(|r| !root.join(&r.name).exists())
         .cloned()
@@ -230,7 +283,7 @@ fn clone_repo_with_retry(
     root: &std::path::Path,
     repo: &CollectionRepo,
     clone_settings: &crate::schema::CloneSettings,
-    max_retries: usize
+    max_retries: usize,
 ) -> Result<()> {
     let repo_path = root.join(&repo.name);
 
@@ -266,7 +319,7 @@ fn clone_repo_with_retry(
 fn clone_repo(
     root: &std::path::Path,
     repo: &CollectionRepo,
-    clone_settings: &crate::schema::CloneSettings
+    clone_settings: &crate::schema::CloneSettings,
 ) -> Result<()> {
     let repo_path = root.join(&repo.name);
 
@@ -342,7 +395,8 @@ fn audit(_ctx: &Context, collection_name: &str, fix: bool) -> Result<()> {
     ui::header(&format!("Collection Audit: {}", collection_name));
 
     let mut config = BossaConfig::load()?;
-    let collection = config.find_collection(collection_name)
+    let collection = config
+        .find_collection(collection_name)
         .with_context(|| format!("Collection '{}' not found", collection_name))?
         .clone();
 
@@ -445,8 +499,14 @@ fn audit(_ctx: &Context, collection_name: &str, fix: bool) -> Result<()> {
         ui::success(&format!("Added {} repos to config.toml", untracked.len()));
     } else {
         println!();
-        ui::info(&format!("Run 'bossa collections audit {} --fix' to add these repos to config", collection_name));
-        ui::info(&format!("Or 'bossa collections snapshot {}' to regenerate the entire collection", collection_name));
+        ui::info(&format!(
+            "Run 'bossa collections audit {} --fix' to add these repos to config",
+            collection_name
+        ));
+        ui::info(&format!(
+            "Or 'bossa collections snapshot {}' to regenerate the entire collection",
+            collection_name
+        ));
     }
 
     Ok(())
@@ -460,7 +520,8 @@ fn snapshot(_ctx: &Context, collection_name: &str) -> Result<()> {
     ui::header(&format!("Capturing Snapshot: {}", collection_name));
 
     let mut config = BossaConfig::load()?;
-    let collection = config.find_collection(collection_name)
+    let collection = config
+        .find_collection(collection_name)
         .with_context(|| format!("Collection '{}' not found", collection_name))?
         .clone();
 
@@ -548,12 +609,21 @@ fn snapshot(_ctx: &Context, collection_name: &str) -> Result<()> {
 // Add - Add repo to collection
 // ============================================================================
 
-fn add(ctx: &Context, collection_name: &str, url: &str, name: Option<String>, clone: bool) -> Result<()> {
+fn add(
+    ctx: &Context,
+    collection_name: &str,
+    url: &str,
+    name: Option<String>,
+    clone: bool,
+) -> Result<()> {
     let repo_name = name
         .or_else(|| config::repo_name_from_url(url))
         .context("Could not determine repo name from URL. Use --name to specify.")?;
 
-    ui::header(&format!("Adding Repo to {}: {}", collection_name, repo_name));
+    ui::header(&format!(
+        "Adding Repo to {}: {}",
+        collection_name, repo_name
+    ));
 
     // Detect default branch with spinner
     let pb = progress::spinner("Detecting default branch...");
@@ -565,14 +635,21 @@ fn add(ctx: &Context, collection_name: &str, url: &str, name: Option<String>, cl
 
     // Check if collection exists, create if not
     if !config.collections.contains_key(collection_name) {
-        anyhow::bail!("Collection '{}' not found. Create it first with 'bossa add collection {}'", collection_name, collection_name);
+        anyhow::bail!(
+            "Collection '{}' not found. Create it first with 'bossa add collection {}'",
+            collection_name,
+            collection_name
+        );
     }
 
     // Check if already exists
     {
         let collection = config.find_collection(collection_name).unwrap();
         if collection.find_repo(&repo_name).is_some() {
-            ui::warn(&format!("Repo '{}' already exists in collection", repo_name));
+            ui::warn(&format!(
+                "Repo '{}' already exists in collection",
+                repo_name
+            ));
         }
     }
 
@@ -589,7 +666,10 @@ fn add(ctx: &Context, collection_name: &str, url: &str, name: Option<String>, cl
 
     // Save config
     config.save()?;
-    ui::success(&format!("Added '{}' to collection '{}'", repo_name, collection_name));
+    ui::success(&format!(
+        "Added '{}' to collection '{}'",
+        repo_name, collection_name
+    ));
 
     // Clone if requested
     if clone {
@@ -611,7 +691,10 @@ fn add(ctx: &Context, collection_name: &str, url: &str, name: Option<String>, cl
             Err(e) => {
                 progress::finish_error(&pb, &format!("Failed to clone: {}", e));
                 if !ctx.quiet {
-                    ui::info(&format!("You can retry later with: bossa collections sync {}", collection_name));
+                    ui::info(&format!(
+                        "You can retry later with: bossa collections sync {}",
+                        collection_name
+                    ));
                 }
             }
         }
@@ -625,11 +708,15 @@ fn add(ctx: &Context, collection_name: &str, url: &str, name: Option<String>, cl
 // ============================================================================
 
 fn rm(_ctx: &Context, collection_name: &str, repo_name: &str, delete: bool) -> Result<()> {
-    ui::header(&format!("Removing Repo from {}: {}", collection_name, repo_name));
+    ui::header(&format!(
+        "Removing Repo from {}: {}",
+        collection_name, repo_name
+    ));
 
     let mut config = BossaConfig::load()?;
 
-    let collection = config.find_collection_mut(collection_name)
+    let collection = config
+        .find_collection_mut(collection_name)
         .with_context(|| format!("Collection '{}' not found", collection_name))?;
 
     if !collection.remove_repo(repo_name) {
@@ -640,7 +727,10 @@ fn rm(_ctx: &Context, collection_name: &str, repo_name: &str, delete: bool) -> R
     let root = collection.expanded_path()?;
 
     config.save()?;
-    ui::success(&format!("Removed '{}' from collection '{}'", repo_name, collection_name));
+    ui::success(&format!(
+        "Removed '{}' from collection '{}'",
+        repo_name, collection_name
+    ));
 
     if delete {
         let repo_path = root.join(repo_name);
@@ -663,7 +753,8 @@ fn clean(_ctx: &Context, collection_name: &str, skip_confirm: bool, dry_run: boo
     ui::header(&format!("Clean Collection: {}", collection_name));
 
     let config = BossaConfig::load()?;
-    let collection = config.find_collection(collection_name)
+    let collection = config
+        .find_collection(collection_name)
         .with_context(|| format!("Collection '{}' not found", collection_name))?;
 
     let root = collection.expanded_path()?;
@@ -724,13 +815,24 @@ fn clean(_ctx: &Context, collection_name: &str, skip_confirm: bool, dry_run: boo
     }
 
     // Show warning
-    println!("  {} This will DELETE {} cloned repositories from disk.", "⚠".yellow(), cloned_repos.len());
-    println!("  {} Config will be PRESERVED (re-clone with 'bossa collections sync {}')", "✓".green(), collection_name);
+    println!(
+        "  {} This will DELETE {} cloned repositories from disk.",
+        "⚠".yellow(),
+        cloned_repos.len()
+    );
+    println!(
+        "  {} Config will be PRESERVED (re-clone with 'bossa collections sync {}')",
+        "✓".green(),
+        collection_name
+    );
     println!();
 
     // Confirmation
     if !skip_confirm {
-        print!("  Type '{}' to confirm: ", format!("clean {}", collection_name).bold());
+        print!(
+            "  Type '{}' to confirm: ",
+            format!("clean {}", collection_name).bold()
+        );
         std::io::Write::flush(&mut std::io::stdout())?;
 
         let mut input = String::new();
@@ -766,8 +868,15 @@ fn clean(_ctx: &Context, collection_name: &str, skip_confirm: bool, dry_run: boo
     }
 
     println!();
-    ui::success(&format!("Cleaned {} repositories (freed {})", deleted, format_size(freed)));
-    ui::dim(&format!("Config preserved. Run 'bossa collections sync {}' to re-clone.", collection_name));
+    ui::success(&format!(
+        "Cleaned {} repositories (freed {})",
+        deleted,
+        format_size(freed)
+    ));
+    ui::dim(&format!(
+        "Config preserved. Run 'bossa collections sync {}' to re-clone.",
+        collection_name
+    ));
 
     Ok(())
 }

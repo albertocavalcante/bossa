@@ -43,8 +43,8 @@ impl Buck2Installer {
     /// Decompress a zstd-compressed binary.
     fn decompress(&self, compressed: &[u8]) -> Result<Vec<u8>> {
         let cursor = Cursor::new(compressed);
-        let mut decoder = zstd::Decoder::new(cursor)
-            .map_err(|e| Error::DecompressionFailed(e.to_string()))?;
+        let mut decoder =
+            zstd::Decoder::new(cursor).map_err(|e| Error::DecompressionFailed(e.to_string()))?;
 
         let mut decompressed = Vec::new();
         std::io::copy(&mut decoder, &mut decompressed)
@@ -194,10 +194,7 @@ impl Buck2Installer {
         let stdout = String::from_utf8_lossy(&output.stdout);
         // Output format: "buck2 <version> <hash> <date>"
         // Example: "buck2 2024-01-15 abc1234 ..."
-        let version = stdout
-            .split_whitespace()
-            .nth(1)
-            .map(|s| s.to_string());
+        let version = stdout.split_whitespace().nth(1).map(|s| s.to_string());
 
         Ok(version)
     }
@@ -222,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_installer_default() {
-        let installer = Buck2Installer::default();
+        let installer = Buck2Installer::new();
         assert_eq!(installer.tool(), Tool::Buck2);
     }
 

@@ -41,7 +41,8 @@ fn audit_type(
 ) -> Result<()> {
     // Get installed packages of this type
     let installed = backend.list_installed(package_type)?;
-    let installed_names: HashSet<String> = installed.iter().map(|p| p.name.to_lowercase()).collect();
+    let installed_names: HashSet<String> =
+        installed.iter().map(|p| p.name.to_lowercase()).collect();
 
     // Get Brewfile packages of this type
     let declared: Vec<&Package> = brewfile.packages_of_type(package_type);
@@ -74,7 +75,9 @@ fn audit_type(
                 .find(|i| i.name.to_lowercase() == pkg.name.to_lowercase())
             && !versions_match(declared_version, &installed_pkg.version)
         {
-            result.mismatched.push(((*pkg).clone(), installed_pkg.clone()));
+            result
+                .mismatched
+                .push(((*pkg).clone(), installed_pkg.clone()));
         }
     }
 
@@ -151,7 +154,8 @@ fn audit_type_with_options(
     result: &mut AuditResult,
 ) -> Result<()> {
     let installed = backend.list_installed(package_type)?;
-    let installed_names: HashSet<String> = installed.iter().map(|p| p.name.to_lowercase()).collect();
+    let installed_names: HashSet<String> =
+        installed.iter().map(|p| p.name.to_lowercase()).collect();
 
     let declared: Vec<&Package> = brewfile.packages_of_type(package_type);
     let declared_names: HashSet<String> = declared.iter().map(|p| p.name.to_lowercase()).collect();
@@ -159,7 +163,10 @@ fn audit_type_with_options(
     // Find untracked
     for pkg in &installed {
         // Filter dependencies unless included
-        if package_type == PackageType::Brew && !pkg.installed_on_request && !options.include_dependencies {
+        if package_type == PackageType::Brew
+            && !pkg.installed_on_request
+            && !options.include_dependencies
+        {
             continue;
         }
 
