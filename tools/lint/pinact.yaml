@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/suzuki-shunsuke/pinact/main/json-schema/pinact.json
+#
+# pinact - Pin GitHub Actions versions to full commit SHAs
+# https://github.com/suzuki-shunsuke/pinact
+#
+# Install: brew install suzuki-shunsuke/tap/pinact
+#
+# Commands:
+#   pinact run                    # Check pins
+#   pinact run -u                 # Update pins to latest
+#   pinact run --verify           # Verify existing pins
+#   pinact run -c tools/lint/pinact.yaml  # Use this config
+
+version: 3
+
+files:
+  - pattern: ".github/workflows/*.yml"
+  - pattern: ".github/workflows/*.yaml"

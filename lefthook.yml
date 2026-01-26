@@ -29,6 +29,23 @@ pre-commit:
       glob: "*.json"
       run: dprint check {staged_files}
 
+    # Check YAML formatting
+    dprint-yaml:
+      glob: "*.{yml,yaml}"
+      run: dprint check {staged_files}
+
+    # GitHub Actions workflow linting
+    workflow-lint:
+      glob: ".github/workflows/*.{yml,yaml}"
+      run: ghalint run -c tools/lint/ghalint.yaml
+      fail_text: "Fix GitHub Actions workflow issues (ghalint)"
+
+    # Verify action versions are pinned to SHAs
+    workflow-pin:
+      glob: ".github/workflows/*.{yml,yaml}"
+      run: pinact run --verify -c tools/lint/pinact.yaml
+      fail_text: "Run 'pinact run -u -c tools/lint/pinact.yaml' to pin action versions"
+
 pre-push:
   commands:
     # Run tests before pushing
@@ -42,3 +59,14 @@ pre-push:
     # Bazel build verification
     bazel-build:
       run: bazel build //:bossa --config=ci
+
+commit-msg:
+  commands:
+    conventional-commit:
+      run: |
+        commit_msg=$(head -n1 {1})
+        if ! echo "$commit_msg" | grep -qE "^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: .+$"; then
+          echo "Error: Commit message does not follow conventional commits format."
+          echo "Example: feat(brewkit): add formula generation"
+          exit 1
+        fi

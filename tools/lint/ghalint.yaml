@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/suzuki-shunsuke/ghalint/main/json-schema/ghalint.json
+#
+# ghalint - GitHub Actions Linter Configuration
+# https://github.com/suzuki-shunsuke/ghalint
+#
+# Install: brew install suzuki-shunsuke/tap/ghalint
+# Run locally: ghalint run -c tools/lint/ghalint.yaml
+#
+# Policies enforced:
+# - workflow_secrets: Secrets should be passed explicitly
+# - job_permissions: Jobs should have explicit permissions
+# - job_timeout_minutes_is_required: Jobs must have timeout
+# - checkout_persist_credentials_should_be_false: Security best practice
+# - action_ref_should_be_full_length_commit_sha: Pin actions to SHAs
+
+excludes: []
