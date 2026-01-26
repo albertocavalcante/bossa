@@ -1,0 +1,53 @@
+name: "Generate Release Notes"
+description: "Generates beautiful, structured release notes for multi-platform releases"
+author: "Alberto Cavalcante"
+
+branding:
+  icon: "file-text"
+  color: "blue"
+
+inputs:
+  version:
+    description: "Release version (e.g., v0.1.0 or nightly)"
+    required: true
+  assets-dir:
+    description: "Directory containing release assets"
+    required: true
+    default: "release-assets"
+  project-name:
+    description: "Project name for display"
+    required: false
+    default: "antlers"
+  project-description:
+    description: "Short project description"
+    required: false
+    default: "A fast, reliable tool for resolving and managing JVM dependencies"
+  repository:
+    description: "Repository in owner/repo format"
+    required: false
+    default: ${{ github.repository }}
+  is-prerelease:
+    description: "Whether this is a prerelease (nightly, rc, etc.)"
+    required: false
+    default: "false"
+  build-status:
+    description: "JSON object with build job results"
+    required: false
+    default: "{}"
+  workflow-run-id:
+    description: "Workflow run ID for linking to failed builds"
+    required: false
+    default: ${{ github.run_id }}
+  template:
+    description: "Path to custom Handlebars template (optional)"
+    required: false
+
+outputs:
+  release-notes:
+    description: "Generated release notes markdown"
+  release-notes-file:
+    description: "Path to generated release notes file"
+
+runs:
+  using: "node20"
+  main: "dist/index.js"

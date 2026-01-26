@@ -143,7 +143,7 @@ jobs:
 
       - name: Generate release notes
         id: notes
-        uses: albertocavalcante/actions/release-notes@main
+        uses: ./.github/actions/release-notes
         with:
           version: ${{ steps.tag.outputs.tag }}
           assets-dir: release-assets
@@ -179,6 +179,7 @@ jobs:
           private-key: ${{ secrets.EUKIA_APP_PRIVATE_KEY }}
           owner: albertocavalcante
           repositories: homebrew-tap
+          permission-contents: write
 
       - name: Update Homebrew tap
         if: steps.eukia.outcome == 'success'
