@@ -20,7 +20,7 @@ clap_complete = "4.5"
 # Terminal UI
 colored = "3"
 console = "0.16"
-dialoguer = "0.11"
+dialoguer = "0.12"
 indicatif = "0.18"
 similar = "2.4"
 
