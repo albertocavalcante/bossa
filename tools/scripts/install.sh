@@ -63,6 +63,12 @@ detect_platform() {
 get_latest_version() {
     local url="https://api.github.com/repos/${REPO}/releases/latest"
 
+    # If version is specifically nightly, we use the nightly tag
+    if [[ "${BOSSA_VERSION:-}" == "nightly" ]]; then
+        echo "nightly"
+        return 0
+    fi
+
     if command -v curl &>/dev/null; then
         curl -fsSL "$url" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/'
     elif command -v wget &>/dev/null; then
