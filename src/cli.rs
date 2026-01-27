@@ -103,6 +103,10 @@ pub enum Command {
     /// Manage dotfile symlinks (native stow replacement)
     #[command(subcommand)]
     Stow(StowCommand),
+
+    /// Apply GNOME/GTK theme presets (Linux only)
+    #[command(subcommand)]
+    Theme(ThemeCommand),
 }
 
 // ============================================================================
@@ -1012,6 +1016,46 @@ pub enum StowCommand {
         /// Overwrite existing config
         #[arg(long)]
         force: bool,
+    },
+}
+
+// ============================================================================
+// Theme Commands (GNOME/GTK)
+// ============================================================================
+
+#[derive(Debug, Subcommand)]
+pub enum ThemeCommand {
+    /// List available theme presets
+    List,
+
+    /// Show current theme status
+    ///
+    /// Displays the current GTK, shell, icons, cursor, and terminal themes
+    /// along with which preset (if any) matches.
+    Status,
+
+    /// Apply a theme preset
+    ///
+    /// Sets GTK theme, GNOME Shell theme, icons, cursor, and optionally
+    /// window button layout based on the preset definition.
+    ///
+    /// Examples:
+    ///   bossa theme apply whitesur        # Apply WhiteSur dark theme
+    ///   bossa theme apply whitesur-light  # Apply WhiteSur light theme
+    ///   bossa theme apply --dry-run       # Preview what would change
+    Apply {
+        /// Theme preset name
+        name: String,
+
+        /// Preview changes without applying
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+    },
+
+    /// Show details of a theme preset
+    Show {
+        /// Theme preset name
+        name: String,
     },
 }
 

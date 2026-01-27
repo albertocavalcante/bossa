@@ -5,7 +5,8 @@ Unified CLI for managing your development environment.
 ## Features
 
 - **stow** - Native dotfile symlink management (GNU stow replacement)
-- **tools** - Install and manage dev tools from multiple sources (HTTP, container, GitHub releases, cargo)
+- **tools** - Install and manage dev tools from multiple sources (HTTP, container, GitHub releases, cargo, npm)
+- **theme** - GNOME/GTK theme presets (Linux only)
 - **refs** - Manage reference repositories with parallel cloning and retry logic
 - **brew** - Homebrew package management (apply, capture, audit)
 - **workspace** - Workspace management (bare repos + worktrees)
@@ -237,6 +238,60 @@ Supported sources:
 - `npm` - Install via pnpm (preferred) or npm globally
 - `http` - Download from any HTTP URL
 - `container` - Extract from container images
+
+### Theme Management (Linux)
+
+Apply GNOME/GTK theme presets on Linux:
+
+```bash
+# Show current theme status
+bossa theme status
+
+# List available presets
+bossa theme list
+
+# Apply a theme preset
+bossa theme apply whitesur        # Apply WhiteSur dark theme
+bossa theme apply --dry-run       # Preview changes
+
+# Show preset details
+bossa theme show whitesur
+```
+
+Configure theme presets in `config.toml`:
+
+```toml
+[themes.whitesur]
+description = "macOS Big Sur style (dark)"
+gtk = "WhiteSur-Dark"
+shell = "WhiteSur-Dark"
+wm = "WhiteSur-Dark"
+wm_buttons = "close,minimize,maximize:" # macOS-style left buttons
+icons = "WhiteSur-dark"
+cursor = "WhiteSur-cursors"
+terminal = "whitesur"
+requires = ["whitesur-gtk", "whitesur-icons"] # Tools to install first
+
+[themes.whitesur-light]
+description = "macOS Big Sur style (light)"
+gtk = "WhiteSur-Light"
+shell = "WhiteSur-Light"
+wm = "WhiteSur-Light"
+wm_buttons = "close,minimize,maximize:"
+icons = "WhiteSur"
+cursor = "WhiteSur-cursors"
+```
+
+Theme fields:
+
+- `gtk` - GTK theme (apps like Nautilus)
+- `shell` - GNOME Shell theme (panel, overview)
+- `wm` - Window manager theme (title bars)
+- `wm_buttons` - Button layout (`close,minimize,maximize:` = left/macOS style)
+- `icons` - Icon theme
+- `cursor` - Cursor theme
+- `terminal` - Terminal color scheme (informational)
+- `requires` - Tools that must be installed first
 
 ## Configuration
 

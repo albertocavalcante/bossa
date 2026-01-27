@@ -58,6 +58,10 @@ pub struct BossaConfig {
     #[serde(default)]
     pub tools: ToolsSection,
 
+    /// Themes configuration (GNOME/GTK theme presets)
+    #[serde(default)]
+    pub themes: ThemesSection,
+
     /// Network configuration (proxies, registries)
     #[serde(default)]
     pub network: NetworkConfig,
@@ -799,6 +803,92 @@ pub struct HandlersConfig {
     /// Handlers keyed by bundle ID, value is list of UTIs/extensions
     #[serde(flatten)]
     pub handlers: HashMap<String, Vec<String>>,
+}
+
+// ============================================================================
+// Themes Configuration (GNOME/GTK)
+// ============================================================================
+
+/// Themes configuration section
+///
+/// Example config:
+/// ```toml
+/// [themes.whitesur]
+/// description = "macOS Big Sur style (dark)"
+/// gtk = "WhiteSur-Dark"
+/// shell = "WhiteSur-Dark"
+/// wm = "WhiteSur-Dark"
+/// wm_buttons = "close,minimize,maximize:"
+/// icons = "WhiteSur-dark"
+/// cursor = "WhiteSur-cursors"
+/// terminal = "whitesur"
+/// requires = ["whitesur-gtk", "whitesur-icons", "whitesur-cursors"]
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ThemesSection {
+    /// Theme definitions (keyed by theme name)
+    #[serde(flatten)]
+    pub themes: HashMap<String, ThemeDefinition>,
+}
+
+/// A theme preset definition
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ThemeDefinition {
+    /// Human-readable description
+    #[serde(default)]
+    pub description: String,
+
+    /// GTK theme name (apps like Nautilus, Settings)
+    #[serde(default)]
+    pub gtk: Option<String>,
+
+    /// GNOME Shell theme (panel, overview, notifications)
+    #[serde(default)]
+    pub shell: Option<String>,
+
+    /// Window manager theme (title bars, window decorations)
+    #[serde(default)]
+    pub wm: Option<String>,
+
+    /// Window button layout (e.g., "close,minimize,maximize:" for left/macOS style)
+    #[serde(default)]
+    pub wm_buttons: Option<String>,
+
+    /// Icon theme name
+    #[serde(default)]
+    pub icons: Option<String>,
+
+    /// Cursor theme name
+    #[serde(default)]
+    pub cursor: Option<String>,
+
+    /// Terminal color scheme (for gnome-terminal or similar)
+    #[serde(default)]
+    pub terminal: Option<String>,
+
+    /// Tools/packages that must be installed first (from tools section)
+    #[serde(default)]
+    pub requires: Vec<String>,
+
+    /// Whether this theme is enabled (default: true)
+    #[serde(default = "default_theme_enabled")]
+    pub enabled: bool,
+}
+
+fn default_theme_enabled() -> bool {
+    true
+}
+
+impl ThemesSection {
+    /// Get all enabled theme definitions
+    pub fn enabled_themes(&self) -> impl Iterator<Item = (&String, &ThemeDefinition)> {
+        self.themes.iter().filter(|(_, def)| def.enabled)
+    }
+
+    /// Get a specific theme definition
+    pub fn get(&self, name: &str) -> Option<&ThemeDefinition> {
+        self.themes.get(name)
+    }
 }
 
 // ============================================================================

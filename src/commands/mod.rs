@@ -15,4 +15,5 @@ pub mod migrate;
 pub mod nova;
 pub mod storage;
 pub mod stow;
+pub mod theme;
 pub mod tools;
