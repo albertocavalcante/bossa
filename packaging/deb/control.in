@@ -1,0 +1,9 @@
+Package: ${BINARY_NAME}
+Version: ${VERSION}
+Section: utils
+Priority: optional
+Architecture: ${ARCH}
+Maintainer: Alberto Cavalcante <alberto@cavalcante.uk>
+Description: Unified CLI for managing dev environments${SUMMARY_SUFFIX}
+ Manage workspaces, collections, tools, and packages in a single CLI.
+${DESCRIPTION_EXTRA}

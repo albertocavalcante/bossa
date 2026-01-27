@@ -1,0 +1,37 @@
+class Bossa < Formula
+  desc "{{description}}"
+  homepage "{{homepage}}"
+  version "{{version}}"
+  license "{{license}}"
+
+  # Auto-updated by CI - do not edit manually
+  on_macos do
+    if Hardware::CPU.arm?
+      url "{{assets.darwin-arm64.url}}"
+      sha256 "{{assets.darwin-arm64.sha256}}"
+    else
+      url "{{assets.darwin-amd64.url}}"
+      sha256 "{{assets.darwin-amd64.sha256}}"
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.arm?
+      url "{{assets.linux-aarch64.url}}"
+      sha256 "{{assets.linux-aarch64.sha256}}"
+    else
+      url "{{assets.linux-amd64.url}}"
+      sha256 "{{assets.linux-amd64.sha256}}"
+    end
+  end
+
+  conflicts_with "bossa-nightly", because: "both install `bossa` binary"
+
+  def install
+    bin.install "bossa"
+  end
+
+  test do
+    assert_match "bossa", shell_output("#{bin}/bossa --version")
+  end
+end

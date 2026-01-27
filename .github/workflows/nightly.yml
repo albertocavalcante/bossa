@@ -1,15 +1,16 @@
-name: Release
+name: Nightly
 
 on:
-  push:
-    tags:
-      - "v*"
+  schedule:
+    # Run at 00:00 UTC every day
+    - cron: "0 0 * * *"
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Tag to release (e.g., v0.1.0)"
-        required: true
-        type: string
+      force:
+        description: "Force build even if no changes"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -19,8 +20,56 @@ env:
   BINARY_NAME: bossa
 
 jobs:
+  # Check if there are new commits since last nightly
+  check-changes:
+    runs-on: ubuntu-24.04
+    name: Check for Changes
+    timeout-minutes: 5
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      short_sha: ${{ steps.check.outputs.short_sha }}
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check for changes
+        id: check
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+
+          if [ "${{ inputs.force }}" == "true" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "Force build requested"
+            exit 0
+          fi
+
+          # Check if there's a nightly tag
+          if git rev-parse nightly >/dev/null 2>&1; then
+            NIGHTLY_SHA=$(git rev-parse nightly)
+            HEAD_SHA=$(git rev-parse HEAD)
+
+            if [ "$NIGHTLY_SHA" == "$HEAD_SHA" ]; then
+              echo "should_build=false" >> "$GITHUB_OUTPUT"
+              echo "No changes since last nightly"
+            else
+              echo "should_build=true" >> "$GITHUB_OUTPUT"
+              echo "Changes detected since last nightly"
+            fi
+          else
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "No previous nightly tag found"
+          fi
+
   # Build binaries for all platforms
   build:
+    needs: check-changes
+    if: needs.check-changes.outputs.should_build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -101,8 +150,9 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-release-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-nightly-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
+            ${{ runner.os }}-cargo-nightly-${{ matrix.target }}-
             ${{ runner.os }}-cargo-release-${{ matrix.target }}-
             ${{ runner.os }}-cargo-
 
@@ -139,11 +189,11 @@ jobs:
           name: binary-${{ matrix.name }}
           path: dist/${{ env.BINARY_NAME }}-${{ matrix.name }}.*
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 3
 
   # Build DEB packages
   package-deb:
-    needs: build
+    needs: [check-changes, build]
     strategy:
       fail-fast: false
       matrix:
@@ -158,7 +208,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-    if: always()
+    if: always() && needs.check-changes.outputs.should_build == 'true'
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -190,19 +240,6 @@ jobs:
           mkdir -p extracted
           tar -xzf artifacts/*.tar.gz -C extracted
 
-      - name: Determine version
-        if: steps.check.outputs.exists == 'true'
-        id: version
-        run: |
-          if [ -n "${{ inputs.tag }}" ]; then
-            VERSION="${{ inputs.tag }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
-          # Remove 'v' prefix if present
-          VERSION="${VERSION#v}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Build DEB package
         if: steps.check.outputs.exists == 'true'
         run: |
@@ -210,16 +247,19 @@ jobs:
           cp extracted/${{ env.BINARY_NAME }} pkg/usr/bin/
           chmod 755 pkg/usr/bin/${{ env.BINARY_NAME }}
 
+          DATE=$(date +%Y%m%d)
+          VERSION="0.0.0~nightly.${DATE}.${{ needs.check-changes.outputs.short_sha }}"
+
           # Generate control file from template
           export BINARY_NAME="${{ env.BINARY_NAME }}"
-          export VERSION="${{ steps.version.outputs.version }}"
+          export VERSION
           export ARCH="${{ matrix.arch }}"
-          export SUMMARY_SUFFIX=""
-          export DESCRIPTION_EXTRA=""
+          export SUMMARY_SUFFIX=" (nightly)"
+          export DESCRIPTION_EXTRA=" This is an unstable nightly build."
           envsubst < packaging/deb/control.in > pkg/DEBIAN/control
 
-          dpkg-deb --build pkg ${{ env.BINARY_NAME }}_${{ steps.version.outputs.version }}_${{ matrix.arch }}.deb
-          sha256sum ${{ env.BINARY_NAME }}_${{ steps.version.outputs.version }}_${{ matrix.arch }}.deb > ${{ env.BINARY_NAME }}_${{ steps.version.outputs.version }}_${{ matrix.arch }}.deb.sha256
+          dpkg-deb --build pkg "${{ env.BINARY_NAME }}_${VERSION}_${{ matrix.arch }}.deb"
+          sha256sum ./*.deb > "${{ env.BINARY_NAME }}_${VERSION}_${{ matrix.arch }}.deb.sha256"
 
       - name: Upload DEB package
         if: steps.check.outputs.exists == 'true'
@@ -230,11 +270,11 @@ jobs:
             *.deb
             *.deb.sha256
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 3
 
   # Build RPM packages
   package-rpm:
-    needs: build
+    needs: [check-changes, build]
     strategy:
       fail-fast: false
       matrix:
@@ -249,7 +289,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-    if: always()
+    if: always() && needs.check-changes.outputs.should_build == 'true'
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -287,31 +327,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y rpm
 
-      - name: Determine version
-        if: steps.check.outputs.exists == 'true'
-        id: version
-        run: |
-          if [ -n "${{ inputs.tag }}" ]; then
-            VERSION="${{ inputs.tag }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
-          # Remove 'v' prefix if present
-          VERSION="${VERSION#v}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Build RPM package
         if: steps.check.outputs.exists == 'true'
         run: |
           mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
           cp extracted/${{ env.BINARY_NAME }} rpmbuild/SOURCES/
 
+          DATE=$(date +%Y%m%d)
+          VERSION="0.0.0"
+          RELEASE="0.nightly.${DATE}.${{ needs.check-changes.outputs.short_sha }}"
+
           # Generate spec file from template
           export BINARY_NAME="${{ env.BINARY_NAME }}"
-          export VERSION="${{ steps.version.outputs.version }}"
-          export RELEASE="1"
-          export SUMMARY_SUFFIX=""
-          export DESCRIPTION_EXTRA=""
+          export VERSION
+          export RELEASE
+          export SUMMARY_SUFFIX=" (nightly)"
+          export DESCRIPTION_EXTRA="This is an unstable nightly build."
           envsubst < packaging/rpm/bossa.spec.in > rpmbuild/SPECS/${{ env.BINARY_NAME }}.spec
 
           rpmbuild --define "_topdir $(pwd)/rpmbuild" \
@@ -320,7 +351,7 @@ jobs:
                    -bb rpmbuild/SPECS/${{ env.BINARY_NAME }}.spec
 
           cp rpmbuild/RPMS/${{ matrix.arch }}/*.rpm ./
-          sha256sum ./*.rpm > ${{ env.BINARY_NAME }}-${{ steps.version.outputs.version }}-1.${{ matrix.arch }}.rpm.sha256
+          sha256sum ./*.rpm > "${{ env.BINARY_NAME }}-${VERSION}-${RELEASE}.${{ matrix.arch }}.rpm.sha256"
 
       - name: Upload RPM package
         if: steps.check.outputs.exists == 'true'
@@ -331,17 +362,17 @@ jobs:
             *.rpm
             *.rpm.sha256
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 3
 
-  # Create GitHub release
+  # Create nightly pre-release
   release:
-    needs: [build, package-deb, package-rpm]
+    needs: [check-changes, build, package-deb, package-rpm]
     runs-on: ubuntu-24.04
-    name: Create Release
+    name: Create Nightly Release
     timeout-minutes: 15
     permissions:
       contents: write
-    if: always() && needs.build.result != 'cancelled'
+    if: always() && needs.check-changes.outputs.should_build == 'true' && needs.build.result != 'cancelled'
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -358,45 +389,60 @@ jobs:
       - name: Flatten artifacts
         run: |
           mkdir -p release-assets
-          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.sha256" -o -name "*.deb" -o -name "*.rpm" \) -exec cp {} release-assets/ \;
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.sha256" -o -name "*.deb" -o -name "*.rpm" \) -exec cp {} release-assets/ \; || true
           echo "=== Release assets ==="
-          ls -la release-assets/
+          ls -la release-assets/ || echo "No assets found"
 
-      - name: Determine tag
-        id: tag
+      - name: Check if we have any assets
+        id: assets
         run: |
-          if [ -n "${{ inputs.tag }}" ]; then
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
-            echo "version=$(echo '${{ inputs.tag }}' | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+          if [ -n "$(ls -A release-assets 2>/dev/null)" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            TAG="${GITHUB_REF#refs/tags/}"
-            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-            echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "No assets to release"
           fi
 
       - name: Generate release notes
+        if: steps.assets.outputs.exists == 'true'
         id: notes
         uses: albertocavalcante/actions/release-notes@main
         with:
-          version: ${{ steps.tag.outputs.tag }}
+          version: nightly-${{ needs.check-changes.outputs.short_sha }}
           assets-dir: release-assets
           project-name: bossa
           project-description: "Unified CLI for managing dev environments"
-          is-prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
+          is-prerelease: "true"
+          build-status: |
+            {
+              "build": "${{ needs.build.result }}",
+              "package-deb": "${{ needs.package-deb.result }}",
+              "package-rpm": "${{ needs.package-rpm.result }}"
+            }
 
-      - name: Create Release
+      - name: Delete existing nightly release
+        if: steps.assets.outputs.exists == 'true'
+        run: |
+          gh release delete nightly --yes || true
+          git push origin :refs/tags/nightly || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Nightly Release
+        if: steps.assets.outputs.exists == 'true'
         uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: Release ${{ steps.tag.outputs.tag }}
+          tag_name: nightly
+          name: Nightly Build
           draft: false
-          prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
+          prerelease: true
           body: ${{ steps.notes.outputs.release-notes }}
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate Eukia App Token
+        if: steps.assets.outputs.exists == 'true'
         id: eukia
         uses: actions/create-github-app-token@df432ceedc7162793a195dd1713ff69aefc7379e # v2.0.6
         continue-on-error: true
@@ -407,17 +453,17 @@ jobs:
           repositories: homebrew-tap
 
       - name: Update Homebrew tap
-        if: steps.eukia.outcome == 'success'
+        if: steps.assets.outputs.exists == 'true' && steps.eukia.outcome == 'success'
         continue-on-error: true
         uses: albertocavalcante/actions/update-homebrew-tap@main
         with:
           tap-repo: albertocavalcante/homebrew-tap
-          formula-name: bossa
-          version: ${{ steps.tag.outputs.tag }}
+          formula-name: bossa-nightly
+          version: nightly-${{ needs.check-changes.outputs.short_sha }}
           github-token: ${{ steps.eukia.outputs.token }}
-          template: packaging/homebrew/bossa.rb.in
+          template: packaging/homebrew/bossa-nightly.rb.in
           assets: ${{ steps.notes.outputs.homebrew-assets }}
-          description: "Unified CLI for managing dev environments"
+          description: "Unified CLI for managing dev environments (nightly build)"
           homepage: https://github.com/albertocavalcante/bossa
           license: MIT
-          commit-message: "Update bossa to ${{ steps.tag.outputs.tag }}"
+          commit-message: "Update bossa-nightly to ${{ needs.check-changes.outputs.short_sha }}"

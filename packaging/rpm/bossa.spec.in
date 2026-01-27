@@ -1,0 +1,22 @@
+# Disable stripping - binary may be cross-compiled and host strip can't process it
+%define __strip /bin/true
+%define debug_package %{nil}
+
+Name:           ${BINARY_NAME}
+Version:        ${VERSION}
+Release:        ${RELEASE}
+Summary:        Unified CLI for managing dev environments${SUMMARY_SUFFIX}
+License:        MIT
+URL:            https://github.com/albertocavalcante/bossa
+
+%description
+Manage workspaces, collections, tools, and packages in a single CLI.
+${DESCRIPTION_EXTRA}
+
+%install
+mkdir -p %{buildroot}/usr/bin
+cp %{_sourcedir}/${BINARY_NAME} %{buildroot}/usr/bin/
+chmod 755 %{buildroot}/usr/bin/${BINARY_NAME}
+
+%files
+/usr/bin/${BINARY_NAME}
