@@ -4,6 +4,8 @@ Unified CLI for managing your development environment.
 
 ## Features
 
+- **stow** - Native dotfile symlink management (GNU stow replacement)
+- **tools** - Install and manage dev tools from multiple sources (HTTP, container, GitHub releases, cargo)
 - **refs** - Manage reference repositories with parallel cloning and retry logic
 - **brew** - Homebrew package management (apply, capture, audit)
 - **workspace** - Workspace management (bare repos + worktrees)
@@ -115,6 +117,94 @@ bossa completions zsh >> ~/.zshrc
 bossa completions fish > ~/.config/fish/completions/bossa.fish
 ```
 
+### Stow (Dotfile Management)
+
+Native replacement for GNU stow, designed for dotfile management:
+
+```bash
+# Show status of all packages
+bossa stow status
+
+# Preview what would be synced
+bossa stow diff
+
+# Create/update symlinks
+bossa stow sync                  # Sync all packages
+bossa stow sync zsh git          # Sync specific packages
+bossa stow sync --dry-run        # Preview only
+
+# Manage packages
+bossa stow list                  # List configured packages
+bossa stow add nvim              # Add package to config
+bossa stow rm nvim               # Remove package from config
+bossa stow rm nvim --unlink      # Remove and delete symlinks
+
+# Remove symlinks
+bossa stow unlink                # Unlink all packages
+bossa stow unlink zsh            # Unlink specific package
+
+# Initialize config from dotfiles directory
+bossa stow init                  # Auto-detect from ~/dotfiles
+bossa stow init --source ~/dots  # Specify source directory
+```
+
+Configure in `config.toml`:
+
+```toml
+[symlinks]
+source = "~/dotfiles"
+target = "~"
+packages = ["zsh", "git", "nvim", "tmux"]
+ignore = [".git", ".github", "README.md"]
+```
+
+### Tools Management
+
+Install and manage development tools from multiple sources:
+
+```bash
+# Apply tools from config
+bossa tools apply                # Install all configured tools
+bossa tools apply rg fd          # Install specific tools
+bossa tools apply --dry-run      # Preview only
+
+# Check for updates
+bossa tools outdated             # Check all installed tools
+bossa tools outdated rg fd       # Check specific tools
+bossa tools outdated --json      # Output as JSON
+
+# List and inspect
+bossa tools list                 # Show installed tools
+bossa tools list --all           # Include uninstalled from config
+bossa tools status rg            # Show details for a tool
+
+# Imperative installation
+bossa tools install mytool --url https://example.com/tool.tar.gz
+bossa tools uninstall mytool
+```
+
+Configure in `config.toml`:
+
+```toml
+[tools]
+install_dir = "~/.local/bin"
+
+[tools.rg]
+source = "github-release"
+repo = "BurntSushi/ripgrep"
+version = "14.1.0"
+asset = "ripgrep-{version}-{arch}-{os}.tar.gz"
+
+[tools.fd]
+source = "cargo"
+crate = "fd-find"
+
+[tools.delta]
+source = "github-release"
+repo = "dandavison/delta"
+version = "0.18.2"
+```
+
 ## Configuration
 
 Bossa reads configuration from a platform-specific config directory:
@@ -196,7 +286,7 @@ The `nova` command bootstraps a new machine with 15 stages:
 | dock        | Dock configuration                      |
 | ecosystem   | Ecosystem extensions                    |
 | handlers    | File handlers (duti)                    |
-| stow        | Symlinks via GNU Stow                   |
+| stow        | Dotfile symlinks via bossa stow         |
 | mcp         | MCP server configuration                |
 | refs        | Reference repositories                  |
 | workspaces  | Developer workspaces                    |
