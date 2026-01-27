@@ -14,6 +14,11 @@ pre-commit:
       glob: "*.rs"
       run: cargo clippy --all-targets --all-features -- -D warnings
 
+    # Shell script linting
+    shellcheck:
+      glob: "*.sh"
+      run: shellcheck {staged_files}
+
     # Check Markdown formatting
     dprint-md:
       glob: "*.md"

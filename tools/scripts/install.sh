@@ -36,26 +36,26 @@ detect_platform() {
     local os arch
 
     case "$(uname -s)" in
-        Linux*)  os="linux" ;;
-        Darwin*) os="darwin" ;;
-        MINGW*|MSYS*|CYGWIN*) os="windows" ;;
-        *) error "Unsupported OS: $(uname -s)" ;;
+        Linux*)  os="linux" ;; 
+        Darwin*) os="darwin" ;; 
+        MINGW*|MSYS*|CYGWIN*) os="windows" ;; 
+        *) error "Unsupported OS: $(uname -s)" ;; 
     esac
 
     case "$(uname -m)" in
-        x86_64|amd64)  arch="amd64" ;;
-        aarch64|arm64) arch="arm64" ;;
-        *) error "Unsupported architecture: $(uname -m)" ;;
+        x86_64|amd64)  arch="amd64" ;; 
+        aarch64|arm64) arch="arm64" ;; 
+        *) error "Unsupported architecture: $(uname -m)" ;; 
     esac
 
     # Map to release asset names
     case "${os}-${arch}" in
-        linux-amd64)  echo "linux-amd64" ;;
-        linux-arm64)  echo "linux-aarch64" ;;
-        darwin-amd64) echo "darwin-amd64" ;;
-        darwin-arm64) echo "darwin-arm64" ;;
-        windows-amd64) echo "windows-amd64" ;;
-        *) error "Unsupported platform: ${os}-${arch}" ;;
+        linux-amd64)  echo "linux-amd64" ;; 
+        linux-arm64)  echo "linux-aarch64" ;; 
+        darwin-amd64) echo "darwin-amd64" ;; 
+        darwin-arm64) echo "darwin-arm64" ;; 
+        windows-amd64) echo "windows-amd64" ;; 
+        *) error "Unsupported platform: ${os}-${arch}" ;; 
     esac
 }
 
@@ -114,35 +114,6 @@ verify_checksum() {
 
     success "Checksum verified"
 }
-
-main() {
-    echo ""
-    printf "${BOLD}bossa installer${NC}\n"
-    echo ""
-
-    # Detect platform
-    local platform
-    platform=$(detect_platform)
-    info "Detected platform: $platform"
-
-    # Get version
-    VERSION="${1:-${BOSSA_VERSION:-}}"
-    if [ -z "$VERSION" ]; then
-        info "Fetching latest version..."
-        VERSION=$(get_latest_version)
-        if [ -z "$VERSION" ]; then
-            error "Failed to determine latest version"
-        fi
-    fi
-    info "Installing version: $VERSION"
-
-    # Determine file extension
-    local ext
-    if [[ "$platform" == "windows"* ]]; then
-        ext="zip"
-    else
-        ext="tar.gz"
-    fi
 
 # Get download URL from GitHub API
 get_download_url() {
@@ -212,7 +183,7 @@ fetch_asset() {
 
 main() {
     echo ""
-    printf "${BOLD}bossa installer${NC}\n"
+    printf "%s\n" "${BOLD}bossa installer${NC}"
     echo ""
 
     # Detect platform
@@ -242,6 +213,7 @@ main() {
     # Create temp directory
     local tmpdir
     tmpdir=$(mktemp -d)
+    # shellcheck disable=SC2064
     trap "rm -rf '$tmpdir'" EXIT
 
     # Download asset
@@ -286,7 +258,7 @@ main() {
 
     # Check PATH
     case ":$PATH:" in
-        *":$INSTALL_DIR:"*) ;;
+        *":$INSTALL_DIR:"*) ;; 
         *)
             echo ""
             warn "$INSTALL_DIR is not in your PATH"
@@ -294,15 +266,17 @@ main() {
             echo "Add it to your shell configuration:"
             echo ""
             echo "  # bash (~/.bashrc)"
-            echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+             # shellcheck disable=SC2016
+            echo '  export PATH="$HOME/.local/bin:$PATH"'
             echo ""
             echo "  # zsh (~/.zshrc)"
-            echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+             # shellcheck disable=SC2016
+            echo '  export PATH="$HOME/.local/bin:$PATH"'
             echo ""
             echo "  # fish (~/.config/fish/config.fish)"
             echo "  fish_add_path ~/.local/bin"
             echo ""
-            ;;
+            ;; 
     esac
 
     # Show version
