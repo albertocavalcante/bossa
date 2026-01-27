@@ -257,5 +257,6 @@ fn main() -> Result<()> {
             generate(shell, &mut cmd, "bossa", &mut io::stdout());
             Ok(())
         }
+        Command::Tools(cmd) => commands::tools::run(&ctx, cmd),
     }
 }

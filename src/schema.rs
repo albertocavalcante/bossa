@@ -51,6 +51,10 @@ pub struct BossaConfig {
     /// File handlers
     #[serde(default)]
     pub handlers: HandlersConfig,
+
+    /// Tools configuration (declarative tool definitions)
+    #[serde(default)]
+    pub tools: ToolsSection,
 }
 
 impl BossaConfig {
@@ -789,6 +793,520 @@ pub struct HandlersConfig {
 }
 
 // ============================================================================
+// Tools Section (Declarative Definitions)
+// ============================================================================
+
+/// Declarative tools configuration
+///
+/// Example config:
+/// ```toml
+/// [tools]
+/// install_dir = "~/.local/bin"
+///
+/// [tools.rg]
+/// source = "http"
+/// description = "ripgrep - fast grep alternative"
+/// url = "https://github.com/BurntSushi/ripgrep/releases/download/{version}/ripgrep-{version}-x86_64-apple-darwin.tar.gz"
+/// version = "14.1.0"
+/// binary = "rg"
+/// archive_path = "ripgrep-{version}-x86_64-apple-darwin"
+///
+/// [tools.jq]
+/// source = "container"
+/// description = "jq - JSON processor"
+/// image = "fedora:latest"
+/// package = "jq"
+/// binary_path = "/usr/bin/jq"
+/// ```
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ToolsSection {
+    /// Default installation directory (defaults to ~/.local/bin)
+    #[serde(default = "default_install_dir")]
+    pub install_dir: String,
+
+    /// Default container runtime (podman or docker)
+    #[serde(default = "default_runtime")]
+    pub runtime: String,
+
+    /// Tool definitions (keyed by tool name)
+    #[serde(flatten)]
+    pub definitions: HashMap<String, ToolDefinition>,
+}
+
+fn default_install_dir() -> String {
+    "~/.local/bin".to_string()
+}
+
+/// A declarative tool definition
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ToolDefinition {
+    /// Source type: http, container, github-release
+    pub source: ToolSource,
+
+    /// Human-readable description
+    #[serde(default)]
+    pub description: String,
+
+    // === HTTP source fields ===
+    /// Download URL (supports {version}, {platform} placeholders)
+    /// If not provided, will be built from base_url + path + url_pattern
+    #[serde(default)]
+    pub url: Option<String>,
+
+    /// Base URL for artifact repositories (e.g., "https://releases.example.com/artifacts")
+    #[serde(default)]
+    pub base_url: Option<String>,
+
+    /// Path within the artifact repository (e.g., "org/mytool")
+    #[serde(default)]
+    pub path: Option<String>,
+
+    /// Custom URL pattern with placeholders: {base_url}, {path}, {version}, {platform}, {binary}, {archive_name}, {ext}
+    /// Default: "{base_url}/{path}/{version}/{archive_name}-{version}-{platform}.{ext}"
+    #[serde(default)]
+    pub url_pattern: Option<String>,
+
+    /// Archive name if different from binary name (e.g., "mytool-cli" when binary is "mytool")
+    #[serde(default)]
+    pub archive_name: Option<String>,
+
+    /// Platform string style: "long" (linux-amd64), "short" (linux_amd64), "go" (linux_amd64), or custom pattern
+    #[serde(default)]
+    pub platform_style: Option<String>,
+
+    /// Path inside archive where binary is located (supports {version}, {platform})
+    #[serde(default)]
+    pub archive_path: Option<String>,
+
+    // === GitHub Release source fields ===
+    /// GitHub repository (e.g., "BurntSushi/ripgrep")
+    #[serde(default)]
+    pub repo: Option<String>,
+
+    /// Asset name pattern (supports {version})
+    #[serde(default)]
+    pub asset: Option<String>,
+
+    // === Container source fields ===
+    /// Container image (e.g., "fedora:latest", "ubi9/ubi-minimal")
+    #[serde(default)]
+    pub image: Option<String>,
+
+    /// Package to install in container
+    #[serde(default)]
+    pub package: Option<String>,
+
+    /// Additional packages/dependencies to install
+    #[serde(default)]
+    pub packages: Vec<String>,
+
+    /// Package manager override (dnf, microdnf, apt, apk, yum)
+    #[serde(default)]
+    pub package_manager: Option<String>,
+
+    /// Path to binary inside container (e.g., /usr/bin/jq)
+    #[serde(default)]
+    pub binary_path: Option<String>,
+
+    /// Command to run before package install (e.g., enable repos)
+    #[serde(default)]
+    pub pre_install: Option<String>,
+
+    // === Cargo source fields ===
+    /// Crate name on crates.io (e.g., "ripgrep", "fd-find")
+    #[serde(default, rename = "crate")]
+    pub crate_name: Option<String>,
+
+    /// Git URL for cargo install --git (alternative to crate)
+    #[serde(default)]
+    pub git: Option<String>,
+
+    /// Git branch to use with --git
+    #[serde(default)]
+    pub branch: Option<String>,
+
+    /// Git tag to use with --git
+    #[serde(default)]
+    pub tag: Option<String>,
+
+    /// Git revision to use with --git
+    #[serde(default)]
+    pub rev: Option<String>,
+
+    /// Cargo features to enable (comma-separated or list)
+    #[serde(default)]
+    pub features: Vec<String>,
+
+    /// Enable all features
+    #[serde(default)]
+    pub all_features: bool,
+
+    /// Use --locked flag for reproducible builds
+    #[serde(default)]
+    pub locked: bool,
+
+    /// Additional cargo install arguments
+    #[serde(default)]
+    pub cargo_args: Vec<String>,
+
+    // === Common fields ===
+    /// Version to install (supports "latest" for github-release)
+    #[serde(default)]
+    pub version: Option<String>,
+
+    /// Binary name (defaults to tool name)
+    #[serde(default)]
+    pub binary: Option<String>,
+
+    /// Custom installation directory (overrides global)
+    #[serde(default)]
+    pub install_dir: Option<String>,
+
+    /// Container runtime override (podman or docker)
+    #[serde(default)]
+    pub runtime: Option<String>,
+
+    /// Archive type hint: tar.gz, zip, binary (auto-detected if not set)
+    #[serde(default)]
+    pub archive_type: Option<String>,
+
+    /// Post-install message or script to display
+    #[serde(default)]
+    pub post_install: Option<String>,
+
+    /// Whether this tool is enabled (default: true)
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+/// Tool source type
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToolSource {
+    /// HTTP URL to tar.gz archive
+    Http,
+    /// Container image (podman/docker)
+    Container,
+    /// GitHub release
+    GithubRelease,
+    /// Cargo install (from crates.io or git)
+    Cargo,
+}
+
+impl ToolDefinition {
+    /// Expand {version} placeholders in a string
+    pub fn expand_version(&self, template: &str) -> String {
+        match &self.version {
+            Some(v) => template.replace("{version}", v),
+            None => template.to_string(),
+        }
+    }
+
+    /// Expand all placeholders in a template string
+    /// Supports: {base_url}, {path}, {version}, {platform}, {binary}, {archive_name}, {ext}
+    pub fn expand_template(&self, template: &str, tool_name: &str) -> String {
+        let binary = self.effective_binary(tool_name);
+        let archive_name = self.archive_name.as_deref().unwrap_or(&binary);
+        let ext = self.effective_extension();
+        let platform = self.get_platform_string();
+
+        let mut result = template.to_string();
+        if let Some(ref base_url) = self.base_url {
+            result = result.replace("{base_url}", base_url.trim_end_matches('/'));
+        }
+        if let Some(ref path) = self.path {
+            result = result.replace("{path}", path.trim_matches('/'));
+        }
+        if let Some(ref version) = self.version {
+            result = result.replace("{version}", version);
+        }
+        result = result.replace("{platform}", &platform);
+        result = result.replace("{binary}", &binary);
+        result = result.replace("{archive_name}", archive_name);
+        result = result.replace("{ext}", &ext);
+        result
+    }
+
+    /// Get the platform string based on platform_style
+    /// Returns format like "linux-amd64", "darwin-arm64", etc.
+    pub fn get_platform_string(&self) -> String {
+        let os = std::env::consts::OS;
+        let arch = std::env::consts::ARCH;
+
+        // Normalize OS names
+        let os_name = match os {
+            "macos" => "darwin",
+            other => other,
+        };
+
+        // Normalize arch names (Rust uses different names than Go)
+        let arch_name = match arch {
+            "x86_64" => "amd64",
+            "aarch64" => "arm64",
+            "x86" => "386",
+            other => other,
+        };
+
+        let style = self.platform_style.as_deref().unwrap_or("long");
+
+        match style {
+            "long" => format!("{}-{}", os_name, arch_name),
+            "short" | "go" => format!("{}_{}", os_name, arch_name),
+            "os-only" => os_name.to_string(),
+            "arch-only" => arch_name.to_string(),
+            // Custom pattern: use as-is with {os} and {arch} placeholders
+            custom => custom
+                .replace("{os}", os_name)
+                .replace("{arch}", arch_name),
+        }
+    }
+
+    /// Get the effective archive extension
+    pub fn effective_extension(&self) -> String {
+        self.archive_type
+            .as_deref()
+            .unwrap_or("tar.gz")
+            .to_string()
+    }
+
+    /// Build the download URL from pattern or direct URL
+    pub fn build_url(&self, tool_name: &str) -> Option<String> {
+        // If direct URL is provided, use it (with expansion)
+        if let Some(ref url) = self.url {
+            return Some(self.expand_template(url, tool_name));
+        }
+
+        // If base_url and path are provided, build from pattern
+        if self.base_url.is_some() && self.path.is_some() {
+            let pattern = self.url_pattern.as_deref().unwrap_or(
+                "{base_url}/{path}/{version}/{archive_name}-{version}-{platform}.{ext}",
+            );
+            return Some(self.expand_template(pattern, tool_name));
+        }
+
+        None
+    }
+
+    /// Get the effective binary name
+    pub fn effective_binary(&self, tool_name: &str) -> String {
+        self.binary.clone().unwrap_or_else(|| tool_name.to_string())
+    }
+
+    /// Check if this is a direct binary download (no archive extraction)
+    pub fn is_binary_download(&self) -> bool {
+        self.archive_type.as_deref() == Some("binary")
+    }
+
+    /// Validate the tool definition
+    pub fn validate(&self, name: &str) -> Result<()> {
+        match self.source {
+            ToolSource::Http => {
+                // Either direct url OR base_url+path must be provided
+                let has_direct_url = self.url.is_some();
+                let has_pattern_url = self.base_url.is_some() && self.path.is_some();
+                if !has_direct_url && !has_pattern_url {
+                    anyhow::bail!(
+                        "Tool '{}': HTTP source requires either 'url' or 'base_url' + 'path'",
+                        name
+                    );
+                }
+            }
+            ToolSource::Container => {
+                if self.image.is_none() {
+                    anyhow::bail!("Tool '{}': Container source requires 'image' field", name);
+                }
+                if self.binary_path.is_none() {
+                    anyhow::bail!(
+                        "Tool '{}': Container source requires 'binary_path' field",
+                        name
+                    );
+                }
+            }
+            ToolSource::GithubRelease => {
+                if self.repo.is_none() {
+                    anyhow::bail!("Tool '{}': GitHub release source requires 'repo' field", name);
+                }
+            }
+            ToolSource::Cargo => {
+                if self.crate_name.is_none() && self.git.is_none() {
+                    anyhow::bail!(
+                        "Tool '{}': Cargo source requires 'crate' or 'git' field",
+                        name
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Default for ToolDefinition {
+    fn default() -> Self {
+        Self {
+            source: ToolSource::Http,
+            description: String::new(),
+            url: None,
+            base_url: None,
+            path: None,
+            url_pattern: None,
+            archive_name: None,
+            platform_style: None,
+            archive_path: None,
+            repo: None,
+            asset: None,
+            image: None,
+            package: None,
+            packages: Vec::new(),
+            package_manager: None,
+            binary_path: None,
+            pre_install: None,
+            crate_name: None,
+            git: None,
+            branch: None,
+            tag: None,
+            rev: None,
+            features: Vec::new(),
+            all_features: false,
+            locked: false,
+            cargo_args: Vec::new(),
+            version: None,
+            binary: None,
+            install_dir: None,
+            runtime: None,
+            archive_type: None,
+            post_install: None,
+            enabled: true,
+        }
+    }
+}
+
+impl ToolsSection {
+    /// Get all enabled tool definitions
+    pub fn enabled_tools(&self) -> impl Iterator<Item = (&String, &ToolDefinition)> {
+        self.definitions.iter().filter(|(_, def)| def.enabled)
+    }
+
+    /// Get a specific tool definition
+    pub fn get(&self, name: &str) -> Option<&ToolDefinition> {
+        self.definitions.get(name)
+    }
+
+    /// Validate all tool definitions
+    pub fn validate(&self) -> Result<()> {
+        for (name, def) in &self.definitions {
+            def.validate(name)?;
+        }
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Tools State (Installation Tracking)
+// ============================================================================
+
+/// Tool installation tracking (stored separately from main config)
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ToolsConfig {
+    /// Installed tools
+    #[serde(default)]
+    pub tools: HashMap<String, InstalledTool>,
+}
+
+impl ToolsConfig {
+    /// Load the tools config from ~/.config/bossa/tools.toml
+    pub fn load() -> Result<Self> {
+        let home = dirs::home_dir().context("Could not determine home directory")?;
+        let config_path = home.join(".config").join("bossa").join("tools.toml");
+
+        if !config_path.exists() {
+            return Ok(Self::default());
+        }
+
+        let content = std::fs::read_to_string(&config_path)
+            .with_context(|| format!("Could not read tools config: {}", config_path.display()))?;
+
+        toml::from_str(&content).context("Invalid TOML format in tools config")
+    }
+
+    /// Save the tools config to ~/.config/bossa/tools.toml
+    pub fn save(&self) -> Result<PathBuf> {
+        let home = dirs::home_dir().context("Could not determine home directory")?;
+        let config_dir = home.join(".config").join("bossa");
+        std::fs::create_dir_all(&config_dir)?;
+
+        let config_path = config_dir.join("tools.toml");
+        let content = toml::to_string_pretty(self).context("Failed to serialize tools config")?;
+        std::fs::write(&config_path, content)?;
+
+        Ok(config_path)
+    }
+
+    /// Get an installed tool by name
+    pub fn get(&self, name: &str) -> Option<&InstalledTool> {
+        self.tools.get(name)
+    }
+
+    /// Add or update an installed tool
+    pub fn insert(&mut self, name: String, tool: InstalledTool) {
+        self.tools.insert(name, tool);
+    }
+
+    /// Remove an installed tool
+    pub fn remove(&mut self, name: &str) -> Option<InstalledTool> {
+        self.tools.remove(name)
+    }
+}
+
+/// Information about an installed tool
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct InstalledTool {
+    /// Original download URL or container image
+    pub url: String,
+    /// Binary name
+    pub binary: String,
+    /// Installation path
+    pub install_path: String,
+    /// Installation timestamp (ISO 8601)
+    pub installed_at: String,
+    /// Source type (http, container, brew, npm, etc.)
+    #[serde(default = "default_source")]
+    pub source: String,
+    /// Container-specific metadata (only for source=container)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container: Option<ContainerMeta>,
+}
+
+/// Metadata for tools installed from containers
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ContainerMeta {
+    /// Container image used
+    pub image: String,
+    /// Package installed (if any)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+    /// Path inside container where binary was located
+    pub binary_path: String,
+    /// Package manager used
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_manager: Option<String>,
+    /// Container runtime (podman/docker)
+    #[serde(default = "default_runtime")]
+    pub runtime: String,
+}
+
+fn default_source() -> String {
+    "http".to_string()
+}
+
+fn default_runtime() -> String {
+    "podman".to_string()
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -1252,5 +1770,149 @@ name = "rust"
         };
         // Fixed: whitespace-only categories should now fail validation
         assert!(repo.validate().is_err());
+    }
+
+    #[test]
+    fn test_tool_definition_build_url_direct() {
+        let def = ToolDefinition {
+            source: ToolSource::Http,
+            url: Some("https://example.com/{version}/tool-{platform}.tar.gz".to_string()),
+            version: Some("1.2.3".to_string()),
+            ..Default::default()
+        };
+
+        let url = def.build_url("mytool").unwrap();
+        assert!(url.contains("1.2.3"));
+        // Platform depends on the current system
+        assert!(url.contains("https://example.com/1.2.3/tool-"));
+    }
+
+    #[test]
+    fn test_tool_definition_build_url_pattern() {
+        let def = ToolDefinition {
+            source: ToolSource::Http,
+            base_url: Some("https://releases.example.com/artifacts".to_string()),
+            path: Some("org/mytool".to_string()),
+            version: Some("0.9.2".to_string()),
+            archive_name: Some("mytool".to_string()),
+            ..Default::default()
+        };
+
+        let url = def.build_url("mytool").unwrap();
+        assert!(url.starts_with("https://releases.example.com/artifacts/org/mytool/0.9.2/mytool-0.9.2-"));
+    }
+
+    #[test]
+    fn test_tool_definition_build_url_custom_pattern() {
+        let def = ToolDefinition {
+            source: ToolSource::Http,
+            base_url: Some("https://downloads.example.com/bin".to_string()),
+            path: Some("tools/mycli".to_string()),
+            version: Some("20250910".to_string()),
+            url_pattern: Some("{base_url}/{path}/{version}/mycli-{platform}".to_string()),
+            archive_type: Some("binary".to_string()),
+            ..Default::default()
+        };
+
+        let url = def.build_url("mycli").unwrap();
+        assert!(url.starts_with("https://downloads.example.com/bin/tools/mycli/20250910/mycli-"));
+        assert!(!url.ends_with(".tar.gz")); // Binary download, no extension in pattern
+    }
+
+    #[test]
+    fn test_tool_definition_platform_style_long() {
+        let def = ToolDefinition {
+            source: ToolSource::Http,
+            platform_style: Some("long".to_string()),
+            ..Default::default()
+        };
+
+        let platform = def.get_platform_string();
+        // Format should be os-arch (e.g., darwin-arm64, linux-amd64)
+        assert!(platform.contains('-'));
+    }
+
+    #[test]
+    fn test_tool_definition_platform_style_short() {
+        let def = ToolDefinition {
+            source: ToolSource::Http,
+            platform_style: Some("short".to_string()),
+            ..Default::default()
+        };
+
+        let platform = def.get_platform_string();
+        // Format should be os_arch (e.g., darwin_arm64, linux_amd64)
+        assert!(platform.contains('_'));
+    }
+
+    #[test]
+    fn test_tool_definition_platform_style_custom() {
+        let def = ToolDefinition {
+            source: ToolSource::Http,
+            platform_style: Some("{os}_{arch}_custom".to_string()),
+            ..Default::default()
+        };
+
+        let platform = def.get_platform_string();
+        assert!(platform.ends_with("_custom"));
+    }
+
+    #[test]
+    fn test_tool_definition_is_binary_download() {
+        let binary_def = ToolDefinition {
+            source: ToolSource::Http,
+            archive_type: Some("binary".to_string()),
+            ..Default::default()
+        };
+        assert!(binary_def.is_binary_download());
+
+        let targz_def = ToolDefinition {
+            source: ToolSource::Http,
+            archive_type: Some("tar.gz".to_string()),
+            ..Default::default()
+        };
+        assert!(!targz_def.is_binary_download());
+
+        let default_def = ToolDefinition {
+            source: ToolSource::Http,
+            ..Default::default()
+        };
+        assert!(!default_def.is_binary_download());
+    }
+
+    #[test]
+    fn test_tool_definition_effective_extension() {
+        let def_default = ToolDefinition {
+            source: ToolSource::Http,
+            ..Default::default()
+        };
+        assert_eq!(def_default.effective_extension(), "tar.gz");
+
+        let def_zip = ToolDefinition {
+            source: ToolSource::Http,
+            archive_type: Some("zip".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(def_zip.effective_extension(), "zip");
+    }
+
+    #[test]
+    fn test_tool_definition_validation_http_base_url_path() {
+        // Valid: base_url + path
+        let def = ToolDefinition {
+            source: ToolSource::Http,
+            base_url: Some("https://example.com".to_string()),
+            path: Some("tools/mytool".to_string()),
+            ..Default::default()
+        };
+        assert!(def.validate("test").is_ok());
+
+        // Invalid: only base_url without path
+        let def_invalid = ToolDefinition {
+            source: ToolSource::Http,
+            base_url: Some("https://example.com".to_string()),
+            ..Default::default()
+        };
+        assert!(def_invalid.validate("test").is_err());
     }
 }

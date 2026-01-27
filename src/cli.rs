@@ -85,7 +85,7 @@ pub enum Command {
     #[command(subcommand)]
     Brew(BrewCommand),
 
-    /// [DEPRECATED] Manage reference repositories (use 'collections' instead)
+    /// \[DEPRECATED\] Manage reference repositories (use 'collections' instead)
     #[command(subcommand)]
     Refs(RefsCommand),
 
@@ -95,6 +95,10 @@ pub enum Command {
         #[arg(value_enum)]
         shell: Shell,
     },
+
+    /// Install and manage development tools
+    #[command(subcommand)]
+    Tools(ToolsCommand),
 }
 
 // ============================================================================
@@ -758,6 +762,139 @@ impl NovaStage {
             _ => None,
         }
     }
+}
+
+// ============================================================================
+// Tools Commands
+// ============================================================================
+
+#[derive(Debug, Subcommand)]
+pub enum ToolsCommand {
+    /// Install a tool from URL (tar.gz)
+    Install {
+        /// Tool name
+        name: String,
+
+        /// Download URL (must be .tar.gz)
+        #[arg(long)]
+        url: String,
+
+        /// Binary name inside archive (defaults to tool name)
+        #[arg(long)]
+        binary: Option<String>,
+
+        /// Path inside archive where binary is located
+        #[arg(long)]
+        path: Option<String>,
+
+        /// Installation directory (defaults to ~/.local/bin)
+        #[arg(long)]
+        install_dir: Option<String>,
+
+        /// Force reinstall
+        #[arg(long, short)]
+        force: bool,
+    },
+
+    /// Install a tool from a container image (podman/docker)
+    ///
+    /// Extract binaries from container images. Useful for getting tools
+    /// packaged for other distros (e.g., RPMs from Fedora on macOS).
+    ///
+    /// Examples:
+    ///   # Install ripgrep from Fedora
+    ///   bossa tools install-container rg --image fedora:latest \
+    ///     --package ripgrep --binary-path /usr/bin/rg
+    ///
+    ///   # Install from UBI minimal with microdnf
+    ///   bossa tools install-container jq --image registry.access.redhat.com/ubi9/ubi-minimal \
+    ///     --package jq --binary-path /usr/bin/jq --package-manager microdnf
+    ///
+    ///   # Extract existing binary without installing package
+    ///   bossa tools install-container bash --image alpine:latest \
+    ///     --binary-path /bin/bash
+    #[command(name = "install-container")]
+    InstallContainer {
+        /// Tool name (used for tracking)
+        name: String,
+
+        /// Container image to use (e.g., fedora:latest, ubi9/ubi-minimal)
+        #[arg(long, short)]
+        image: String,
+
+        /// Package to install inside container (optional if binary exists in base image)
+        #[arg(long, short)]
+        package: Option<String>,
+
+        /// Path to binary inside the container (e.g., /usr/bin/rg)
+        #[arg(long, short = 'b')]
+        binary_path: String,
+
+        /// Package manager to use: dnf, microdnf, apt, apk, yum (auto-detected if not set)
+        #[arg(long, short = 'm')]
+        package_manager: Option<String>,
+
+        /// Container runtime: podman or docker (default: podman)
+        #[arg(long, short = 'r', default_value = "podman")]
+        runtime: String,
+
+        /// Additional packages to install (e.g., dependencies)
+        #[arg(long, short = 'd')]
+        dependencies: Option<Vec<String>>,
+
+        /// Command to run before package installation (e.g., enable repos)
+        #[arg(long)]
+        pre_install: Option<String>,
+
+        /// Keep the container after extraction (for debugging)
+        #[arg(long)]
+        keep_container: bool,
+
+        /// Installation directory (defaults to ~/.local/bin)
+        #[arg(long)]
+        install_dir: Option<String>,
+
+        /// Force reinstall
+        #[arg(long, short)]
+        force: bool,
+    },
+
+    /// Apply tools from config (install missing, update outdated)
+    ///
+    /// Reads tool definitions from ~/.config/bossa/config.toml and ensures
+    /// all enabled tools are installed.
+    Apply {
+        /// Only apply specific tool(s)
+        #[arg(value_name = "TOOL")]
+        tools: Vec<String>,
+
+        /// Preview what would be installed without doing it
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+
+        /// Force reinstall even if already installed
+        #[arg(long, short)]
+        force: bool,
+    },
+
+    /// List installed tools
+    List {
+        /// Also show tools defined in config but not installed
+        #[arg(long, short)]
+        all: bool,
+    },
+
+    /// Show tool status
+    Status {
+        /// Tool name
+        name: String,
+    },
+
+    /// Uninstall a tool
+    Uninstall {
+        /// Tool name
+        name: String,
+    },
 }
 
 // ============================================================================

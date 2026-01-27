@@ -52,6 +52,14 @@ log = "0.4"
 # Filesystem
 walkdir = "2"
 
+# HTTP client
+ureq = { version = "3", features = ["json"] }
+
+# Archive extraction
+flate2 = "1"
+tar = "0.4"
+zip = "2"
+
 # Workspace crates
 brewkit = { path = "crates/brewkit" }
 declarative = { path = "crates/declarative" }
