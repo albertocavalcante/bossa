@@ -1,6 +1,12 @@
 #!/bin/bash
 # Install bossa from GitHub releases
-# Usage: curl -fsSL https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.sh | bash
+#
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.sh | bash
+#
+# With specific version:
+#   curl -fsSL https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.sh | bash -s -- nightly
+#   curl -fsSL https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.sh | bash -s -- v0.2.0
 #
 # Environment variables:
 #   BOSSA_VERSION  - Version to install (default: latest)
@@ -62,12 +68,6 @@ detect_platform() {
 # Get latest version from GitHub API
 get_latest_version() {
     local url="https://api.github.com/repos/${REPO}/releases/latest"
-
-    # If version is specifically nightly, we use the nightly tag
-    if [[ "${BOSSA_VERSION:-}" == "nightly" ]]; then
-        echo "nightly"
-        return 0
-    fi
 
     if command -v curl &>/dev/null; then
         curl -fsSL "$url" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/'

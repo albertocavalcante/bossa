@@ -29,10 +29,10 @@ Or with options:
 
 ```bash
 # Install nightly version (recommended for latest features)
-BOSSA_VERSION=nightly curl -fsSL https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.sh | bash -s -- nightly
 
 # Install specific version
-BOSSA_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.sh | bash -s -- v0.1.0
 
 # Install to custom directory
 BOSSA_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.sh | bash
