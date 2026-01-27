@@ -26,8 +26,8 @@ jobs:
     name: Check for Changes
     timeout-minutes: 5
     outputs:
-      should_build: ${{ steps.check.outputs.should_build }}
-      short_sha: ${{ steps.check.outputs.short_sha }}
+      should_build: ${{ steps.check.outputs.should-build }}
+      short_sha: ${{ steps.check.outputs.short-sha }}
     permissions:
       contents: read
 
@@ -39,32 +39,9 @@ jobs:
 
       - name: Check for changes
         id: check
-        run: |
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
-
-          if [ "${{ inputs.force }}" == "true" ]; then
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-            echo "Force build requested"
-            exit 0
-          fi
-
-          # Check if there's a nightly tag
-          if git rev-parse nightly >/dev/null 2>&1; then
-            NIGHTLY_SHA=$(git rev-parse nightly)
-            HEAD_SHA=$(git rev-parse HEAD)
-
-            if [ "$NIGHTLY_SHA" == "$HEAD_SHA" ]; then
-              echo "should_build=false" >> "$GITHUB_OUTPUT"
-              echo "No changes since last nightly"
-            else
-              echo "should_build=true" >> "$GITHUB_OUTPUT"
-              echo "Changes detected since last nightly"
-            fi
-          else
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-            echo "No previous nightly tag found"
-          fi
+        uses: albertocavalcante/actions/check-nightly-changes@main
+        with:
+          force: ${{ inputs.force == true }}
 
   # Build binaries for all platforms
   build:
@@ -240,26 +217,24 @@ jobs:
           mkdir -p extracted
           tar -xzf artifacts/*.tar.gz -C extracted
 
+      - name: Compute version
+        if: steps.check.outputs.exists == 'true'
+        id: version
+        run: |
+          DATE=$(date +%Y%m%d)
+          echo "version=0.0.0~nightly.${DATE}.${{ needs.check-changes.outputs.short_sha }}" >> "$GITHUB_OUTPUT"
+
       - name: Build DEB package
         if: steps.check.outputs.exists == 'true'
-        run: |
-          mkdir -p pkg/DEBIAN pkg/usr/bin
-          cp extracted/${{ env.BINARY_NAME }} pkg/usr/bin/
-          chmod 755 pkg/usr/bin/${{ env.BINARY_NAME }}
-
-          DATE=$(date +%Y%m%d)
-          VERSION="0.0.0~nightly.${DATE}.${{ needs.check-changes.outputs.short_sha }}"
-
-          # Generate control file from template
-          export BINARY_NAME="${{ env.BINARY_NAME }}"
-          export VERSION
-          export ARCH="${{ matrix.arch }}"
-          export SUMMARY_SUFFIX=" (nightly)"
-          export DESCRIPTION_EXTRA=" This is an unstable nightly build."
-          envsubst < packaging/deb/control.in > pkg/DEBIAN/control
-
-          dpkg-deb --build pkg "${{ env.BINARY_NAME }}_${VERSION}_${{ matrix.arch }}.deb"
-          sha256sum ./*.deb > "${{ env.BINARY_NAME }}_${VERSION}_${{ matrix.arch }}.deb.sha256"
+        uses: albertocavalcante/actions/package-deb@main
+        with:
+          binary-path: extracted/${{ env.BINARY_NAME }}
+          binary-name: ${{ env.BINARY_NAME }}
+          version: ${{ steps.version.outputs.version }}
+          arch: ${{ matrix.arch }}
+          maintainer: "Alberto Cavalcante <alberto@cavalcante.uk>"
+          description: "Unified CLI for managing dev environments (nightly)"
+          homepage: https://github.com/albertocavalcante/bossa
 
       - name: Upload DEB package
         if: steps.check.outputs.exists == 'true'
@@ -321,37 +296,26 @@ jobs:
           mkdir -p extracted
           tar -xzf artifacts/*.tar.gz -C extracted
 
-      - name: Install RPM tools
+      - name: Compute version
         if: steps.check.outputs.exists == 'true'
+        id: version
         run: |
-          sudo apt-get update
-          sudo apt-get install -y rpm
+          DATE=$(date +%Y%m%d)
+          echo "release=0.nightly.${DATE}.${{ needs.check-changes.outputs.short_sha }}" >> "$GITHUB_OUTPUT"
 
       - name: Build RPM package
         if: steps.check.outputs.exists == 'true'
-        run: |
-          mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-          cp extracted/${{ env.BINARY_NAME }} rpmbuild/SOURCES/
-
-          DATE=$(date +%Y%m%d)
-          VERSION="0.0.0"
-          RELEASE="0.nightly.${DATE}.${{ needs.check-changes.outputs.short_sha }}"
-
-          # Generate spec file from template
-          export BINARY_NAME="${{ env.BINARY_NAME }}"
-          export VERSION
-          export RELEASE
-          export SUMMARY_SUFFIX=" (nightly)"
-          export DESCRIPTION_EXTRA="This is an unstable nightly build."
-          envsubst < packaging/rpm/bossa.spec.in > rpmbuild/SPECS/${{ env.BINARY_NAME }}.spec
-
-          rpmbuild --define "_topdir $(pwd)/rpmbuild" \
-                   --define "_arch ${{ matrix.arch }}" \
-                   --target ${{ matrix.arch }} \
-                   -bb rpmbuild/SPECS/${{ env.BINARY_NAME }}.spec
-
-          cp rpmbuild/RPMS/${{ matrix.arch }}/*.rpm ./
-          sha256sum ./*.rpm > "${{ env.BINARY_NAME }}-${VERSION}-${RELEASE}.${{ matrix.arch }}.rpm.sha256"
+        uses: albertocavalcante/actions/package-rpm@main
+        with:
+          binary-path: extracted/${{ env.BINARY_NAME }}
+          binary-name: ${{ env.BINARY_NAME }}
+          version: "0.0.0"
+          release: ${{ steps.version.outputs.release }}
+          arch: ${{ matrix.arch }}
+          summary: "Unified CLI for managing dev environments (nightly)"
+          description: "Manage workspaces, collections, tools, and packages. This is an unstable nightly build."
+          license: MIT
+          url: https://github.com/albertocavalcante/bossa
 
       - name: Upload RPM package
         if: steps.check.outputs.exists == 'true'

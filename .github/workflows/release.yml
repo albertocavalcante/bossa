@@ -205,21 +205,15 @@ jobs:
 
       - name: Build DEB package
         if: steps.check.outputs.exists == 'true'
-        run: |
-          mkdir -p pkg/DEBIAN pkg/usr/bin
-          cp extracted/${{ env.BINARY_NAME }} pkg/usr/bin/
-          chmod 755 pkg/usr/bin/${{ env.BINARY_NAME }}
-
-          # Generate control file from template
-          export BINARY_NAME="${{ env.BINARY_NAME }}"
-          export VERSION="${{ steps.version.outputs.version }}"
-          export ARCH="${{ matrix.arch }}"
-          export SUMMARY_SUFFIX=""
-          export DESCRIPTION_EXTRA=""
-          envsubst < packaging/deb/control.in > pkg/DEBIAN/control
-
-          dpkg-deb --build pkg ${{ env.BINARY_NAME }}_${{ steps.version.outputs.version }}_${{ matrix.arch }}.deb
-          sha256sum ${{ env.BINARY_NAME }}_${{ steps.version.outputs.version }}_${{ matrix.arch }}.deb > ${{ env.BINARY_NAME }}_${{ steps.version.outputs.version }}_${{ matrix.arch }}.deb.sha256
+        uses: albertocavalcante/actions/package-deb@main
+        with:
+          binary-path: extracted/${{ env.BINARY_NAME }}
+          binary-name: ${{ env.BINARY_NAME }}
+          version: ${{ steps.version.outputs.version }}
+          arch: ${{ matrix.arch }}
+          maintainer: "Alberto Cavalcante <alberto@cavalcante.uk>"
+          description: "Unified CLI for managing dev environments"
+          homepage: https://github.com/albertocavalcante/bossa
 
       - name: Upload DEB package
         if: steps.check.outputs.exists == 'true'
@@ -281,12 +275,6 @@ jobs:
           mkdir -p extracted
           tar -xzf artifacts/*.tar.gz -C extracted
 
-      - name: Install RPM tools
-        if: steps.check.outputs.exists == 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y rpm
-
       - name: Determine version
         if: steps.check.outputs.exists == 'true'
         id: version
@@ -302,25 +290,17 @@ jobs:
 
       - name: Build RPM package
         if: steps.check.outputs.exists == 'true'
-        run: |
-          mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-          cp extracted/${{ env.BINARY_NAME }} rpmbuild/SOURCES/
-
-          # Generate spec file from template
-          export BINARY_NAME="${{ env.BINARY_NAME }}"
-          export VERSION="${{ steps.version.outputs.version }}"
-          export RELEASE="1"
-          export SUMMARY_SUFFIX=""
-          export DESCRIPTION_EXTRA=""
-          envsubst < packaging/rpm/bossa.spec.in > rpmbuild/SPECS/${{ env.BINARY_NAME }}.spec
-
-          rpmbuild --define "_topdir $(pwd)/rpmbuild" \
-                   --define "_arch ${{ matrix.arch }}" \
-                   --target ${{ matrix.arch }} \
-                   -bb rpmbuild/SPECS/${{ env.BINARY_NAME }}.spec
-
-          cp rpmbuild/RPMS/${{ matrix.arch }}/*.rpm ./
-          sha256sum ./*.rpm > ${{ env.BINARY_NAME }}-${{ steps.version.outputs.version }}-1.${{ matrix.arch }}.rpm.sha256
+        uses: albertocavalcante/actions/package-rpm@main
+        with:
+          binary-path: extracted/${{ env.BINARY_NAME }}
+          binary-name: ${{ env.BINARY_NAME }}
+          version: ${{ steps.version.outputs.version }}
+          release: "1"
+          arch: ${{ matrix.arch }}
+          summary: "Unified CLI for managing dev environments"
+          description: "Manage workspaces, collections, tools, and packages."
+          license: MIT
+          url: https://github.com/albertocavalcante/bossa
 
       - name: Upload RPM package
         if: steps.check.outputs.exists == 'true'
