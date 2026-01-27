@@ -16,13 +16,41 @@ Unified CLI for managing your development environment.
 
 ## Installation
 
-### Homebrew (macOS arm64)
+### Quick Install (Linux/macOS)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.sh | bash
+```
+
+Or with options:
+
+```bash
+# Install specific version
+BOSSA_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.sh | bash
+
+# Install to custom directory
+BOSSA_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.sh | bash
+```
+
+### Homebrew (macOS)
 
 ```bash
 brew install albertocavalcante/tap/bossa
 ```
 
 > **Note:** Use the full tap path to avoid conflict with homebrew-core's `bossa` (a flash programmer).
+
+### Download Binary
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/albertocavalcante/bossa/releases).
+
+| Platform            | Asset                        |
+| ------------------- | ---------------------------- |
+| Linux x64           | `bossa-linux-amd64.tar.gz`   |
+| Linux ARM64         | `bossa-linux-aarch64.tar.gz` |
+| macOS Apple Silicon | `bossa-darwin-arm64.tar.gz`  |
+| macOS Intel         | `bossa-darwin-amd64.tar.gz`  |
+| Windows x64         | `bossa-windows-amd64.zip`    |
 
 ### From Source
 
@@ -32,6 +60,9 @@ cargo install --path .
 
 # Using Bazel
 bazel run //:install
+
+# Using just
+just install
 ```
 
 ## Usage
