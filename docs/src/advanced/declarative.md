@@ -153,8 +153,8 @@ Two approaches:
 
 2. **Update desired state** - Capture current state
    ```bash
-bossa brew capture
-bossa collections snapshot refs
+   bossa brew capture
+   bossa collections snapshot refs
    ```
 
 ## Two-Way Sync

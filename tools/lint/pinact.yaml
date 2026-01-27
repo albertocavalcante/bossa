@@ -9,7 +9,7 @@
 #   pinact run                    # Check pins
 #   pinact run -u                 # Update pins to latest
 #   pinact run --verify           # Verify existing pins
-#   pinact run -c tools/lint/pinact.yaml  # Use this config
+#   PINACT_CONFIG=tools/lint/pinact.yaml pinact run  # Use this config
 
 version: 3
 

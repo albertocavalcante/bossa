@@ -126,12 +126,12 @@ bossa add <SUBCOMMAND>
 
 Subcommands:
 
-| Subcommand | Description            |
-| ---------- | ---------------------- |
-| `collection` | Add a collection     |
+| Subcommand   | Description                |
+| ------------ | -------------------------- |
+| `collection` | Add a collection           |
 | `repo`       | Add a repo to a collection |
-| `workspace`  | Add a workspace repo  |
-| `storage`    | Add a storage volume  |
+| `workspace`  | Add a workspace repo       |
+| `storage`    | Add a storage volume       |
 
 Examples:
 
@@ -152,12 +152,12 @@ bossa rm <SUBCOMMAND>
 
 Subcommands:
 
-| Subcommand | Description            |
-| ---------- | ---------------------- |
-| `collection` | Remove a collection  |
+| Subcommand   | Description                     |
+| ------------ | ------------------------------- |
+| `collection` | Remove a collection             |
 | `repo`       | Remove a repo from a collection |
-| `workspace`  | Remove a workspace repo |
-| `storage`    | Remove a storage volume |
+| `workspace`  | Remove a workspace repo         |
+| `storage`    | Remove a storage volume         |
 
 Examples:
 
@@ -231,13 +231,13 @@ bossa caches <COMMAND>
 
 Subcommands:
 
-| Command  | Description                        |
-| -------- | ---------------------------------- |
-| `status` | Show cache status                  |
+| Command  | Description                          |
+| -------- | ------------------------------------ |
+| `status` | Show cache status                    |
 | `apply`  | Apply cache config (create symlinks) |
-| `audit`  | Detect drift                       |
-| `doctor` | Cache health check                 |
-| `init`   | Create starter config              |
+| `audit`  | Detect drift                         |
+| `doctor` | Cache health check                   |
+| `init`   | Create starter config                |
 
 Examples:
 
@@ -292,11 +292,11 @@ bossa manifest <COMMAND>
 
 Subcommands:
 
-| Command      | Description             |
-| ------------ | ----------------------- |
-| `scan`       | Hash files in directory |
+| Command      | Description              |
+| ------------ | ------------------------ |
+| `scan`       | Hash files in directory  |
 | `stats`      | Show manifest statistics |
-| `duplicates` | Find duplicates         |
+| `duplicates` | Find duplicates          |
 
 Examples:
 
@@ -316,13 +316,13 @@ bossa icloud <COMMAND>
 
 Subcommands:
 
-| Command          | Description                       |
-| ---------------- | --------------------------------- |
-| `status`         | Show iCloud status                |
-| `list`           | List files with status            |
-| `find-evictable` | Find large local files            |
-| `evict`          | Evict files to free space         |
-| `download`       | Download files from iCloud        |
+| Command          | Description                |
+| ---------------- | -------------------------- |
+| `status`         | Show iCloud status         |
+| `list`           | List files with status     |
+| `find-evictable` | Find large local files     |
+| `evict`          | Evict files to free space  |
+| `download`       | Download files from iCloud |
 
 Examples:
 
