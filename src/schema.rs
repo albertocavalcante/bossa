@@ -55,6 +55,10 @@ pub struct BossaConfig {
     /// Tools configuration (declarative tool definitions)
     #[serde(default)]
     pub tools: ToolsSection,
+
+    /// Network configuration (proxies, registries)
+    #[serde(default)]
+    pub network: NetworkConfig,
 }
 
 impl BossaConfig {
@@ -977,6 +981,10 @@ pub struct ToolDefinition {
     /// Whether this tool is enabled (default: true)
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+
+    /// Platform availability configuration
+    #[serde(default)]
+    pub platforms: Option<PlatformsConfig>,
 }
 
 fn default_enabled() -> bool {
@@ -995,6 +1003,118 @@ pub enum ToolSource {
     GithubRelease,
     /// Cargo install (from crates.io or git)
     Cargo,
+}
+
+/// Platform availability configuration
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct PlatformsConfig {
+    /// Linux platform configurations
+    #[serde(default)]
+    pub linux: Option<HashMap<String, PlatformArch>>,
+
+    /// macOS/Darwin platform configurations
+    #[serde(default)]
+    pub darwin: Option<HashMap<String, PlatformArch>>,
+
+    /// Windows platform configurations
+    #[serde(default)]
+    pub windows: Option<HashMap<String, PlatformArch>>,
+}
+
+/// Architecture-specific platform configuration
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct PlatformArch {
+    /// Whether this platform/arch combo is available
+    #[serde(default = "default_available")]
+    pub available: bool,
+
+    /// Override archive type for this platform (e.g., "zip" for Windows)
+    #[serde(default)]
+    pub archive_type: Option<String>,
+
+    /// Override URL for this platform
+    #[serde(default)]
+    pub url: Option<String>,
+
+    /// Override archive path for this platform
+    #[serde(default)]
+    pub archive_path: Option<String>,
+}
+
+fn default_available() -> bool {
+    true
+}
+
+impl PlatformsConfig {
+    /// Check if the tool is available for the current platform
+    pub fn is_available_for_current(&self) -> bool {
+        let os = std::env::consts::OS;
+        let arch = std::env::consts::ARCH;
+
+        // Normalize arch names
+        let arch_name = match arch {
+            "x86_64" => "amd64",
+            "aarch64" => "arm64",
+            "x86" => "386",
+            other => other,
+        };
+
+        // Normalize OS names
+        let os_name = match os {
+            "macos" => "darwin",
+            other => other,
+        };
+
+        self.is_available(os_name, arch_name)
+    }
+
+    /// Check if the tool is available for a specific OS and arch
+    pub fn is_available(&self, os: &str, arch: &str) -> bool {
+        let platform_map = match os {
+            "linux" => &self.linux,
+            "darwin" | "macos" => &self.darwin,
+            "windows" => &self.windows,
+            _ => return true, // Unknown OS, assume available
+        };
+
+        match platform_map {
+            Some(archs) => {
+                // If platform is specified, check if arch is available
+                archs.get(arch).is_some_and(|p| p.available)
+            }
+            None => {
+                // If platform not specified, assume available on all archs
+                true
+            }
+        }
+    }
+
+    /// Get platform-specific overrides for current platform
+    pub fn get_current_overrides(&self) -> Option<&PlatformArch> {
+        let os = std::env::consts::OS;
+        let arch = std::env::consts::ARCH;
+
+        let arch_name = match arch {
+            "x86_64" => "amd64",
+            "aarch64" => "arm64",
+            "x86" => "386",
+            other => other,
+        };
+
+        let os_name = match os {
+            "macos" => "darwin",
+            other => other,
+        };
+
+        let platform_map = match os_name {
+            "linux" => &self.linux,
+            "darwin" => &self.darwin,
+            "windows" => &self.windows,
+            _ => return None,
+        };
+
+        platform_map.as_ref().and_then(|archs| archs.get(arch_name))
+    }
 }
 
 impl ToolDefinition {
@@ -1101,6 +1221,40 @@ impl ToolDefinition {
         self.archive_type.as_deref() == Some("binary")
     }
 
+    /// Check if this tool is available for the current platform
+    pub fn is_available_for_current_platform(&self) -> bool {
+        match &self.platforms {
+            Some(platforms) => platforms.is_available_for_current(),
+            None => true, // No platforms specified means available everywhere
+        }
+    }
+
+    /// Get platform-specific archive type override, if any
+    pub fn get_effective_archive_type(&self) -> String {
+        if let Some(ref platforms) = self.platforms {
+            if let Some(overrides) = platforms.get_current_overrides() {
+                if let Some(ref archive_type) = overrides.archive_type {
+                    return archive_type.clone();
+                }
+            }
+        }
+        self.archive_type
+            .clone()
+            .unwrap_or_else(|| "tar.gz".to_string())
+    }
+
+    /// Get platform-specific URL override, if any
+    pub fn get_effective_url(&self, tool_name: &str) -> Option<String> {
+        if let Some(ref platforms) = self.platforms {
+            if let Some(overrides) = platforms.get_current_overrides() {
+                if let Some(ref url) = overrides.url {
+                    return Some(self.expand_template(url, tool_name));
+                }
+            }
+        }
+        self.build_url(tool_name)
+    }
+
     /// Validate the tool definition
     pub fn validate(&self, name: &str) -> Result<()> {
         match self.source {
@@ -1180,6 +1334,7 @@ impl Default for ToolDefinition {
             archive_type: None,
             post_install: None,
             enabled: true,
+            platforms: None,
         }
     }
 }
@@ -1201,6 +1356,146 @@ impl ToolsSection {
             def.validate(name)?;
         }
         Ok(())
+    }
+}
+
+// ============================================================================
+// Network Configuration
+// ============================================================================
+
+/// Network configuration for proxies and package registries
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct NetworkConfig {
+    /// HTTP proxy URL
+    #[serde(default)]
+    pub http_proxy: Option<String>,
+
+    /// HTTPS proxy URL
+    #[serde(default)]
+    pub https_proxy: Option<String>,
+
+    /// Comma-separated list of hosts to bypass proxy
+    #[serde(default)]
+    pub no_proxy: Option<String>,
+
+    /// Go-specific network configuration
+    #[serde(default)]
+    pub go: Option<GoNetworkConfig>,
+
+    /// npm/pnpm/bun registry configuration
+    #[serde(default)]
+    pub npm: Option<NpmNetworkConfig>,
+
+    /// Python/pip registry configuration
+    #[serde(default)]
+    pub python: Option<PythonNetworkConfig>,
+
+    /// Cargo/Rust registry configuration
+    #[serde(default)]
+    pub cargo: Option<CargoNetworkConfig>,
+}
+
+/// Go-specific network configuration
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct GoNetworkConfig {
+    /// GOPROXY value
+    #[serde(default)]
+    pub goproxy: Option<String>,
+
+    /// GOSUMDB value
+    #[serde(default)]
+    pub gosumdb: Option<String>,
+
+    /// GOPRIVATE value (comma-separated module paths)
+    #[serde(default)]
+    pub goprivate: Option<String>,
+
+    /// GONOSUMDB value
+    #[serde(default)]
+    pub gonosumdb: Option<String>,
+
+    /// Preferred Go version
+    #[serde(default)]
+    pub goversion: Option<String>,
+}
+
+/// npm/pnpm/bun network configuration
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct NpmNetworkConfig {
+    /// npm registry URL
+    #[serde(default)]
+    pub registry: Option<String>,
+
+    /// Scoped registries (e.g., "@myorg" -> "https://...")
+    #[serde(default)]
+    pub scoped: HashMap<String, String>,
+}
+
+/// Python/pip network configuration
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct PythonNetworkConfig {
+    /// Primary index URL (pip --index-url)
+    #[serde(default)]
+    pub index_url: Option<String>,
+
+    /// Extra index URLs (pip --extra-index-url)
+    #[serde(default)]
+    pub extra_index_urls: Vec<String>,
+
+    /// Trusted hosts (pip --trusted-host)
+    #[serde(default)]
+    pub trusted_hosts: Vec<String>,
+}
+
+/// Cargo/Rust network configuration
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct CargoNetworkConfig {
+    /// Alternative registry name and URL
+    #[serde(default)]
+    pub registries: HashMap<String, String>,
+}
+
+impl NetworkConfig {
+    /// Get environment variables to set for network configuration
+    pub fn to_env_vars(&self) -> Vec<(String, String)> {
+        let mut vars = Vec::new();
+
+        if let Some(ref proxy) = self.http_proxy {
+            vars.push(("HTTP_PROXY".to_string(), proxy.clone()));
+            vars.push(("http_proxy".to_string(), proxy.clone()));
+        }
+
+        if let Some(ref proxy) = self.https_proxy {
+            vars.push(("HTTPS_PROXY".to_string(), proxy.clone()));
+            vars.push(("https_proxy".to_string(), proxy.clone()));
+        }
+
+        if let Some(ref no_proxy) = self.no_proxy {
+            vars.push(("NO_PROXY".to_string(), no_proxy.clone()));
+            vars.push(("no_proxy".to_string(), no_proxy.clone()));
+        }
+
+        if let Some(ref go) = self.go {
+            if let Some(ref goproxy) = go.goproxy {
+                vars.push(("GOPROXY".to_string(), goproxy.clone()));
+            }
+            if let Some(ref gosumdb) = go.gosumdb {
+                vars.push(("GOSUMDB".to_string(), gosumdb.clone()));
+            }
+            if let Some(ref goprivate) = go.goprivate {
+                vars.push(("GOPRIVATE".to_string(), goprivate.clone()));
+            }
+            if let Some(ref gonosumdb) = go.gonosumdb {
+                vars.push(("GONOSUMDB".to_string(), gonosumdb.clone()));
+            }
+        }
+
+        vars
+    }
+
+    /// Check if any proxy is configured
+    pub fn has_proxy(&self) -> bool {
+        self.http_proxy.is_some() || self.https_proxy.is_some()
     }
 }
 
@@ -1914,5 +2209,125 @@ name = "rust"
             ..Default::default()
         };
         assert!(def_invalid.validate("test").is_err());
+    }
+
+    #[test]
+    fn test_platforms_config_no_restriction() {
+        // No platforms = available everywhere
+        let def = ToolDefinition {
+            source: ToolSource::Http,
+            url: Some("https://example.com/tool.tar.gz".to_string()),
+            ..Default::default()
+        };
+        assert!(def.is_available_for_current_platform());
+    }
+
+    #[test]
+    fn test_platforms_config_available() {
+        let mut linux_archs = HashMap::new();
+        linux_archs.insert("amd64".to_string(), PlatformArch {
+            available: true,
+            ..Default::default()
+        });
+
+        let mut darwin_archs = HashMap::new();
+        darwin_archs.insert("arm64".to_string(), PlatformArch {
+            available: true,
+            ..Default::default()
+        });
+        darwin_archs.insert("amd64".to_string(), PlatformArch {
+            available: true,
+            ..Default::default()
+        });
+
+        let platforms = PlatformsConfig {
+            linux: Some(linux_archs),
+            darwin: Some(darwin_archs),
+            windows: None,
+        };
+
+        // Test the is_available method directly
+        assert!(platforms.is_available("linux", "amd64"));
+        assert!(platforms.is_available("darwin", "arm64"));
+        assert!(platforms.is_available("darwin", "amd64"));
+        // Windows not specified, so available by default
+        assert!(platforms.is_available("windows", "amd64"));
+    }
+
+    #[test]
+    fn test_platforms_config_not_available() {
+        let mut linux_archs = HashMap::new();
+        linux_archs.insert("amd64".to_string(), PlatformArch {
+            available: true,
+            ..Default::default()
+        });
+
+        let platforms = PlatformsConfig {
+            linux: Some(linux_archs),
+            darwin: None,
+            windows: None,
+        };
+
+        // arm64 not in linux archs, so not available
+        assert!(!platforms.is_available("linux", "arm64"));
+    }
+
+    #[test]
+    fn test_platforms_config_archive_type_override() {
+        let mut windows_archs = HashMap::new();
+        windows_archs.insert("amd64".to_string(), PlatformArch {
+            available: true,
+            archive_type: Some("zip".to_string()),
+            ..Default::default()
+        });
+
+        let platforms = PlatformsConfig {
+            linux: None,
+            darwin: None,
+            windows: Some(windows_archs),
+        };
+
+        // Test getting overrides
+        let overrides = platforms.get_current_overrides();
+        // Can't reliably test this without knowing current platform
+        // Just verify it doesn't crash
+        let _ = overrides;
+    }
+
+    #[test]
+    fn test_network_config_to_env_vars() {
+        let config = NetworkConfig {
+            http_proxy: Some("http://proxy.example.com:8080".to_string()),
+            https_proxy: Some("http://proxy.example.com:8080".to_string()),
+            no_proxy: Some("localhost,.example.com".to_string()),
+            go: Some(GoNetworkConfig {
+                goproxy: Some("https://proxy.example.com/go,direct".to_string()),
+                gosumdb: Some("sum.golang.org".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let vars = config.to_env_vars();
+
+        // Check that proxy vars are set (both upper and lower case)
+        assert!(vars.iter().any(|(k, _)| k == "HTTP_PROXY"));
+        assert!(vars.iter().any(|(k, _)| k == "http_proxy"));
+        assert!(vars.iter().any(|(k, _)| k == "HTTPS_PROXY"));
+        assert!(vars.iter().any(|(k, _)| k == "NO_PROXY"));
+        assert!(vars.iter().any(|(k, _)| k == "GOPROXY"));
+        assert!(vars.iter().any(|(k, _)| k == "GOSUMDB"));
+    }
+
+    #[test]
+    fn test_network_config_has_proxy() {
+        let no_proxy = NetworkConfig::default();
+        assert!(!no_proxy.has_proxy());
+
+        let with_proxy = NetworkConfig {
+            http_proxy: Some("http://proxy.example.com:8080".to_string()),
+            ..Default::default()
+        };
+        assert!(with_proxy.has_proxy());
     }
 }

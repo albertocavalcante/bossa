@@ -122,6 +122,15 @@ fn apply(ctx: &Context, filter_tools: &[String], dry_run: bool, force: bool) -> 
     let mut failed = 0;
 
     for (name, def) in tools_to_apply {
+        // Check platform availability
+        if !def.is_available_for_current_platform() {
+            if !ctx.quiet {
+                ui::dim(&format!("  ⊘ {} (not available for this platform)", name));
+            }
+            skipped += 1;
+            continue;
+        }
+
         // Check if already installed
         let is_installed = state.get(name).is_some_and(|t| {
             PathBuf::from(&t.install_path).exists()
@@ -201,8 +210,9 @@ fn install_from_definition(
 
     match def.source {
         ToolSource::Http => {
+            // Use platform-specific URL if available
             let url = def
-                .build_url(name)
+                .get_effective_url(name)
                 .context("URL required for HTTP source (provide 'url' or 'base_url' + 'path')")?;
 
             let archive_path = def
@@ -212,14 +222,16 @@ fn install_from_definition(
 
             let data = download_file(&url)?;
 
+            // Use platform-specific archive type if available
+            let archive_type = def.get_effective_archive_type();
+
             // Determine how to handle the downloaded data based on archive_type
-            let binary_data = if def.is_binary_download() {
+            let binary_data = if archive_type == "binary" {
                 // Direct binary download - no extraction needed
                 data
             } else {
                 // Extract from archive based on type
-                let ext = def.effective_extension();
-                match ext.as_str() {
+                match archive_type.as_str() {
                     "zip" => extract_zip(&data, &binary_name, archive_path.as_deref())?,
                     _ => extract_targz(&data, &binary_name, archive_path.as_deref())?,
                 }
