@@ -203,7 +203,40 @@ crate = "fd-find"
 source = "github-release"
 repo = "dandavison/delta"
 version = "0.18.2"
+
+# npm/pnpm global packages (prefers pnpm, falls back to npm)
+[tools.pnpm]
+source = "npm"
+version = "9.15.0"
+
+[tools.bun]
+source = "npm"
+version = "1.3.5"
+depends = ["pnpm"] # Install pnpm first
+needs_scripts = true # Required for postinstall scripts
 ```
+
+### Tool Dependencies
+
+Tools can declare dependencies on other tools using the `depends` field. Bossa will automatically install dependencies first using topological sort:
+
+```toml
+# npm → pnpm → bun (dependency chain)
+[tools.pnpm]
+source = "npm"
+
+[tools.bun]
+source = "npm"
+depends = ["pnpm"] # pnpm will be installed before bun
+```
+
+Supported sources:
+
+- `github-release` - Download from GitHub releases
+- `cargo` - Install via cargo (crates.io or git)
+- `npm` - Install via pnpm (preferred) or npm globally
+- `http` - Download from any HTTP URL
+- `container` - Extract from container images
 
 ## Configuration
 

@@ -990,6 +990,20 @@ pub struct ToolDefinition {
     /// Platform availability configuration
     #[serde(default)]
     pub platforms: Option<PlatformsConfig>,
+
+    // === Dependencies ===
+    /// Tools that must be installed before this one (e.g., ["pnpm"] for bun)
+    #[serde(default)]
+    pub depends: Vec<String>,
+
+    // === Npm source fields ===
+    /// npm package name (defaults to tool name)
+    #[serde(default)]
+    pub npm_package: Option<String>,
+
+    /// Whether to allow postinstall scripts (required by some packages like bun)
+    #[serde(default)]
+    pub needs_scripts: bool,
 }
 
 fn default_enabled() -> bool {
@@ -1008,6 +1022,8 @@ pub enum ToolSource {
     GithubRelease,
     /// Cargo install (from crates.io or git)
     Cargo,
+    /// npm/pnpm global install
+    Npm,
 }
 
 /// Platform availability configuration
@@ -1295,6 +1311,10 @@ impl ToolDefinition {
                     );
                 }
             }
+            ToolSource::Npm => {
+                // npm_package is optional, defaults to tool name
+                // No required fields, but we should have npm or pnpm available
+            }
         }
         Ok(())
     }
@@ -1337,6 +1357,9 @@ impl Default for ToolDefinition {
             post_install: None,
             enabled: true,
             platforms: None,
+            depends: Vec::new(),
+            npm_package: None,
+            needs_scripts: false,
         }
     }
 }

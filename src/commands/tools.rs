@@ -4,8 +4,11 @@
 //! - HTTP URLs pointing to tar.gz archives
 //! - Container images (via podman/docker)
 //! - GitHub releases
+//! - Cargo (crates.io or git)
+//! - npm/pnpm global packages
 //!
 //! Tools can be installed imperatively via CLI or declaratively via config.toml.
+//! Tools can declare dependencies on other tools, which are installed first.
 
 use crate::Context;
 use crate::cli::ToolsCommand;
@@ -14,7 +17,7 @@ use crate::schema::{
 };
 use crate::ui;
 use anyhow::{Context as _, Result, bail};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -22,6 +25,114 @@ use std::process::Command;
 
 /// Maximum download size (500 MB).
 const MAX_DOWNLOAD_SIZE: u64 = 500 * 1024 * 1024;
+
+// =============================================================================
+// Dependency Resolution (Topological Sort)
+// =============================================================================
+
+/// Sort tools by dependencies using Kahn's algorithm (topological sort).
+/// Returns tools in order such that dependencies come before dependents.
+fn sort_by_dependencies<'a>(
+    tools: Vec<(&'a String, &'a ToolDefinition)>,
+) -> Result<Vec<(&'a String, &'a ToolDefinition)>> {
+    // Build adjacency list and in-degree count
+    let tool_names: HashSet<&str> = tools.iter().map(|(name, _)| name.as_str()).collect();
+
+    // Calculate in-degree for each tool (number of dependencies pointing to it)
+    let mut in_degree: HashMap<&str, usize> = HashMap::new();
+    let mut dependents: HashMap<&str, Vec<&str>> = HashMap::new();
+
+    for (name, def) in &tools {
+        in_degree.entry(name.as_str()).or_insert(0);
+        for dep in &def.depends {
+            // Only count dependencies that are in our tool set
+            if tool_names.contains(dep.as_str()) {
+                *in_degree.entry(name.as_str()).or_insert(0) += 1;
+                dependents
+                    .entry(dep.as_str())
+                    .or_default()
+                    .push(name.as_str());
+            }
+        }
+    }
+
+    // Start with tools that have no dependencies (in-degree = 0)
+    let mut queue: Vec<&str> = in_degree
+        .iter()
+        .filter(|&(_, degree)| *degree == 0)
+        .map(|(&name, _)| name)
+        .collect();
+    queue.sort(); // Deterministic order
+
+    let mut sorted: Vec<(&String, &ToolDefinition)> = Vec::new();
+    let mut processed = 0;
+
+    while let Some(name) = queue.pop() {
+        // Find the original (name, def) pair
+        if let Some(&(orig_name, def)) = tools.iter().find(|(n, _)| n.as_str() == name) {
+            sorted.push((orig_name, def));
+            processed += 1;
+
+            // Reduce in-degree for dependents
+            if let Some(deps) = dependents.get(name) {
+                for dep in deps {
+                    if let Some(degree) = in_degree.get_mut(dep) {
+                        *degree -= 1;
+                        if *degree == 0 {
+                            queue.push(dep);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Check for cycles
+    if processed != tools.len() {
+        let unprocessed: Vec<_> = in_degree
+            .iter()
+            .filter(|&(_, d)| *d > 0)
+            .map(|(&n, _)| n)
+            .collect();
+        bail!(
+            "Circular dependency detected among tools: {}",
+            unprocessed.join(", ")
+        );
+    }
+
+    Ok(sorted)
+}
+
+/// Check if all dependencies of a tool are satisfied (installed).
+fn check_dependencies(
+    def: &ToolDefinition,
+    state: &ToolsConfig,
+    tools_to_install: &HashSet<&str>,
+) -> Result<Vec<String>> {
+    let mut missing = Vec::new();
+
+    for dep in &def.depends {
+        // Check if dependency is already installed
+        let is_installed = state
+            .get(dep)
+            .is_some_and(|t| PathBuf::from(&t.install_path).exists());
+
+        // Check if dependency is in the list of tools to be installed
+        let will_be_installed = tools_to_install.contains(dep.as_str());
+
+        // Check if dependency is available on the system (e.g., npm, pnpm)
+        let is_system_available = Command::new(dep)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success());
+
+        if !is_installed && !will_be_installed && !is_system_available {
+            missing.push(dep.clone());
+        }
+    }
+
+    Ok(missing)
+}
 
 /// Run the tools command.
 pub fn run(ctx: &Context, cmd: ToolsCommand) -> Result<()> {
@@ -113,6 +224,15 @@ fn apply(ctx: &Context, filter_tools: &[String], dry_run: bool, force: bool) -> 
         return Ok(());
     }
 
+    // Sort tools by dependencies (topological sort)
+    let tools_to_apply = sort_by_dependencies(tools_to_apply)?;
+
+    // Collect names of tools we'll install for dependency checking
+    let tools_to_install: HashSet<&str> = tools_to_apply
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+
     if !ctx.quiet {
         ui::header("Applying Tools");
         println!();
@@ -123,6 +243,17 @@ fn apply(ctx: &Context, filter_tools: &[String], dry_run: bool, force: bool) -> 
     let mut failed = 0;
 
     for (name, def) in tools_to_apply {
+        // Check dependencies are satisfied
+        let missing_deps = check_dependencies(def, &state, &tools_to_install)?;
+        if !missing_deps.is_empty() {
+            ui::error(&format!(
+                "  ✗ {} missing dependencies: {}",
+                name,
+                missing_deps.join(", ")
+            ));
+            failed += 1;
+            continue;
+        }
         // Check platform availability
         if !def.is_available_for_current_platform() {
             if !ctx.quiet {
@@ -422,6 +553,43 @@ fn install_from_definition(
                 install_path: binary_full_path.to_string_lossy().to_string(),
                 installed_at: chrono::Utc::now().to_rfc3339(),
                 source: "cargo".to_string(),
+                container: None,
+            })
+        }
+
+        ToolSource::Npm => {
+            // Determine package manager: prefer pnpm, fall back to npm
+            let (pm, pm_name) = detect_npm_package_manager();
+
+            // Get package name (defaults to tool name)
+            let npm_package = def.npm_package.as_deref().unwrap_or(name);
+
+            // Run npm/pnpm install
+            let npm_result = run_npm_install(
+                &pm,
+                npm_package,
+                def.version.as_deref(),
+                def.needs_scripts,
+                ctx,
+            )?;
+
+            if !npm_result.success {
+                bail!(
+                    "{} install failed:\n{}",
+                    pm_name,
+                    npm_result.stderr.trim_end()
+                );
+            }
+
+            // Find where npm/pnpm installed the binary
+            let binary_path = find_npm_binary(&pm, &binary_name)?;
+
+            Ok(InstalledTool {
+                url: format!("npm:{}", npm_package),
+                binary: binary_name,
+                install_path: binary_path.to_string_lossy().to_string(),
+                installed_at: chrono::Utc::now().to_rfc3339(),
+                source: "npm".to_string(),
                 container: None,
             })
         }
@@ -886,6 +1054,19 @@ fn status(_ctx: &Context, name: &str) -> Result<()> {
                     ui::kv("Locked", "yes");
                 }
             }
+            ToolSource::Npm => {
+                if let Some(ref npm_package) = def.npm_package {
+                    ui::kv("Package", npm_package);
+                }
+                if def.needs_scripts {
+                    ui::kv("Needs Scripts", "yes");
+                }
+            }
+        }
+
+        // Show dependencies if any
+        if !def.depends.is_empty() {
+            ui::kv("Dependencies", &def.depends.join(", "));
         }
     }
 
@@ -1146,6 +1327,13 @@ fn check_tool_version(
                 ("http".to_string(), def.version.clone(), None)
             }
             ToolSource::Container => ("container".to_string(), None, Some("n/a".to_string())),
+            ToolSource::Npm => {
+                let npm_package = def.npm_package.as_deref().unwrap_or(name);
+                match get_npm_latest(npm_package) {
+                    Ok(v) => ("npm".to_string(), Some(v), None),
+                    Err(e) => ("npm".to_string(), None, Some(e.to_string())),
+                }
+            }
         }
     } else {
         // No definition, try to infer from installed tool
@@ -1680,6 +1868,180 @@ fn run_cargo_install(
 }
 
 // =============================================================================
+// Helper functions - npm/pnpm
+// =============================================================================
+
+/// Detect available npm package manager (prefer pnpm > npm).
+/// Returns (command, display_name).
+fn detect_npm_package_manager() -> (String, &'static str) {
+    // Try pnpm first (preferred)
+    if Command::new("pnpm")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+    {
+        return ("pnpm".to_string(), "pnpm");
+    }
+
+    // Fall back to npm
+    if Command::new("npm")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+    {
+        return ("npm".to_string(), "npm");
+    }
+
+    // Default to npm (will fail later with helpful error)
+    ("npm".to_string(), "npm")
+}
+
+struct NpmInstallResult {
+    success: bool,
+    #[allow(dead_code)]
+    stdout: String,
+    stderr: String,
+}
+
+/// Run npm/pnpm global install.
+fn run_npm_install(
+    pm: &str,
+    package: &str,
+    version: Option<&str>,
+    needs_scripts: bool,
+    ctx: &Context,
+) -> Result<NpmInstallResult> {
+    // Build package spec with optional version
+    let package_spec = if let Some(v) = version {
+        format!("{}@{}", package, v)
+    } else {
+        package.to_string()
+    };
+
+    let mut args = vec!["install", "-g"];
+
+    // pnpm uses different flags
+    if pm == "pnpm" {
+        // pnpm needs explicit permission for postinstall scripts
+        if !needs_scripts {
+            args.push("--ignore-scripts");
+        }
+    } else {
+        // npm flags
+        if !needs_scripts {
+            args.push("--ignore-scripts");
+        }
+    }
+
+    args.push(&package_spec);
+
+    if ctx.verbose > 0 {
+        ui::dim(&format!("Running: {} {}", pm, args.join(" ")));
+    }
+
+    let output = Command::new(pm)
+        .args(&args)
+        .output()
+        .with_context(|| format!("Failed to run {} install", pm))?;
+
+    Ok(NpmInstallResult {
+        success: output.status.success(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+    })
+}
+
+/// Find where npm/pnpm installed a global binary.
+fn find_npm_binary(pm: &str, binary_name: &str) -> Result<PathBuf> {
+    // Get the global bin directory
+    let bin_dir_output = Command::new(pm)
+        .args(["config", "get", "prefix"])
+        .output()
+        .context("Failed to get npm prefix")?;
+
+    if !bin_dir_output.status.success() {
+        bail!("Failed to get {} prefix", pm);
+    }
+
+    let prefix = String::from_utf8_lossy(&bin_dir_output.stdout)
+        .trim()
+        .to_string();
+
+    // npm/pnpm install binaries to prefix/bin on Unix, prefix on Windows
+    let bin_path = if cfg!(windows) {
+        PathBuf::from(&prefix).join(binary_name)
+    } else {
+        PathBuf::from(&prefix).join("bin").join(binary_name)
+    };
+
+    // Also check pnpm's default location
+    if !bin_path.exists() && pm == "pnpm" {
+        // pnpm often uses ~/.local/share/pnpm
+        if let Some(home) = dirs::home_dir() {
+            let pnpm_path = home
+                .join(".local")
+                .join("share")
+                .join("pnpm")
+                .join(binary_name);
+            if pnpm_path.exists() {
+                return Ok(pnpm_path);
+            }
+        }
+    }
+
+    if bin_path.exists() {
+        Ok(bin_path)
+    } else {
+        // Try which/where as fallback
+        let which_cmd = if cfg!(windows) { "where" } else { "which" };
+        let which_output = Command::new(which_cmd).arg(binary_name).output();
+
+        if let Ok(output) = which_output
+            && output.status.success()
+        {
+            let path = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if !path.is_empty() {
+                return Ok(PathBuf::from(path));
+            }
+        }
+
+        bail!(
+            "Binary '{}' not found after {} install. Expected at: {}",
+            binary_name,
+            pm,
+            bin_path.display()
+        )
+    }
+}
+
+/// Get latest version from npm registry.
+fn get_npm_latest(package: &str) -> Result<String> {
+    let url = format!("https://registry.npmjs.org/{}/latest", package);
+
+    let agent = ureq::Agent::new_with_defaults();
+    let mut response = agent
+        .get(&url)
+        .header("User-Agent", "bossa-tools")
+        .call()
+        .context("Failed to fetch npm registry")?;
+
+    let body: serde_json::Value = response
+        .body_mut()
+        .read_json()
+        .context("Failed to parse npm response")?;
+
+    body["version"]
+        .as_str()
+        .map(|s| s.to_string())
+        .context("No version in npm response")
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -1989,5 +2351,87 @@ mod tests {
             error: None,
         };
         assert!(!info.is_outdated());
+    }
+
+    #[test]
+    fn test_sort_by_dependencies_no_deps() {
+        use crate::schema::ToolDefinition;
+
+        let def_a = ToolDefinition::default();
+        let def_b = ToolDefinition::default();
+
+        let name_a = "tool_a".to_string();
+        let name_b = "tool_b".to_string();
+
+        let tools = vec![(&name_a, &def_a), (&name_b, &def_b)];
+
+        let sorted = sort_by_dependencies(tools).unwrap();
+        assert_eq!(sorted.len(), 2);
+        // Without deps, order is determined by the algorithm (stable)
+    }
+
+    #[test]
+    fn test_sort_by_dependencies_simple_chain() {
+        use crate::schema::ToolDefinition;
+
+        // bun depends on pnpm
+        let def_bun = ToolDefinition {
+            depends: vec!["pnpm".to_string()],
+            ..Default::default()
+        };
+
+        let def_pnpm = ToolDefinition::default();
+
+        let name_bun = "bun".to_string();
+        let name_pnpm = "pnpm".to_string();
+
+        // Input order: bun first, pnpm second
+        let tools = vec![(&name_bun, &def_bun), (&name_pnpm, &def_pnpm)];
+
+        let sorted = sort_by_dependencies(tools).unwrap();
+
+        // pnpm should come before bun
+        let names: Vec<_> = sorted.iter().map(|(n, _)| n.as_str()).collect();
+        let pnpm_idx = names.iter().position(|n| *n == "pnpm").unwrap();
+        let bun_idx = names.iter().position(|n| *n == "bun").unwrap();
+        assert!(pnpm_idx < bun_idx, "pnpm should be installed before bun");
+    }
+
+    #[test]
+    fn test_sort_by_dependencies_detects_cycle() {
+        use crate::schema::ToolDefinition;
+
+        // a depends on b, b depends on a = cycle
+        let def_a = ToolDefinition {
+            depends: vec!["b".to_string()],
+            ..Default::default()
+        };
+
+        let def_b = ToolDefinition {
+            depends: vec!["a".to_string()],
+            ..Default::default()
+        };
+
+        let name_a = "a".to_string();
+        let name_b = "b".to_string();
+
+        let tools = vec![(&name_a, &def_a), (&name_b, &def_b)];
+
+        let result = sort_by_dependencies(tools);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Circular dependency")
+        );
+    }
+
+    #[test]
+    fn test_detect_npm_package_manager() {
+        // Just test that the function runs without panicking
+        let (cmd, name) = detect_npm_package_manager();
+        assert!(!cmd.is_empty());
+        assert!(!name.is_empty());
     }
 }
