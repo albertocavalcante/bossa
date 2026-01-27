@@ -49,7 +49,9 @@ jobs:
         run: ghalint run -c tools/lint/ghalint.yaml
 
       - name: Verify pinned actions
-        run: pinact run --verify -c tools/lint/pinact.yaml
+        run: pinact run --verify
+        env:
+          PINACT_CONFIG: tools/lint/pinact.yaml
 
   # Fast checks that don't need dependencies
   quick-checks:
@@ -68,7 +70,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@888c2e1ea69ab0d4330cbf0af1ecc7b68f368cc1 # stable
         with:
-          toolchain: stable
+          toolchain: 1.90.0
           components: rustfmt, clippy
 
       - name: Check formatting
@@ -103,7 +105,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@888c2e1ea69ab0d4330cbf0af1ecc7b68f368cc1 # stable
         with:
-          toolchain: stable
+          toolchain: 1.90.0
 
       - name: Cache Cargo
         uses: actions/cache@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
@@ -139,7 +141,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@888c2e1ea69ab0d4330cbf0af1ecc7b68f368cc1 # stable
         with:
-          toolchain: stable
+          toolchain: 1.90.0
 
       - name: Cache Cargo
         uses: actions/cache@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
