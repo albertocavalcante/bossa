@@ -63,3 +63,119 @@ docs-preview:
     sleep 1
     open http://127.0.0.1:3000
     wait
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Editor & Browser shortcuts
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Open repo on GitHub
+open:
+    open "https://github.com/albertocavalcante/bossa"
+
+# Open in VS Code
+vscode:
+    code .
+
+# Open in Zed
+zed:
+    zed .
+
+# Open in Cursor
+cursor:
+    cursor .
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GitHub shortcuts
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Open GitHub issues
+issues:
+    open "https://github.com/albertocavalcante/bossa/issues"
+
+# Open GitHub pull requests
+prs:
+    open "https://github.com/albertocavalcante/bossa/pulls"
+
+# Open GitHub Actions
+actions:
+    open "https://github.com/albertocavalcante/bossa/actions"
+
+# Open GitHub releases
+releases:
+    open "https://github.com/albertocavalcante/bossa/releases"
+
+# Create a new issue (opens in browser)
+new-issue:
+    open "https://github.com/albertocavalcante/bossa/issues/new"
+
+# Compare current branch for PR
+pr-create:
+    #!/usr/bin/env bash
+    branch=$(git branch --show-current)
+    open "https://github.com/albertocavalcante/bossa/compare/${branch}?expand=1"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Development helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Run bossa with arguments
+run *args:
+    cargo run -- {{args}}
+
+# Run bossa release build with arguments
+run-release *args:
+    cargo run --release -- {{args}}
+
+# Watch for changes and run tests
+watch:
+    cargo watch -x test
+
+# Watch for changes and run clippy
+watch-check:
+    cargo watch -x clippy
+
+# Auto-fix clippy warnings and format code
+fix:
+    cargo clippy --fix --allow-dirty --allow-staged
+    cargo fmt
+    dprint fmt
+
+# Update dependencies
+update-deps:
+    cargo update
+
+# Check for outdated dependencies
+outdated:
+    cargo outdated -R
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Git helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Show git status
+status:
+    git status -sb
+
+# Show recent commits
+log:
+    git log --oneline -20
+
+# Show diff
+diff:
+    git diff
+
+# Amend last commit (keep message)
+amend:
+    git commit --amend --no-edit
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hooks
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Install git hooks via lefthook
+hooks-install:
+    lefthook install
+
+# Run pre-commit hooks manually
+hooks-run:
+    lefthook run pre-commit
