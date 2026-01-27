@@ -82,7 +82,7 @@ download() {
     elif command -v wget &>/dev/null; then
         wget -q --show-progress "$url" -O "$output"
     else
-        error "Neither curl nor wget found."
+        return 1
     fi
 }
 
@@ -126,6 +126,7 @@ main() {
     info "Detected platform: $platform"
 
     # Get version
+    VERSION="${1:-${BOSSA_VERSION:-}}"
     if [ -z "$VERSION" ]; then
         info "Fetching latest version..."
         VERSION=$(get_latest_version)
@@ -135,20 +136,108 @@ main() {
     fi
     info "Installing version: $VERSION"
 
-    # Determine file extension and asset name
-    local ext asset_name checksum_name
+    # Determine file extension
+    local ext
     if [[ "$platform" == "windows"* ]]; then
         ext="zip"
     else
         ext="tar.gz"
     fi
-    asset_name="${BINARY_NAME}-${platform}.${ext}"
-    checksum_name="${asset_name}.sha256"
 
-    # Build download URLs
-    local base_url="https://github.com/${REPO}/releases/download/${VERSION}"
-    local asset_url="${base_url}/${asset_name}"
-    local checksum_url="${base_url}/${checksum_name}"
+# Get download URL from GitHub API
+get_download_url() {
+    local version="$1"
+    local platform="$2"
+    local url="https://api.github.com/repos/${REPO}/releases/tags/${version}"
+    
+    if [ "$version" = "latest" ]; then
+        url="https://api.github.com/repos/${REPO}/releases/latest"
+    fi
+
+    if ! command -v curl &>/dev/null; then
+        return 1
+    fi
+
+    # Fetch release data and parse for asset URL
+    # We search for an asset name that contains the platform string
+    # and extract its browser_download_url
+    curl -fsSL "$url" | \
+        grep -E '"name":|"browser_download_url":' | \
+        sed -E 's/.*"name": "([^"]+)".*/NAME:\1/; s/.*"browser_download_url": "([^"]+)".*/URL:\1/' | \
+        awk -v pat="$platform" '
+            /^NAME:/ { name=substr($0, 6) }
+            /^URL:/ { 
+                url=substr($0, 5)
+                if (name ~ pat) { print url; exit }
+            }
+        '
+}
+
+# Download asset with fallback
+fetch_asset() {
+    local version="$1"
+    local platform="$2"
+    local ext="$3"
+    local output="$4"
+    
+    # 1. Try standard naming convention
+    local asset_name="${BINARY_NAME}-${platform}.${ext}"
+    local url="https://github.com/${REPO}/releases/download/${version}/${asset_name}"
+    
+    info "Downloading ${asset_name}..."
+    if download "$url" "$output"; then
+        echo "$asset_name"
+        return 0
+    fi
+    
+    # 2. If failed, try to discover URL via API
+    warn "Standard download failed, attempting to discover asset via API..."
+    
+    # For API search, simplify platform string if needed or use as is
+    # e.g. linux-amd64 matches bossa-linux-amd64.tar.gz
+    local api_url
+    api_url=$(get_download_url "$version" "$platform")
+    
+    if [ -n "$api_url" ]; then
+        local discovered_name="${api_url##*/}"
+        info "Found asset: ${discovered_name}"
+        if download "$api_url" "$output"; then
+            echo "$discovered_name"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+main() {
+    echo ""
+    printf "${BOLD}bossa installer${NC}\n"
+    echo ""
+
+    # Detect platform
+    local platform
+    platform=$(detect_platform)
+    info "Detected platform: $platform"
+
+    # Get version
+    VERSION="${1:-${BOSSA_VERSION:-}}"
+    if [ -z "$VERSION" ]; then
+        info "Fetching latest version..."
+        VERSION=$(get_latest_version)
+        if [ -z "$VERSION" ]; then
+            error "Failed to determine latest version"
+        fi
+    fi
+    info "Installing version: $VERSION"
+
+    # Determine file extension
+    local ext
+    if [[ "$platform" == "windows"* ]]; then
+        ext="zip"
+    else
+        ext="tar.gz"
+    fi
 
     # Create temp directory
     local tmpdir
@@ -156,21 +245,31 @@ main() {
     trap "rm -rf '$tmpdir'" EXIT
 
     # Download asset
-    info "Downloading ${asset_name}..."
-    download "$asset_url" "${tmpdir}/${asset_name}"
+    local asset_name
+    if ! asset_name=$(fetch_asset "$VERSION" "$platform" "$ext" "${tmpdir}/asset"); then
+        error "Failed to download asset for version $VERSION on platform $platform"
+    fi
+
+    # Determine checksum name
+    local checksum_name="${asset_name}.sha256"
+    local base_url="https://github.com/${REPO}/releases/download/${VERSION}"
+    
+    # If we discovered a URL via API, we might need to find the checksum URL similarly
+    # But usually checksums follow standard naming. Let's try standard first.
+    local checksum_url="${base_url}/${checksum_name}"
 
     # Download and verify checksum
     info "Downloading checksum..."
     download "$checksum_url" "${tmpdir}/${checksum_name}" 2>/dev/null || true
-    verify_checksum "${tmpdir}/${asset_name}" "${tmpdir}/${checksum_name}"
+    verify_checksum "${tmpdir}/asset" "${tmpdir}/${checksum_name}"
 
     # Extract
     info "Extracting..."
     cd "$tmpdir"
     if [[ "$ext" == "zip" ]]; then
-        unzip -q "${asset_name}"
+        unzip -q asset
     else
-        tar -xzf "${asset_name}"
+        tar -xzf asset
     fi
 
     # Install
