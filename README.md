@@ -32,6 +32,22 @@ BOSSA_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/albertocavalca
 BOSSA_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.sh | bash
 ```
 
+### Quick Install (Windows PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.ps1 | iex
+```
+
+Or with options:
+
+```powershell
+# Install specific version
+$env:BOSSA_VERSION = "v0.1.0"; irm https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.ps1 | iex
+
+# Install to custom directory
+$env:BOSSA_DIR = "C:\Tools\bossa"; irm https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.ps1 | iex
+```
+
 ### Homebrew (macOS)
 
 ```bash
@@ -101,10 +117,18 @@ bossa completions fish > ~/.config/fish/completions/bossa.fish
 
 ## Configuration
 
-Bossa reads configuration from `~/.config/workspace-setup/`:
+Bossa reads configuration from a platform-specific config directory:
 
-- `refs.toml` or `refs.json` - Reference repositories
-- `workspaces.toml` or `workspaces.json` - Workspace definitions
+| Platform    | Default Location   |
+| ----------- | ------------------ |
+| Linux/macOS | `~/.config/bossa/` |
+| Windows     | `%APPDATA%\bossa\` |
+
+Config files:
+
+- `config.toml` - Main configuration
+- `tools.toml` - Installed tools tracking
+- `caches.toml` - Cache symlinks configuration
 
 TOML format is preferred when both formats exist. Use `bossa config convert` to switch formats:
 
@@ -117,6 +141,35 @@ bossa config convert all --format toml
 
 # Validate configs
 bossa config validate
+```
+
+## Environment Variables
+
+Bossa supports environment variable overrides for path configuration, making it easy to symlink configs from a dotfiles repository.
+
+| Variable               | Description                        | Default                             |
+| ---------------------- | ---------------------------------- | ----------------------------------- |
+| `BOSSA_CONFIG_DIR`     | Override config directory          | `~/.config/bossa` (see table above) |
+| `BOSSA_STATE_DIR`      | Override state directory           | `~/.local/state/bossa`              |
+| `BOSSA_WORKSPACES_DIR` | Override workspaces root directory | `~/dev/ws`                          |
+
+### Path Resolution Priority
+
+For the config directory, bossa checks in order:
+
+1. `BOSSA_CONFIG_DIR` environment variable
+2. Existing `~/.config/bossa/` (backwards compatibility)
+3. `XDG_CONFIG_HOME/bossa` (if XDG_CONFIG_HOME is set)
+4. Platform default (see table above)
+
+### Dotfiles Integration Example
+
+```bash
+# In your shell profile (~/.bashrc, ~/.zshrc, etc.)
+export BOSSA_CONFIG_DIR="$HOME/dotfiles/bossa"
+
+# Or symlink the config directory
+ln -s ~/dotfiles/bossa ~/.config/bossa
 ```
 
 ## Global Flags

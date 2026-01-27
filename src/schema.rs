@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::paths;
+
 // ============================================================================
 // Main Config Schema
 // ============================================================================
@@ -62,10 +64,12 @@ pub struct BossaConfig {
 }
 
 impl BossaConfig {
-    /// Load the unified bossa config from ~/.config/bossa/config.toml
+    /// Load the unified bossa config from the config directory
+    ///
+    /// See [`crate::paths::config_dir`] for path resolution details.
     pub fn load() -> Result<Self> {
-        let home = dirs::home_dir().context("Could not determine home directory")?;
-        let config_path = home.join(".config").join("bossa").join("config.toml");
+        let config_dir = paths::config_dir()?;
+        let config_path = config_dir.join("config.toml");
 
         if !config_path.exists() {
             // Return default config if file doesn't exist
@@ -78,10 +82,11 @@ impl BossaConfig {
         toml::from_str(&content).context("Invalid TOML format in bossa config")
     }
 
-    /// Save the config to ~/.config/bossa/config.toml
+    /// Save the config to the config directory
+    ///
+    /// See [`crate::paths::config_dir`] for path resolution details.
     pub fn save(&self) -> Result<PathBuf> {
-        let home = dirs::home_dir().context("Could not determine home directory")?;
-        let config_dir = home.join(".config").join("bossa");
+        let config_dir = paths::config_dir()?;
         std::fs::create_dir_all(&config_dir)?;
 
         let config_path = config_dir.join("config.toml");
@@ -1509,10 +1514,12 @@ pub struct ToolsConfig {
 }
 
 impl ToolsConfig {
-    /// Load the tools config from ~/.config/bossa/tools.toml
+    /// Load the tools config from the config directory
+    ///
+    /// See [`crate::paths::config_dir`] for path resolution details.
     pub fn load() -> Result<Self> {
-        let home = dirs::home_dir().context("Could not determine home directory")?;
-        let config_path = home.join(".config").join("bossa").join("tools.toml");
+        let config_dir = paths::config_dir()?;
+        let config_path = config_dir.join("tools.toml");
 
         if !config_path.exists() {
             return Ok(Self::default());
@@ -1524,10 +1531,11 @@ impl ToolsConfig {
         toml::from_str(&content).context("Invalid TOML format in tools config")
     }
 
-    /// Save the tools config to ~/.config/bossa/tools.toml
+    /// Save the tools config to the config directory
+    ///
+    /// See [`crate::paths::config_dir`] for path resolution details.
     pub fn save(&self) -> Result<PathBuf> {
-        let home = dirs::home_dir().context("Could not determine home directory")?;
-        let config_dir = home.join(".config").join("bossa");
+        let config_dir = paths::config_dir()?;
         std::fs::create_dir_all(&config_dir)?;
 
         let config_path = config_dir.join("tools.toml");

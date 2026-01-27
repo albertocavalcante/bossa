@@ -99,6 +99,10 @@ pub enum Command {
     /// Install and manage development tools
     #[command(subcommand)]
     Tools(ToolsCommand),
+
+    /// Manage dotfile symlinks (native stow replacement)
+    #[command(subcommand)]
+    Stow(StowCommand),
 }
 
 // ============================================================================
@@ -733,7 +737,7 @@ impl NovaStage {
             NovaStage::Dock => "Dock configuration",
             NovaStage::Ecosystem => "Ecosystem extensions",
             NovaStage::Handlers => "File handlers (duti)",
-            NovaStage::Stow => "Symlinks via GNU Stow",
+            NovaStage::Stow => "Dotfile symlinks (native stow replacement)",
             NovaStage::Caches => "Cache symlinks to external drive",
             NovaStage::Mcp => "MCP server configuration",
             NovaStage::Refs => "Reference repositories",
@@ -894,6 +898,120 @@ pub enum ToolsCommand {
     Uninstall {
         /// Tool name
         name: String,
+    },
+
+    /// Check for tool updates
+    ///
+    /// Checks installed tools against their sources to find newer versions.
+    /// Supports multiple sources:
+    /// - GitHub releases (checks latest release)
+    /// - crates.io (checks latest version)
+    /// - npm (checks latest version)
+    /// - Go modules (checks latest version)
+    ///
+    /// Examples:
+    ///   bossa tools outdated              # Check all installed tools
+    ///   bossa tools outdated rg fd bat    # Check specific tools
+    ///   bossa tools outdated --json       # Output as JSON
+    Outdated {
+        /// Only check specific tools (if empty, checks all)
+        #[arg(value_name = "TOOL")]
+        tools: Vec<String>,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+// ============================================================================
+// Stow Commands (Dotfile Management)
+// ============================================================================
+
+#[derive(Debug, Subcommand)]
+pub enum StowCommand {
+    /// Show status of dotfile symlinks
+    ///
+    /// Displays which symlinks are:
+    /// - Correct (pointing to the right place)
+    /// - Missing (not yet created)
+    /// - Wrong (pointing to wrong target)
+    /// - Blocked (regular file exists)
+    Status,
+
+    /// Create/update dotfile symlinks
+    ///
+    /// Walks each package directory in your dotfiles source and
+    /// creates symlinks in the target directory, preserving structure.
+    ///
+    /// Examples:
+    ///   bossa stow sync              # Sync all configured packages
+    ///   bossa stow sync zsh git      # Sync only zsh and git packages
+    ///   bossa stow sync --dry-run    # Preview what would be done
+    Sync {
+        /// Only sync specific packages (if empty, syncs all)
+        #[arg(value_name = "PACKAGE")]
+        packages: Vec<String>,
+
+        /// Preview changes without making them
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+
+        /// Force overwrite existing files (dangerous!)
+        #[arg(long, short)]
+        force: bool,
+    },
+
+    /// Preview what sync would do (alias for sync --dry-run)
+    Diff {
+        /// Only diff specific packages
+        #[arg(value_name = "PACKAGE")]
+        packages: Vec<String>,
+    },
+
+    /// List configured packages
+    List,
+
+    /// Add a package to the symlinks config
+    Add {
+        /// Package name (directory in source)
+        package: String,
+    },
+
+    /// Remove a package from the symlinks config
+    Rm {
+        /// Package name
+        package: String,
+
+        /// Also delete the symlinks
+        #[arg(long)]
+        unlink: bool,
+    },
+
+    /// Remove all symlinks for a package (opposite of sync)
+    Unlink {
+        /// Package name (if empty, unlinks all)
+        #[arg(value_name = "PACKAGE")]
+        packages: Vec<String>,
+
+        /// Preview changes without making them
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+    },
+
+    /// Initialize symlinks config with auto-detected packages
+    Init {
+        /// Source directory (defaults to ~/dotfiles)
+        #[arg(long, short)]
+        source: Option<String>,
+
+        /// Target directory (defaults to ~)
+        #[arg(long, short)]
+        target: Option<String>,
+
+        /// Overwrite existing config
+        #[arg(long)]
+        force: bool,
     },
 }
 

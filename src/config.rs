@@ -5,6 +5,8 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::fs;
 use std::path::PathBuf;
 
+use crate::paths;
+
 // ============================================================================
 // Config Format Support
 // ============================================================================
@@ -96,22 +98,27 @@ pub fn save_config<T: Serialize>(
 }
 
 /// Get the bossa config directory path
+///
+/// This is a convenience re-export from the paths module.
+/// See [`crate::paths::config_dir`] for path resolution details.
 pub fn config_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("Could not determine home directory")?;
-    Ok(home.join(".config").join("bossa"))
+    paths::config_dir()
 }
 
 /// Get the legacy workspace-setup config directory path
-/// This is kept for backwards compatibility with migration tools
+///
+/// This is kept for backwards compatibility with migration tools.
+/// See [`crate::paths::legacy_config_dir`] for details.
 pub fn legacy_config_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("Could not determine home directory")?;
-    Ok(home.join(".config").join("workspace-setup"))
+    paths::legacy_config_dir()
 }
 
 /// Get the workspaces root directory
+///
+/// This is a convenience re-export from the paths module.
+/// See [`crate::paths::workspaces_dir`] for path resolution details.
 pub fn workspaces_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("Could not determine home directory")?;
-    Ok(home.join("dev").join("ws"))
+    paths::workspaces_dir()
 }
 
 // ============================================================================

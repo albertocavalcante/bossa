@@ -2,6 +2,7 @@ mod cli;
 mod commands;
 mod config;
 mod engine;
+mod paths;
 mod progress;
 mod resource;
 mod runner;
@@ -258,5 +259,6 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Tools(cmd) => commands::tools::run(&ctx, cmd),
+        Command::Stow(cmd) => commands::stow::run(&ctx, cmd),
     }
 }

@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+use crate::paths;
+
 // ============================================================================
 // State Structures
 // ============================================================================
@@ -84,10 +86,11 @@ pub struct StorageState {
 // ============================================================================
 
 impl BossaState {
-    /// Get the state directory path (~/.local/state/bossa)
+    /// Get the state directory path
+    ///
+    /// See [`crate::paths::state_dir`] for path resolution details.
     pub fn state_dir() -> Result<PathBuf> {
-        let home = dirs::home_dir().context("Could not determine home directory")?;
-        Ok(home.join(".local").join("state").join("bossa"))
+        paths::state_dir()
     }
 
     /// Get the state file path

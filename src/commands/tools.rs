@@ -76,6 +76,7 @@ pub fn run(ctx: &Context, cmd: ToolsCommand) -> Result<()> {
         ToolsCommand::List { all } => list(ctx, all),
         ToolsCommand::Status { name } => status(ctx, &name),
         ToolsCommand::Uninstall { name } => uninstall(ctx, &name),
+        ToolsCommand::Outdated { tools, json } => outdated(ctx, &tools, json),
     }
 }
 
@@ -921,6 +922,351 @@ fn uninstall(ctx: &Context, name: &str) -> Result<()> {
 }
 
 // =============================================================================
+// Outdated Command
+// =============================================================================
+
+use colored::Colorize;
+
+/// Version check result for a tool
+#[derive(Debug, Clone, serde::Serialize)]
+struct VersionInfo {
+    name: String,
+    source: String,
+    current: Option<String>,
+    latest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+impl VersionInfo {
+    fn is_outdated(&self) -> bool {
+        match (&self.current, &self.latest) {
+            (Some(current), Some(latest)) => {
+                // Normalize versions for comparison
+                let c = current.trim_start_matches('v');
+                let l = latest.trim_start_matches('v');
+                c != l
+            }
+            _ => false,
+        }
+    }
+
+    fn status_icon(&self) -> colored::ColoredString {
+        if self.error.is_some() {
+            "?".yellow()
+        } else if self.is_outdated() {
+            "↑".yellow()
+        } else {
+            "✓".green()
+        }
+    }
+}
+
+/// Check for outdated tools
+fn outdated(ctx: &Context, filter_tools: &[String], as_json: bool) -> Result<()> {
+    let state = ToolsConfig::load()?;
+    let config = BossaConfig::load().ok();
+
+    // Collect tools to check
+    let tools_to_check: Vec<(&String, Option<&ToolDefinition>)> = if filter_tools.is_empty() {
+        // Check all installed tools
+        state
+            .tools
+            .keys()
+            .map(|name| {
+                let def = config.as_ref().and_then(|c| c.tools.get(name));
+                (name, def)
+            })
+            .collect()
+    } else {
+        // Check specified tools only
+        filter_tools
+            .iter()
+            .filter_map(|name| {
+                let def = config.as_ref().and_then(|c| c.tools.get(name));
+                if state.tools.contains_key(name) || def.is_some() {
+                    Some((name, def))
+                } else {
+                    if !ctx.quiet {
+                        ui::warn(&format!("Tool '{}' not found", name));
+                    }
+                    None
+                }
+            })
+            .collect()
+    };
+
+    if tools_to_check.is_empty() {
+        if !ctx.quiet {
+            ui::info("No tools to check.");
+        }
+        return Ok(());
+    }
+
+    if !ctx.quiet && !as_json {
+        ui::header("Checking for updates");
+        println!();
+    }
+
+    let mut results: Vec<VersionInfo> = Vec::new();
+
+    for (name, def) in tools_to_check {
+        let info = check_tool_version(name, def, &state);
+        results.push(info);
+    }
+
+    // Output results
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&results)?);
+    } else {
+        // Print table header
+        println!(
+            "  {:<20} {:<12} {:<15} {:<15}",
+            "Tool".bold(),
+            "Source".bold(),
+            "Current".bold(),
+            "Latest".bold()
+        );
+        println!(
+            "  {} {} {} {}",
+            "─".repeat(20),
+            "─".repeat(12),
+            "─".repeat(15),
+            "─".repeat(15)
+        );
+
+        let mut outdated_count = 0;
+        let mut error_count = 0;
+
+        for info in &results {
+            let current = info.current.as_deref().unwrap_or("-");
+            let latest = if let Some(ref err) = info.error {
+                err.dimmed().to_string()
+            } else {
+                info.latest.as_deref().unwrap_or("-").to_string()
+            };
+
+            let latest_display = if info.is_outdated() {
+                latest.yellow().to_string()
+            } else {
+                latest.dimmed().to_string()
+            };
+
+            println!(
+                "  {:<20} {:<12} {:<15} {} {}",
+                info.name,
+                info.source.dimmed(),
+                current,
+                info.status_icon(),
+                latest_display
+            );
+
+            if info.is_outdated() {
+                outdated_count += 1;
+            }
+            if info.error.is_some() {
+                error_count += 1;
+            }
+        }
+
+        println!();
+
+        // Summary
+        if outdated_count > 0 {
+            println!(
+                "  {} {} tool(s) can be updated",
+                "↑".yellow(),
+                outdated_count
+            );
+            println!("  Run {} to update", "bossa tools apply --force".cyan());
+        } else if error_count == 0 {
+            println!("  {} All tools are up to date", "✓".green());
+        }
+
+        if error_count > 0 {
+            println!(
+                "  {} {} tool(s) could not be checked",
+                "?".yellow(),
+                error_count
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Check version for a single tool
+fn check_tool_version(
+    name: &str,
+    def: Option<&ToolDefinition>,
+    _state: &ToolsConfig,
+) -> VersionInfo {
+    // Try to get current version from the binary
+    let current = get_current_version(name);
+
+    // Try to get latest version based on source
+    let (source, latest, error) = if let Some(def) = def {
+        match def.source {
+            ToolSource::GithubRelease => {
+                if let Some(ref repo) = def.repo {
+                    match get_github_latest_release(repo) {
+                        Ok(v) => ("github".to_string(), Some(v), None),
+                        Err(e) => ("github".to_string(), None, Some(e.to_string())),
+                    }
+                } else {
+                    (
+                        "github".to_string(),
+                        None,
+                        Some("no repo defined".to_string()),
+                    )
+                }
+            }
+            ToolSource::Cargo => {
+                if let Some(ref crate_name) = def.crate_name {
+                    match get_crates_io_latest(crate_name) {
+                        Ok(v) => ("cargo".to_string(), Some(v), None),
+                        Err(e) => ("cargo".to_string(), None, Some(e.to_string())),
+                    }
+                } else if let Some(ref git) = def.git {
+                    // For git sources, try to get latest tag
+                    match get_git_latest_tag(git) {
+                        Ok(v) => ("git".to_string(), Some(v), None),
+                        Err(e) => ("git".to_string(), None, Some(e.to_string())),
+                    }
+                } else {
+                    (
+                        "cargo".to_string(),
+                        None,
+                        Some("no crate defined".to_string()),
+                    )
+                }
+            }
+            ToolSource::Http => {
+                // For HTTP sources, we can't easily check for updates
+                ("http".to_string(), def.version.clone(), None)
+            }
+            ToolSource::Container => ("container".to_string(), None, Some("n/a".to_string())),
+        }
+    } else {
+        // No definition, try to infer from installed tool
+        ("unknown".to_string(), None, Some("no config".to_string()))
+    };
+
+    VersionInfo {
+        name: name.to_string(),
+        source,
+        current,
+        latest,
+        error,
+    }
+}
+
+/// Get current version by running the binary with --version
+fn get_current_version(name: &str) -> Option<String> {
+    let output = Command::new(name).arg("--version").output().ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Parse version from common formats:
+    // "tool 1.2.3" or "tool version 1.2.3" or "1.2.3"
+    extract_version(&stdout)
+}
+
+/// Extract version number from a string
+fn extract_version(s: &str) -> Option<String> {
+    // Try to find a semver-like pattern
+    let re = regex::Regex::new(r"v?(\d+\.\d+(?:\.\d+)?(?:-[\w.]+)?)").ok()?;
+    re.captures(s.lines().next()?)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string())
+}
+
+/// Get latest release version from GitHub
+fn get_github_latest_release(repo: &str) -> Result<String> {
+    let url = format!("https://api.github.com/repos/{}/releases/latest", repo);
+
+    let agent = ureq::Agent::new_with_defaults();
+    let mut response = agent
+        .get(&url)
+        .header("User-Agent", "bossa-tools")
+        .header("Accept", "application/vnd.github.v3+json")
+        .call()
+        .context("Failed to fetch GitHub releases")?;
+
+    let body: serde_json::Value = response
+        .body_mut()
+        .read_json()
+        .context("Failed to parse GitHub response")?;
+
+    body["tag_name"]
+        .as_str()
+        .map(|s| s.trim_start_matches('v').to_string())
+        .context("No tag_name in release")
+}
+
+/// Get latest version from crates.io
+fn get_crates_io_latest(crate_name: &str) -> Result<String> {
+    let url = format!("https://crates.io/api/v1/crates/{}", crate_name);
+
+    let agent = ureq::Agent::new_with_defaults();
+    let mut response = agent
+        .get(&url)
+        .header("User-Agent", "bossa-tools")
+        .call()
+        .context("Failed to fetch crates.io")?;
+
+    let body: serde_json::Value = response
+        .body_mut()
+        .read_json()
+        .context("Failed to parse crates.io response")?;
+
+    body["crate"]["newest_version"]
+        .as_str()
+        .map(|s| s.to_string())
+        .context("No newest_version in response")
+}
+
+/// Get latest tag from a git repository
+fn get_git_latest_tag(repo_url: &str) -> Result<String> {
+    let output = Command::new("git")
+        .args(["ls-remote", "--tags", "--sort=-v:refname", repo_url])
+        .output()
+        .context("Failed to run git ls-remote")?;
+
+    if !output.status.success() {
+        bail!("git ls-remote failed");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Parse the first (newest) tag
+    // Format: "sha\trefs/tags/v1.2.3" or "sha\trefs/tags/v1.2.3^{}"
+    for line in stdout.lines() {
+        if let Some(tag_ref) = line.split('\t').nth(1) {
+            let tag = tag_ref
+                .trim_start_matches("refs/tags/")
+                .trim_end_matches("^{}");
+
+            // Skip non-version tags
+            if tag
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_digit() || c == 'v')
+                .unwrap_or(false)
+            {
+                return Ok(tag.trim_start_matches('v').to_string());
+            }
+        }
+    }
+
+    bail!("No version tags found")
+}
+
+// =============================================================================
 // Helper functions - General
 // =============================================================================
 
@@ -1570,5 +1916,78 @@ mod tests {
         let result = extract_zip(&buffer, "mytool", Some("release-v1.0/bin"));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), b"nested zip binary");
+    }
+
+    #[test]
+    fn test_extract_version_simple() {
+        assert_eq!(extract_version("1.2.3"), Some("1.2.3".to_string()));
+        assert_eq!(extract_version("v1.2.3"), Some("1.2.3".to_string()));
+    }
+
+    #[test]
+    fn test_extract_version_with_name() {
+        assert_eq!(extract_version("tool 1.2.3"), Some("1.2.3".to_string()));
+        assert_eq!(
+            extract_version("tool version 1.2.3"),
+            Some("1.2.3".to_string())
+        );
+        assert_eq!(
+            extract_version("ripgrep 14.1.0"),
+            Some("14.1.0".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_version_with_suffix() {
+        assert_eq!(
+            extract_version("1.2.3-beta"),
+            Some("1.2.3-beta".to_string())
+        );
+        assert_eq!(
+            extract_version("1.2.3-rc.1"),
+            Some("1.2.3-rc.1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_version_two_part() {
+        assert_eq!(extract_version("1.2"), Some("1.2".to_string()));
+    }
+
+    #[test]
+    fn test_extract_version_no_version() {
+        assert_eq!(extract_version("no version here"), None);
+        assert_eq!(extract_version(""), None);
+    }
+
+    #[test]
+    fn test_version_info_is_outdated() {
+        let info = VersionInfo {
+            name: "test".to_string(),
+            source: "github".to_string(),
+            current: Some("1.0.0".to_string()),
+            latest: Some("1.1.0".to_string()),
+            error: None,
+        };
+        assert!(info.is_outdated());
+
+        let info = VersionInfo {
+            name: "test".to_string(),
+            source: "github".to_string(),
+            current: Some("1.1.0".to_string()),
+            latest: Some("1.1.0".to_string()),
+            error: None,
+        };
+        assert!(!info.is_outdated());
+
+        // Test with 'v' prefix
+        let info = VersionInfo {
+            name: "test".to_string(),
+            source: "github".to_string(),
+            current: Some("v1.1.0".to_string()),
+            latest: Some("1.1.0".to_string()),
+            error: None,
+        };
+        assert!(!info.is_outdated());
     }
 }

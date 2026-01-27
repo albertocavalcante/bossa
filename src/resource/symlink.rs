@@ -96,7 +96,38 @@ impl Symlink {
             )
         })?;
 
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::{symlink_dir, symlink_file};
+
+            if source.is_dir() {
+                // Use junction for directories (doesn't require admin privileges)
+                // Fall back to symlink_dir if junction fails
+                match junction::create(&source, &target) {
+                    Ok(()) => (),
+                    Err(e) => {
+                        log::debug!("Junction creation failed ({}), trying symlink_dir", e);
+                        symlink_dir(&source, &target).with_context(|| {
+                            format!(
+                                "Failed to create directory symlink: {} -> {}",
+                                target.display(),
+                                source.display()
+                            )
+                        })?;
+                    }
+                }
+            } else {
+                symlink_file(&source, &target).with_context(|| {
+                    format!(
+                        "Failed to create file symlink: {} -> {}",
+                        target.display(),
+                        source.display()
+                    )
+                })?;
+            }
+        }
+
+        #[cfg(not(any(unix, windows)))]
         bail!("Symlinks not supported on this platform");
 
         Ok(())
