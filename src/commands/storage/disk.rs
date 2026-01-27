@@ -6,6 +6,7 @@ use super::types::DiskSpace;
 
 /// Get disk space for a given path
 #[cfg(unix)]
+#[allow(clippy::unnecessary_cast)] // Cast needed on macOS, not on Linux
 pub fn get_disk_space(path: &str) -> Result<DiskSpace> {
     use std::ffi::CString;
     use std::mem::MaybeUninit;
