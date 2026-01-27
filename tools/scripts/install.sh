@@ -157,7 +157,20 @@ fetch_asset() {
     local ext="$3"
     local output="$4"
     
-    # 1. Try standard naming convention
+    # 1. Try to discover URL via API first (more reliable, handles rolling tags like nightly)
+    local api_url
+    api_url=$(get_download_url "$version" "$platform")
+    
+    if [ -n "$api_url" ]; then
+        local discovered_name="${api_url##*/}"
+        info "Downloading ${discovered_name}..."
+        if download "$api_url" "$output"; then
+            echo "$discovered_name"
+            return 0
+        fi
+    fi
+    
+    # 2. Fallback to standard naming convention
     local asset_name="${BINARY_NAME}-${platform}.${ext}"
     local url="https://github.com/${REPO}/releases/download/${version}/${asset_name}"
     
@@ -165,23 +178,6 @@ fetch_asset() {
     if download "$url" "$output"; then
         echo "$asset_name"
         return 0
-    fi
-    
-    # 2. If failed, try to discover URL via API
-    warn "Standard download failed, attempting to discover asset via API..."
-    
-    # For API search, simplify platform string if needed or use as is
-    # e.g. linux-amd64 matches bossa-linux-amd64.tar.gz
-    local api_url
-    api_url=$(get_download_url "$version" "$platform")
-    
-    if [ -n "$api_url" ]; then
-        local discovered_name="${api_url##*/}"
-        info "Found asset: ${discovered_name}"
-        if download "$api_url" "$output"; then
-            echo "$discovered_name"
-            return 0
-        fi
     fi
 
     return 1
@@ -225,7 +221,18 @@ main() {
     # Download asset
     local asset_name
     if ! asset_name=$(fetch_asset "$VERSION" "$platform" "$ext" "${tmpdir}/asset"); then
-        error "Failed to download asset for version $VERSION on platform $platform"
+        echo ""
+        error "Failed to download asset for version $VERSION on platform $platform
+
+Possible causes:
+  - Release '$VERSION' may not exist or is still being built
+  - Platform '$platform' may not be available for this release
+  - Network connectivity issues
+
+Try:
+  - Check available releases: https://github.com/${REPO}/releases
+  - Install a specific version: BOSSA_VERSION=v0.2.0 curl -fsSL ... | bash
+  - For nightly builds: BOSSA_VERSION=nightly curl -fsSL ... | bash"
     fi
 
     # Determine checksum name
