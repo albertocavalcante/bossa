@@ -857,7 +857,7 @@ pub struct ToolDefinition {
     #[serde(default)]
     pub url: Option<String>,
 
-    /// Base URL for artifact repositories (e.g., "https://releases.example.com/artifacts")
+    /// Base URL for artifact repositories (e.g., `https://releases.example.com/artifacts`)
     #[serde(default)]
     pub base_url: Option<String>,
 
@@ -1179,18 +1179,13 @@ impl ToolDefinition {
             "os-only" => os_name.to_string(),
             "arch-only" => arch_name.to_string(),
             // Custom pattern: use as-is with {os} and {arch} placeholders
-            custom => custom
-                .replace("{os}", os_name)
-                .replace("{arch}", arch_name),
+            custom => custom.replace("{os}", os_name).replace("{arch}", arch_name),
         }
     }
 
     /// Get the effective archive extension
     pub fn effective_extension(&self) -> String {
-        self.archive_type
-            .as_deref()
-            .unwrap_or("tar.gz")
-            .to_string()
+        self.archive_type.as_deref().unwrap_or("tar.gz").to_string()
     }
 
     /// Build the download URL from pattern or direct URL
@@ -1202,9 +1197,10 @@ impl ToolDefinition {
 
         // If base_url and path are provided, build from pattern
         if self.base_url.is_some() && self.path.is_some() {
-            let pattern = self.url_pattern.as_deref().unwrap_or(
-                "{base_url}/{path}/{version}/{archive_name}-{version}-{platform}.{ext}",
-            );
+            let pattern = self
+                .url_pattern
+                .as_deref()
+                .unwrap_or("{base_url}/{path}/{version}/{archive_name}-{version}-{platform}.{ext}");
             return Some(self.expand_template(pattern, tool_name));
         }
 
@@ -1231,12 +1227,11 @@ impl ToolDefinition {
 
     /// Get platform-specific archive type override, if any
     pub fn get_effective_archive_type(&self) -> String {
-        if let Some(ref platforms) = self.platforms {
-            if let Some(overrides) = platforms.get_current_overrides() {
-                if let Some(ref archive_type) = overrides.archive_type {
-                    return archive_type.clone();
-                }
-            }
+        if let Some(ref platforms) = self.platforms
+            && let Some(overrides) = platforms.get_current_overrides()
+            && let Some(ref archive_type) = overrides.archive_type
+        {
+            return archive_type.clone();
         }
         self.archive_type
             .clone()
@@ -1245,12 +1240,11 @@ impl ToolDefinition {
 
     /// Get platform-specific URL override, if any
     pub fn get_effective_url(&self, tool_name: &str) -> Option<String> {
-        if let Some(ref platforms) = self.platforms {
-            if let Some(overrides) = platforms.get_current_overrides() {
-                if let Some(ref url) = overrides.url {
-                    return Some(self.expand_template(url, tool_name));
-                }
-            }
+        if let Some(ref platforms) = self.platforms
+            && let Some(overrides) = platforms.get_current_overrides()
+            && let Some(ref url) = overrides.url
+        {
+            return Some(self.expand_template(url, tool_name));
         }
         self.build_url(tool_name)
     }
@@ -1282,7 +1276,10 @@ impl ToolDefinition {
             }
             ToolSource::GithubRelease => {
                 if self.repo.is_none() {
-                    anyhow::bail!("Tool '{}': GitHub release source requires 'repo' field", name);
+                    anyhow::bail!(
+                        "Tool '{}': GitHub release source requires 'repo' field",
+                        name
+                    );
                 }
             }
             ToolSource::Cargo => {
@@ -2094,7 +2091,11 @@ name = "rust"
         };
 
         let url = def.build_url("mytool").unwrap();
-        assert!(url.starts_with("https://releases.example.com/artifacts/org/mytool/0.9.2/mytool-0.9.2-"));
+        assert!(
+            url.starts_with(
+                "https://releases.example.com/artifacts/org/mytool/0.9.2/mytool-0.9.2-"
+            )
+        );
     }
 
     #[test]
@@ -2225,20 +2226,29 @@ name = "rust"
     #[test]
     fn test_platforms_config_available() {
         let mut linux_archs = HashMap::new();
-        linux_archs.insert("amd64".to_string(), PlatformArch {
-            available: true,
-            ..Default::default()
-        });
+        linux_archs.insert(
+            "amd64".to_string(),
+            PlatformArch {
+                available: true,
+                ..Default::default()
+            },
+        );
 
         let mut darwin_archs = HashMap::new();
-        darwin_archs.insert("arm64".to_string(), PlatformArch {
-            available: true,
-            ..Default::default()
-        });
-        darwin_archs.insert("amd64".to_string(), PlatformArch {
-            available: true,
-            ..Default::default()
-        });
+        darwin_archs.insert(
+            "arm64".to_string(),
+            PlatformArch {
+                available: true,
+                ..Default::default()
+            },
+        );
+        darwin_archs.insert(
+            "amd64".to_string(),
+            PlatformArch {
+                available: true,
+                ..Default::default()
+            },
+        );
 
         let platforms = PlatformsConfig {
             linux: Some(linux_archs),
@@ -2257,10 +2267,13 @@ name = "rust"
     #[test]
     fn test_platforms_config_not_available() {
         let mut linux_archs = HashMap::new();
-        linux_archs.insert("amd64".to_string(), PlatformArch {
-            available: true,
-            ..Default::default()
-        });
+        linux_archs.insert(
+            "amd64".to_string(),
+            PlatformArch {
+                available: true,
+                ..Default::default()
+            },
+        );
 
         let platforms = PlatformsConfig {
             linux: Some(linux_archs),
@@ -2275,11 +2288,14 @@ name = "rust"
     #[test]
     fn test_platforms_config_archive_type_override() {
         let mut windows_archs = HashMap::new();
-        windows_archs.insert("amd64".to_string(), PlatformArch {
-            available: true,
-            archive_type: Some("zip".to_string()),
-            ..Default::default()
-        });
+        windows_archs.insert(
+            "amd64".to_string(),
+            PlatformArch {
+                available: true,
+                archive_type: Some("zip".to_string()),
+                ..Default::default()
+            },
+        );
 
         let platforms = PlatformsConfig {
             linux: None,

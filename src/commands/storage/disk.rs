@@ -25,8 +25,8 @@ pub fn get_disk_space(path: &str) -> Result<DiskSpace> {
         let stat = stat.assume_init();
 
         Ok(DiskSpace {
-            total: u64::from(stat.f_blocks) * stat.f_frsize,
-            available: u64::from(stat.f_bavail) * stat.f_frsize,
+            total: stat.f_blocks as u64 * stat.f_frsize,
+            available: stat.f_bavail as u64 * stat.f_frsize,
         })
     }
 }

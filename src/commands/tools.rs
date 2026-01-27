@@ -7,17 +7,17 @@
 //!
 //! Tools can be installed imperatively via CLI or declaratively via config.toml.
 
+use crate::Context;
 use crate::cli::ToolsCommand;
 use crate::schema::{
     BossaConfig, ContainerMeta, InstalledTool, ToolDefinition, ToolSource, ToolsConfig,
 };
 use crate::ui;
-use crate::Context;
-use anyhow::{bail, Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Maximum download size (500 MB).
@@ -132,9 +132,9 @@ fn apply(ctx: &Context, filter_tools: &[String], dry_run: bool, force: bool) -> 
         }
 
         // Check if already installed
-        let is_installed = state.get(name).is_some_and(|t| {
-            PathBuf::from(&t.install_path).exists()
-        });
+        let is_installed = state
+            .get(name)
+            .is_some_and(|t| PathBuf::from(&t.install_path).exists());
 
         if is_installed && !force {
             if !ctx.quiet {
@@ -250,16 +250,16 @@ fn install_from_definition(
         }
 
         ToolSource::Container => {
-            let image = def.image.as_ref().context("Image required for container source")?;
+            let image = def
+                .image
+                .as_ref()
+                .context("Image required for container source")?;
             let container_binary_path = def
                 .binary_path
                 .as_ref()
                 .context("binary_path required for container source")?;
 
-            let runtime = def
-                .runtime
-                .as_deref()
-                .unwrap_or(&tools_section.runtime);
+            let runtime = def.runtime.as_deref().unwrap_or(&tools_section.runtime);
 
             check_runtime_available(runtime)?;
 
@@ -293,11 +293,19 @@ fn install_from_definition(
 
             if !run_result.success {
                 let _ = remove_container(runtime, &container_name);
-                bail!("Container command failed:\n{}", run_result.stderr.trim_end());
+                bail!(
+                    "Container command failed:\n{}",
+                    run_result.stderr.trim_end()
+                );
             }
 
             let local_binary_path = install_path.join(&binary_name);
-            copy_from_container(runtime, &container_name, container_binary_path, &local_binary_path)?;
+            copy_from_container(
+                runtime,
+                &container_name,
+                container_binary_path,
+                &local_binary_path,
+            )?;
 
             #[cfg(unix)]
             {
@@ -326,7 +334,10 @@ fn install_from_definition(
         }
 
         ToolSource::GithubRelease => {
-            let repo = def.repo.as_ref().context("repo required for github-release source")?;
+            let repo = def
+                .repo
+                .as_ref()
+                .context("repo required for github-release source")?;
             let version = def
                 .version
                 .as_ref()
@@ -635,7 +646,10 @@ fn install_from_container(
         }
         remove_container(runtime, &container_name)?;
     } else if !ctx.quiet {
-        ui::info(&format!("Container '{}' kept for debugging", container_name));
+        ui::info(&format!(
+            "Container '{}' kept for debugging",
+            container_name
+        ));
     }
 
     if !ctx.quiet {
@@ -688,7 +702,9 @@ fn list(_ctx: &Context, show_all: bool) -> Result<()> {
 
     if state.tools.is_empty() && (!show_all || defined_tools.is_empty()) {
         ui::info("No tools installed yet.");
-        ui::info("Use 'bossa tools install', 'bossa tools install-container', or 'bossa tools apply' to install tools.");
+        ui::info(
+            "Use 'bossa tools install', 'bossa tools install-container', or 'bossa tools apply' to install tools.",
+        );
         return Ok(());
     }
 
@@ -764,7 +780,10 @@ fn status(_ctx: &Context, name: &str) -> Result<()> {
     let defined = config.as_ref().and_then(|c| c.tools.get(name));
 
     if installed.is_none() && defined.is_none() {
-        bail!("Tool '{}' not found (not installed and not defined in config)", name);
+        bail!(
+            "Tool '{}' not found (not installed and not defined in config)",
+            name
+        );
     }
 
     ui::header(&format!("Tool: {}", name));
@@ -803,9 +822,7 @@ fn status(_ctx: &Context, name: &str) -> Result<()> {
             ui::kv("Source URL", &tool.url);
         }
 
-        if exists
-            && let Ok(metadata) = fs::metadata(&binary_path)
-        {
+        if exists && let Ok(metadata) = fs::metadata(&binary_path) {
             ui::kv("File Size", &ui::format_size(metadata.len()));
         }
     } else {
@@ -1172,7 +1189,7 @@ fn copy_from_container(
     runtime: &str,
     container_name: &str,
     container_path: &str,
-    local_path: &PathBuf,
+    local_path: &Path,
 ) -> Result<()> {
     let source = format!("{}:{}", container_name, container_path);
 
@@ -1291,9 +1308,7 @@ fn run_cargo_install(
 
     // Install root - cargo installs to <root>/bin/, so we use parent of install_dir
     // e.g., if install_dir is ~/.local/bin, we use ~/.local as root
-    let cargo_root = install_root
-        .parent()
-        .unwrap_or(install_root);
+    let cargo_root = install_root.parent().unwrap_or(install_root);
     args.push("--root".to_string());
     args.push(cargo_root.to_string_lossy().to_string());
 
@@ -1394,8 +1409,7 @@ mod tests {
     #[test]
     fn test_build_install_script_with_deps() {
         let deps = vec!["dep1".to_string(), "dep2".to_string()];
-        let script =
-            build_install_script(Some("main"), "apt", Some(&deps), None, "/usr/bin/main");
+        let script = build_install_script(Some("main"), "apt", Some(&deps), None, "/usr/bin/main");
         assert!(script.contains("apt-get install -y --no-install-recommends main dep1 dep2"));
     }
 
@@ -1435,8 +1449,7 @@ mod tests {
     #[test]
     fn test_extract_targz_not_found() {
         // Create a minimal valid gzip stream with empty tar
-        let mut encoder =
-            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         {
             let mut builder = tar::Builder::new(&mut encoder);
             // Add a dummy file
@@ -1460,8 +1473,7 @@ mod tests {
     #[test]
     fn test_extract_targz_found() {
         // Create a tar.gz with our target binary
-        let mut encoder =
-            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         {
             let mut builder = tar::Builder::new(&mut encoder);
             let data = b"binary content";
@@ -1484,8 +1496,7 @@ mod tests {
     #[test]
     fn test_extract_targz_with_path() {
         // Create a tar.gz with nested structure
-        let mut encoder =
-            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         {
             let mut builder = tar::Builder::new(&mut encoder);
             let data = b"nested binary";

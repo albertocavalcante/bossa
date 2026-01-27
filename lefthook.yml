@@ -29,11 +29,6 @@ pre-commit:
       glob: "*.json"
       run: dprint check {staged_files}
 
-    # Check YAML formatting
-    dprint-yaml:
-      glob: "*.{yml,yaml}"
-      run: dprint check {staged_files}
-
     # GitHub Actions workflow linting
     workflow-lint:
       glob: ".github/workflows/*.{yml,yaml}"

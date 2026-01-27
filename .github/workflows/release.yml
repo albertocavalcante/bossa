@@ -21,7 +21,9 @@ env:
 jobs:
   # Build binaries for all platforms
   build:
-    uses: albertocavalcante/actions/.github/workflows/rust-build.yml@main
+    permissions:
+      contents: read
+    uses: albertocavalcante/actions/.github/workflows/rust-build.yml@9a91e672159e2d4d806bce6fca6199ec65852947 # main
     with:
       binary-name: bossa
       rust-version: "1.90.0"
@@ -92,7 +94,7 @@ jobs:
 
       - name: Build DEB package
         if: steps.check.outputs.exists == 'true'
-        uses: albertocavalcante/actions/package-deb@main
+        uses: albertocavalcante/actions/package-deb@9a91e672159e2d4d806bce6fca6199ec65852947 # main
         with:
           binary-path: extracted/${{ env.BINARY_NAME }}
           binary-name: ${{ env.BINARY_NAME }}
@@ -177,7 +179,7 @@ jobs:
 
       - name: Build RPM package
         if: steps.check.outputs.exists == 'true'
-        uses: albertocavalcante/actions/package-rpm@main
+        uses: albertocavalcante/actions/package-rpm@9a91e672159e2d4d806bce6fca6199ec65852947 # main
         with:
           binary-path: extracted/${{ env.BINARY_NAME }}
           binary-name: ${{ env.BINARY_NAME }}
@@ -243,7 +245,7 @@ jobs:
 
       - name: Generate release notes
         id: notes
-        uses: albertocavalcante/actions/release-notes@main
+        uses: albertocavalcante/actions/release-notes@9a91e672159e2d4d806bce6fca6199ec65852947 # main
         with:
           version: ${{ steps.tag.outputs.tag }}
           assets-dir: release-assets
@@ -272,11 +274,12 @@ jobs:
           private-key: ${{ secrets.EUKIA_APP_PRIVATE_KEY }}
           owner: albertocavalcante
           repositories: homebrew-tap
+          permission-contents: write
 
       - name: Update Homebrew tap
         if: steps.eukia.outcome == 'success'
         continue-on-error: true
-        uses: albertocavalcante/actions/update-homebrew-tap@main
+        uses: albertocavalcante/actions/update-homebrew-tap@9a91e672159e2d4d806bce6fca6199ec65852947 # main
         with:
           tap-repo: albertocavalcante/homebrew-tap
           formula-name: bossa
