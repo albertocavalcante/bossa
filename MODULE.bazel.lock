@@ -474,7 +474,7 @@
           "REPO_MAPPING:rules_rust+,rules_cc rules_cc+",
           "REPO_MAPPING:rules_rust+,rules_rust rules_rust+",
           "FILE:@@//Cargo.lock 1c1b41fa720c3fc5f4291709509e58a8b3342f927dbf2edadbb3e15528c32c43",
-          "FILE:@@//Cargo.toml 50a70ef93e8262a5f459240b497e9badc2a19fa67ed2144f31ebe7df37f14222",
+          "FILE:@@//Cargo.toml 4dda07c13e2dbb321ebecf29d676bc6daf69140a961f9dbc919069741e06a0ad",
           "FILE:@@//crates/brewkit/Cargo.toml 82790f5e4c4c4c9b78460fae7deac66a747b073848de5fddd0d4f935ddc9e49d",
           "FILE:@@//crates/declarative/Cargo.toml 83b283673d685f0931f2b61750a3c84e59037950a0684518e4db9f590b8ba4b3",
           "FILE:@@//crates/icloud/Cargo.toml 02931b7940cdbd1e6adcffcc7adf3e085831151affcc8f55dd783dd67d987d77",
