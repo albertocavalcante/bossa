@@ -258,18 +258,15 @@ fn get_partition_details(part_id: &str) -> Result<PartitionInfo> {
 
     let size = props
         .get("TotalSize")
+        .or(props.get("VolumeSize"))
         .or(props.get("Size"))
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(0);
 
     let mount_point = props.get("MountPoint").cloned().filter(|s| !s.is_empty());
 
-    // Get space info if mounted
-    let (used, available) = if let Some(ref mount) = mount_point {
-        get_mount_space(mount).unwrap_or((None, None))
-    } else {
-        (None, None)
-    };
+    // Get space info - prefer diskutil values over statvfs (statvfs is broken for ExFAT)
+    let (used, available) = get_space_from_diskutil(&props, size);
 
     Ok(PartitionInfo {
         device: part_id.to_string(),
@@ -280,6 +277,27 @@ fn get_partition_details(part_id: &str) -> Result<PartitionInfo> {
         used,
         available,
     })
+}
+
+/// Get space info from diskutil plist properties
+/// This is more reliable than statvfs, especially for ExFAT volumes
+fn get_space_from_diskutil(
+    props: &HashMap<String, String>,
+    total_size: u64,
+) -> (Option<u64>, Option<u64>) {
+    // Try to get FreeSpace from diskutil (most reliable)
+    if let Some(free_space) = props
+        .get("FreeSpace")
+        .or(props.get("APFSContainerFree"))
+        .or(props.get("ContainerFree"))
+        .and_then(|s| s.parse::<u64>().ok())
+    {
+        let used = total_size.saturating_sub(free_space);
+        return (Some(used), Some(free_space));
+    }
+
+    // No space info available from diskutil
+    (None, None)
 }
 
 /// Parse a simple plist dictionary into key-value pairs
@@ -318,42 +336,6 @@ fn parse_plist_dict(plist: &str) -> HashMap<String, String> {
     }
 
     props
-}
-
-/// Get space information for a mount point
-#[cfg(unix)]
-fn get_mount_space(path: &str) -> Result<(Option<u64>, Option<u64>)> {
-    use std::ffi::CString;
-    use std::mem::MaybeUninit;
-
-    let c_path = CString::new(path).context("Invalid path")?;
-
-    // SAFETY: statvfs is a standard POSIX call. We check the return value
-    // before using the result.
-    unsafe {
-        let mut stat: MaybeUninit<libc::statvfs> = MaybeUninit::uninit();
-        let result = libc::statvfs(c_path.as_ptr(), stat.as_mut_ptr());
-
-        if result != 0 {
-            return Ok((None, None));
-        }
-
-        let stat = stat.assume_init();
-
-        // Cast needed on macOS, not on Linux
-        #[allow(clippy::unnecessary_cast)]
-        let total = stat.f_blocks as u64 * stat.f_frsize;
-        #[allow(clippy::unnecessary_cast)]
-        let available = stat.f_bavail as u64 * stat.f_frsize;
-        let used = total.saturating_sub(available);
-
-        Ok((Some(used), Some(available)))
-    }
-}
-
-#[cfg(not(unix))]
-fn get_mount_space(_path: &str) -> Result<(Option<u64>, Option<u64>)> {
-    Ok((None, None))
 }
 
 /// Print disk information
@@ -483,5 +465,122 @@ mod tests {
         assert_eq!(props.get("VolumeName"), Some(&"Macintosh HD".to_string()));
         assert_eq!(props.get("TotalSize"), Some(&"500000000000".to_string()));
         assert_eq!(props.get("Internal"), Some(&"true".to_string()));
+    }
+
+    #[test]
+    fn test_get_space_from_diskutil_exfat() {
+        // Real values from a 4TB ExFAT volume (from diskutil info -plist)
+        let mut props = HashMap::new();
+        props.insert("TotalSize".to_string(), "4000645775360".to_string());
+        props.insert("FreeSpace".to_string(), "3983334572032".to_string());
+
+        let total_size: u64 = 4_000_645_775_360; // ~4TB
+        let expected_free: u64 = 3_983_334_572_032; // ~3.98TB
+        let expected_used: u64 = total_size - expected_free; // ~17GB
+
+        let (used, available) = get_space_from_diskutil(&props, total_size);
+
+        assert_eq!(used, Some(expected_used));
+        assert_eq!(available, Some(expected_free));
+
+        // Verify the values make sense
+        let used_val = used.unwrap();
+        let avail_val = available.unwrap();
+        assert!(avail_val > 3_900_000_000_000, "Available should be ~3.9TB");
+        assert!(used_val < 50_000_000_000, "Used should be < 50GB");
+        assert_eq!(
+            used_val + avail_val,
+            total_size,
+            "Used + Available should equal total"
+        );
+    }
+
+    #[test]
+    fn test_get_space_from_diskutil_apfs() {
+        // APFS volume with container-level free space
+        let mut props = HashMap::new();
+        props.insert("TotalSize".to_string(), "245107195904".to_string());
+        props.insert("APFSContainerFree".to_string(), "30000000000".to_string());
+
+        let total_size: u64 = 245_107_195_904; // ~245GB
+        let (used, available) = get_space_from_diskutil(&props, total_size);
+
+        assert!(available.is_some());
+        assert!(used.is_some());
+        assert_eq!(available.unwrap(), 30_000_000_000);
+        assert_eq!(used.unwrap(), total_size - 30_000_000_000);
+    }
+
+    #[test]
+    fn test_get_space_from_diskutil_no_space_info() {
+        // Unmounted partition with no space info
+        let props = HashMap::new();
+        let total_size: u64 = 1_000_000_000;
+
+        let (used, available) = get_space_from_diskutil(&props, total_size);
+
+        assert!(used.is_none());
+        assert!(available.is_none());
+    }
+
+    #[test]
+    fn test_get_space_from_diskutil_large_volume() {
+        // Test with very large volume (8TB) to ensure no overflow
+        let mut props = HashMap::new();
+        let total_size: u64 = 8_000_000_000_000; // 8TB
+        let free_space: u64 = 7_500_000_000_000; // 7.5TB
+        props.insert("FreeSpace".to_string(), free_space.to_string());
+
+        let (used, available) = get_space_from_diskutil(&props, total_size);
+
+        assert_eq!(available, Some(free_space));
+        assert_eq!(used, Some(500_000_000_000)); // 500GB used
+    }
+
+    #[test]
+    fn test_parse_plist_dict_with_real_diskutil_output() {
+        // Actual diskutil info -plist output structure for an ExFAT volume
+        let plist = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>DeviceBlockSize</key>
+	<integer>512</integer>
+	<key>DeviceIdentifier</key>
+	<string>disk4s2</string>
+	<key>FilesystemType</key>
+	<string>exfat</string>
+	<key>FreeSpace</key>
+	<integer>3983334572032</integer>
+	<key>MountPoint</key>
+	<string>/Volumes/T9</string>
+	<key>TotalSize</key>
+	<integer>4000645775360</integer>
+	<key>VolumeName</key>
+	<string>T9</string>
+	<key>Internal</key>
+	<false/>
+</dict>
+</plist>"#;
+
+        let props = parse_plist_dict(plist);
+
+        assert_eq!(props.get("VolumeName"), Some(&"T9".to_string()));
+        assert_eq!(props.get("FilesystemType"), Some(&"exfat".to_string()));
+        assert_eq!(props.get("TotalSize"), Some(&"4000645775360".to_string()));
+        assert_eq!(props.get("FreeSpace"), Some(&"3983334572032".to_string()));
+        assert_eq!(props.get("MountPoint"), Some(&"/Volumes/T9".to_string()));
+        assert_eq!(props.get("Internal"), Some(&"false".to_string()));
+
+        // Now test that space calculation works correctly with these values
+        let total_size: u64 = props.get("TotalSize").unwrap().parse().unwrap();
+        let (used, available) = get_space_from_diskutil(&props, total_size);
+
+        // ~4TB total, ~4TB free, ~17GB used
+        assert!(
+            available.unwrap() > 3_900_000_000_000,
+            "Should have ~4TB free"
+        );
+        assert!(used.unwrap() < 50_000_000_000, "Should have < 50GB used");
     }
 }
