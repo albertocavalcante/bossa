@@ -21,10 +21,14 @@ use crate::ui;
 struct PartitionSpec {
     /// Partition name
     name: String,
-    /// Filesystem type
+    /// Filesystem type (for diskutil command)
     fs_type: String,
+    /// Display name for filesystem (may differ from fs_type)
+    fs_display: String,
     /// Size specification (e.g., "3TB", "1TB", or "0b" for remaining space)
     size: String,
+    /// Whether to encrypt this partition (for APFS)
+    encrypted: bool,
 }
 
 /// Current disk information
@@ -338,7 +342,14 @@ fn get_partition_specs(disk: &CurrentDiskInfo) -> Result<Vec<PartitionSpec>> {
     println!("  Enter partition details. Leave name empty when done.");
     println!();
 
-    let fs_options = vec!["APFS", "ExFAT", "JHFS+", "FAT32", "Free Space"];
+    let fs_options = vec![
+        "APFS",
+        "APFS (Encrypted)",
+        "ExFAT",
+        "JHFS+",
+        "FAT32",
+        "Free Space",
+    ];
 
     let mut specs = Vec::new();
     let mut partition_num = 1;
@@ -367,6 +378,18 @@ fn get_partition_specs(disk: &CurrentDiskInfo) -> Result<Vec<PartitionSpec>> {
             .context("Failed to read format selection")?;
 
         let fs_type = fs_options[fs_idx].to_string();
+
+        // Note about encrypted APFS
+        if fs_type == "APFS (Encrypted)" {
+            println!(
+                "    {} Encrypted APFS will prompt for a password during creation.",
+                "Note:".yellow()
+            );
+            println!(
+                "    {} You'll need this password every time you mount the volume.",
+                "     ".yellow()
+            );
+        }
 
         // Size
         println!(
@@ -398,10 +421,19 @@ fn get_partition_specs(disk: &CurrentDiskInfo) -> Result<Vec<PartitionSpec>> {
             }
         }
 
+        // Handle encrypted APFS - use plain APFS for diskutil, encrypt after
+        let (actual_fs_type, encrypted) = if fs_type == "APFS (Encrypted)" {
+            ("APFS".to_string(), true)
+        } else {
+            (fs_type.clone(), false)
+        };
+
         specs.push(PartitionSpec {
             name,
-            fs_type,
+            fs_type: actual_fs_type,
+            fs_display: fs_type,
             size: size_spec,
+            encrypted,
         });
 
         partition_num += 1;
@@ -413,12 +445,14 @@ fn get_partition_specs(disk: &CurrentDiskInfo) -> Result<Vec<PartitionSpec>> {
         println!();
         println!("  {}", "Partition Summary:".bold());
         for (i, spec) in specs.iter().enumerate() {
+            let encrypted_note = if spec.encrypted { " 🔒" } else { "" };
             println!(
-                "    {}. {} [{}] - {}",
+                "    {}. {} [{}] - {}{}",
                 i + 1,
                 spec.name,
-                spec.fs_type.cyan(),
-                spec.size
+                spec.fs_display.cyan(),
+                spec.size,
+                encrypted_note
             );
         }
     }
@@ -508,17 +542,56 @@ fn execute_repartition(disk_id: &str, partitions: &[PartitionSpec]) -> Result<()
         .status()
         .context("Failed to execute diskutil")?;
 
-    if status.success() {
-        println!();
-        ui::success("Repartition completed successfully!");
-        println!();
-
-        // Show new layout
-        ui::dim("New layout:");
-        let _ = Command::new("diskutil").args(["list", disk_id]).status();
-    } else {
+    if !status.success() {
         anyhow::bail!("diskutil command failed with status: {}", status);
     }
+
+    println!();
+    ui::success("Repartition completed successfully!");
+
+    // Handle encryption for any partitions that requested it
+    let encrypted_partitions: Vec<_> = partitions.iter().filter(|p| p.encrypted).collect();
+    if !encrypted_partitions.is_empty() {
+        println!();
+        ui::section("Enabling Encryption");
+        println!();
+
+        for spec in encrypted_partitions {
+            println!(
+                "  Encrypting volume: {} {}",
+                spec.name.cyan(),
+                "(you will be prompted for a password)".dimmed()
+            );
+            println!();
+
+            // Find the volume identifier for this partition
+            // The volume name should match what we just created
+            let encrypt_status = Command::new("diskutil")
+                .args(["apfs", "encryptVolume", &spec.name, "-user", "disk"])
+                .status()
+                .context("Failed to run diskutil apfs encryptVolume")?;
+
+            if encrypt_status.success() {
+                ui::success(&format!("  Volume '{}' encryption started", spec.name));
+                ui::dim("  Encryption will complete in the background.");
+            } else {
+                ui::warn(&format!(
+                    "  Failed to encrypt '{}'. You can encrypt manually with:",
+                    spec.name
+                ));
+                println!(
+                    "    {}",
+                    format!("diskutil apfs encryptVolume \"{}\"", spec.name).cyan()
+                );
+            }
+            println!();
+        }
+    }
+
+    // Show new layout
+    println!();
+    ui::dim("New layout:");
+    let _ = Command::new("diskutil").args(["list", disk_id]).status();
 
     Ok(())
 }
@@ -548,12 +621,16 @@ mod tests {
             PartitionSpec {
                 name: "Main".to_string(),
                 fs_type: "APFS".to_string(),
+                fs_display: "APFS".to_string(),
                 size: "3TB".to_string(),
+                encrypted: false,
             },
             PartitionSpec {
                 name: "Shared".to_string(),
                 fs_type: "ExFAT".to_string(),
+                fs_display: "ExFAT".to_string(),
                 size: "0b".to_string(),
+                encrypted: false,
             },
         ];
 
@@ -561,5 +638,21 @@ mod tests {
         assert!(cmd.contains("diskutil partitionDisk disk2 GPT"));
         assert!(cmd.contains("APFS \"Main\" 3TB"));
         assert!(cmd.contains("ExFAT \"Shared\" 0b"));
+    }
+
+    #[test]
+    fn test_encrypted_apfs_uses_plain_apfs_in_command() {
+        let partitions = vec![PartitionSpec {
+            name: "Secure".to_string(),
+            fs_type: "APFS".to_string(), // Actual type for diskutil
+            fs_display: "APFS (Encrypted)".to_string(),
+            size: "1TB".to_string(),
+            encrypted: true,
+        }];
+
+        let cmd = generate_diskutil_command("disk4", &partitions);
+        // Should use plain APFS in the command (encryption is done separately)
+        assert!(cmd.contains("APFS \"Secure\" 1TB"));
+        assert!(!cmd.contains("Encrypted"));
     }
 }
