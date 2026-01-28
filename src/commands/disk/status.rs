@@ -7,7 +7,9 @@ use colored::Colorize;
 use std::collections::HashMap;
 use std::process::Command;
 
+use super::plist as plist_util;
 use crate::ui;
+use plist::Value;
 
 /// Information about a disk
 #[derive(Debug)]
@@ -24,6 +26,13 @@ struct DiskInfo {
     boot: bool,
     /// List of partitions
     partitions: Vec<PartitionInfo>,
+}
+
+/// Disk list entry with partition identifiers from `diskutil list -plist`.
+#[derive(Debug)]
+struct DiskListEntry {
+    device: String,
+    partitions: Vec<String>,
 }
 
 /// Information about a partition
@@ -81,12 +90,12 @@ fn collect_disk_info() -> Result<Vec<DiskInfo>> {
 
     // Parse the plist output to get disk identifiers
     let plist_str = String::from_utf8_lossy(&output.stdout);
-    let disk_ids = parse_disk_identifiers(&plist_str)?;
+    let disk_entries = parse_disk_list(&plist_str)?;
 
     // Get detailed info for each disk
     let mut disks = Vec::new();
-    for disk_id in disk_ids {
-        if let Ok(disk_info) = get_disk_details(&disk_id) {
+    for entry in disk_entries {
+        if let Ok(disk_info) = get_disk_details(&entry.device, &entry.partitions) {
             disks.push(disk_info);
         }
     }
@@ -94,48 +103,114 @@ fn collect_disk_info() -> Result<Vec<DiskInfo>> {
     Ok(disks)
 }
 
-/// Parse disk identifiers from diskutil list -plist output
-fn parse_disk_identifiers(plist: &str) -> Result<Vec<String>> {
-    // Simple parsing - look for disk identifiers in the plist
-    // Format: <string>diskN</string> where N is a number
-    let mut identifiers = Vec::new();
+/// Parse disk identifiers and partitions from `diskutil list -plist` output.
+fn parse_disk_list(plist: &str) -> Result<Vec<DiskListEntry>> {
+    let dict = plist_util::parse_plist_dict(plist)?;
+    let mut entries = Vec::new();
+    let mut all_partitions: HashMap<String, Vec<String>> = HashMap::new();
 
-    for line in plist.lines() {
-        let line = line.trim();
-        if line.starts_with("<string>disk") && line.ends_with("</string>") {
-            let disk_id = line
-                .trim_start_matches("<string>")
-                .trim_end_matches("</string>");
-            // Only include whole disks (not partitions like disk0s1)
-            // Partitions have format diskNsM where N and M are numbers
-            // Check if there's an 's' followed by a digit after "disk"
-            let is_partition = disk_id
-                .strip_prefix("disk")
-                .and_then(|rest| {
-                    // Find 's' followed by digit
-                    rest.find('s').map(|pos| {
-                        rest.chars()
-                            .nth(pos + 1)
-                            .is_some_and(|c| c.is_ascii_digit())
-                    })
-                })
-                .unwrap_or(false);
-
-            if !is_partition {
-                identifiers.push(disk_id.to_string());
+    if let Some(all_disks) = plist_util::dict_get_array(&dict, "AllDisks") {
+        for item in all_disks {
+            if let Value::String(disk_id) = item
+                && is_partition_identifier(disk_id)
+                && let Some(parent) = parent_disk_identifier(disk_id)
+            {
+                all_partitions
+                    .entry(parent.to_string())
+                    .or_default()
+                    .push(disk_id.clone());
             }
         }
     }
 
-    // Deduplicate
-    identifiers.sort();
-    identifiers.dedup();
+    if let Some(all_disks) = plist_util::dict_get_array(&dict, "AllDisksAndPartitions") {
+        for item in all_disks {
+            let Value::Dictionary(disk_dict) = item else {
+                continue;
+            };
 
-    Ok(identifiers)
+            let Some(device) = plist_util::dict_get_string(disk_dict, "DeviceIdentifier") else {
+                continue;
+            };
+
+            let mut partitions = Vec::new();
+
+            for key in ["Partitions", "APFSVolumes"] {
+                if let Some(items) = plist_util::dict_get_array(disk_dict, key) {
+                    for part in items {
+                        if let Value::Dictionary(part_dict) = part
+                            && let Some(part_id) =
+                                plist_util::dict_get_string(part_dict, "DeviceIdentifier")
+                        {
+                            partitions.push(part_id);
+                        }
+                    }
+                }
+            }
+
+            partitions.sort();
+            partitions.dedup();
+
+            entries.push(DiskListEntry { device, partitions });
+        }
+    }
+
+    // Enrich with any partitions found in AllDisks (captures snapshots and extras).
+    for entry in &mut entries {
+        if let Some(extra_parts) = all_partitions.get(&entry.device) {
+            entry.partitions.extend(extra_parts.iter().cloned());
+            entry.partitions.sort();
+            entry.partitions.dedup();
+        }
+    }
+
+    // Fallback: derive whole disks from AllDisks if structured data is missing.
+    if entries.is_empty()
+        && let Some(all_disks) = plist_util::dict_get_array(&dict, "AllDisks")
+    {
+        for item in all_disks {
+            if let Value::String(device) = item
+                && !is_partition_identifier(device)
+            {
+                let mut partitions = all_partitions.get(device).cloned().unwrap_or_default();
+                partitions.sort();
+                partitions.dedup();
+                entries.push(DiskListEntry {
+                    device: device.clone(),
+                    partitions,
+                });
+            }
+        }
+    }
+
+    entries.sort_by(|a, b| a.device.cmp(&b.device));
+    entries.dedup_by(|a, b| a.device == b.device);
+
+    Ok(entries)
+}
+
+fn is_partition_identifier(disk_id: &str) -> bool {
+    disk_id
+        .strip_prefix("disk")
+        .and_then(|rest| {
+            rest.find('s').map(|pos| {
+                rest.chars()
+                    .nth(pos + 1)
+                    .is_some_and(|c| c.is_ascii_digit())
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn parent_disk_identifier(disk_id: &str) -> Option<&str> {
+    let rest = disk_id.strip_prefix("disk")?;
+    let pos = rest.find('s')?;
+    let parent_len = "disk".len() + pos;
+    disk_id.get(..parent_len)
 }
 
 /// Get detailed information about a specific disk
-fn get_disk_details(disk_id: &str) -> Result<DiskInfo> {
+fn get_disk_details(disk_id: &str, partition_ids: &[String]) -> Result<DiskInfo> {
     // Get disk info
     let output = Command::new("diskutil")
         .args(["info", "-plist", disk_id])
@@ -151,29 +226,26 @@ fn get_disk_details(disk_id: &str) -> Result<DiskInfo> {
     }
 
     let plist_str = String::from_utf8_lossy(&output.stdout);
-    let props = parse_plist_dict(&plist_str);
+    let props = plist_util::parse_plist_dict(&plist_str)?;
 
-    let name = props
-        .get("MediaName")
-        .or(props.get("IORegistryEntryName"))
-        .cloned()
+    let name = plist_util::dict_get_string(&props, "MediaName")
+        .or_else(|| plist_util::dict_get_string(&props, "IORegistryEntryName"))
         .unwrap_or_else(|| "Unknown".to_string());
 
-    let size = props
-        .get("TotalSize")
-        .or(props.get("Size"))
-        .and_then(|s| s.parse::<u64>().ok())
+    let size = plist_util::dict_get_u64(&props, "TotalSize")
+        .or_else(|| plist_util::dict_get_u64(&props, "Size"))
         .unwrap_or(0);
 
-    let internal = props.get("Internal").map(|s| s == "true").unwrap_or(false);
+    let internal = plist_util::dict_get_bool(&props, "Internal").unwrap_or(false);
     let boot = props.contains_key("BooterDeviceIdentifier")
-        || props
-            .get("SystemImage")
-            .map(|s| s == "true")
-            .unwrap_or(false);
+        || plist_util::dict_get_bool(&props, "SystemImage").unwrap_or(false);
 
-    // Get partitions
-    let partitions = get_partitions(disk_id)?;
+    let mut partitions = Vec::new();
+    for part_id in partition_ids {
+        if let Ok(part_info) = get_partition_details(part_id) {
+            partitions.push(part_info);
+        }
+    }
 
     Ok(DiskInfo {
         device: disk_id.to_string(),
@@ -183,51 +255,6 @@ fn get_disk_details(disk_id: &str) -> Result<DiskInfo> {
         boot,
         partitions,
     })
-}
-
-/// Get partitions for a disk
-fn get_partitions(disk_id: &str) -> Result<Vec<PartitionInfo>> {
-    // List partitions using diskutil list
-    let output = Command::new("diskutil")
-        .args(["list", disk_id])
-        .output()
-        .context("Failed to run diskutil list for partitions")?;
-
-    if !output.status.success() {
-        return Ok(Vec::new());
-    }
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-    let partition_ids = parse_partition_ids(&output_str, disk_id);
-
-    let mut partitions = Vec::new();
-    for part_id in partition_ids {
-        if let Ok(part_info) = get_partition_details(&part_id) {
-            partitions.push(part_info);
-        }
-    }
-
-    Ok(partitions)
-}
-
-/// Parse partition identifiers from diskutil list output
-fn parse_partition_ids(output: &str, disk_id: &str) -> Vec<String> {
-    let mut partition_ids = Vec::new();
-
-    for line in output.lines() {
-        // Look for lines containing partition identifiers like "disk0s1"
-        let line = line.trim();
-        if line.contains(disk_id)
-            && line.contains('s')
-            && let Some(dev) = line.split_whitespace().last()
-            && dev.starts_with(disk_id)
-            && dev.contains('s')
-        {
-            partition_ids.push(dev.to_string());
-        }
-    }
-
-    partition_ids
 }
 
 /// Get detailed information about a partition
@@ -242,28 +269,22 @@ fn get_partition_details(part_id: &str) -> Result<PartitionInfo> {
     }
 
     let plist_str = String::from_utf8_lossy(&output.stdout);
-    let props = parse_plist_dict(&plist_str);
+    let props = plist_util::parse_plist_dict(&plist_str)?;
 
-    let name = props
-        .get("VolumeName")
-        .or(props.get("MediaName"))
-        .cloned()
+    let name = plist_util::dict_get_string(&props, "VolumeName")
+        .or_else(|| plist_util::dict_get_string(&props, "MediaName"))
         .unwrap_or_else(|| "Untitled".to_string());
 
-    let fs_type = props
-        .get("FilesystemType")
-        .or(props.get("FilesystemName"))
-        .cloned()
+    let fs_type = plist_util::dict_get_string(&props, "FilesystemType")
+        .or_else(|| plist_util::dict_get_string(&props, "FilesystemName"))
         .unwrap_or_else(|| "Unknown".to_string());
 
-    let size = props
-        .get("TotalSize")
-        .or(props.get("VolumeSize"))
-        .or(props.get("Size"))
-        .and_then(|s| s.parse::<u64>().ok())
+    let size = plist_util::dict_get_u64(&props, "TotalSize")
+        .or_else(|| plist_util::dict_get_u64(&props, "VolumeSize"))
+        .or_else(|| plist_util::dict_get_u64(&props, "Size"))
         .unwrap_or(0);
 
-    let mount_point = props.get("MountPoint").cloned().filter(|s| !s.is_empty());
+    let mount_point = plist_util::dict_get_string(&props, "MountPoint").filter(|s| !s.is_empty());
 
     // Get space info - prefer diskutil values over statvfs (statvfs is broken for ExFAT)
     let (used, available) = get_space_from_diskutil(&props, size);
@@ -282,60 +303,33 @@ fn get_partition_details(part_id: &str) -> Result<PartitionInfo> {
 /// Get space info from diskutil plist properties
 /// This is more reliable than statvfs, especially for ExFAT volumes
 fn get_space_from_diskutil(
-    props: &HashMap<String, String>,
+    props: &plist::Dictionary,
     total_size: u64,
 ) -> (Option<u64>, Option<u64>) {
-    // Try to get FreeSpace from diskutil (most reliable)
-    if let Some(free_space) = props
-        .get("FreeSpace")
-        .or(props.get("APFSContainerFree"))
-        .or(props.get("ContainerFree"))
-        .and_then(|s| s.parse::<u64>().ok())
-    {
+    let free_space = plist_util::dict_get_u64(props, "FreeSpace");
+    let container_free = plist_util::dict_get_u64(props, "APFSContainerFree")
+        .or_else(|| plist_util::dict_get_u64(props, "ContainerFree"));
+
+    // APFS volumes often report FreeSpace = 0; prefer container free when available.
+    let effective_free = if let Some(free) = free_space {
+        if free > 0 {
+            Some(free)
+        } else if let Some(container) = container_free {
+            Some(container)
+        } else {
+            Some(free)
+        }
+    } else {
+        container_free
+    };
+
+    if let Some(free_space) = effective_free {
         let used = total_size.saturating_sub(free_space);
         return (Some(used), Some(free_space));
     }
 
     // No space info available from diskutil
     (None, None)
-}
-
-/// Parse a simple plist dictionary into key-value pairs
-fn parse_plist_dict(plist: &str) -> HashMap<String, String> {
-    let mut props = HashMap::new();
-    let mut current_key: Option<String> = None;
-
-    for line in plist.lines() {
-        let line = line.trim();
-
-        if line.starts_with("<key>") && line.ends_with("</key>") {
-            current_key = Some(
-                line.trim_start_matches("<key>")
-                    .trim_end_matches("</key>")
-                    .to_string(),
-            );
-        } else if let Some(ref key) = current_key {
-            // Handle different value types
-            if line.starts_with("<string>") && line.ends_with("</string>") {
-                let value = line
-                    .trim_start_matches("<string>")
-                    .trim_end_matches("</string>");
-                props.insert(key.clone(), value.to_string());
-            } else if line.starts_with("<integer>") && line.ends_with("</integer>") {
-                let value = line
-                    .trim_start_matches("<integer>")
-                    .trim_end_matches("</integer>");
-                props.insert(key.clone(), value.to_string());
-            } else if line == "<true/>" {
-                props.insert(key.clone(), "true".to_string());
-            } else if line == "<false/>" {
-                props.insert(key.clone(), "false".to_string());
-            }
-            current_key = None;
-        }
-    }
-
-    props
 }
 
 /// Print disk information
@@ -433,46 +427,135 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_disk_identifiers() {
-        // Simulating diskutil list -plist output format
-        let plist = "<string>disk0</string>
-<string>disk0s1</string>
-<string>disk0s2</string>
-<string>disk2</string>
-<string>disk2s1</string>";
+    fn test_parse_disk_list() {
+        let plist = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>AllDisksAndPartitions</key>
+  <array>
+    <dict>
+      <key>DeviceIdentifier</key>
+      <string>disk4</string>
+      <key>Partitions</key>
+      <array>
+        <dict>
+          <key>DeviceIdentifier</key>
+          <string>disk4s1</string>
+        </dict>
+        <dict>
+          <key>DeviceIdentifier</key>
+          <string>disk4s2</string>
+        </dict>
+      </array>
+    </dict>
+    <dict>
+      <key>DeviceIdentifier</key>
+      <string>disk3</string>
+      <key>APFSVolumes</key>
+      <array>
+        <dict>
+          <key>DeviceIdentifier</key>
+          <string>disk3s1</string>
+        </dict>
+        <dict>
+          <key>DeviceIdentifier</key>
+          <string>disk3s2</string>
+        </dict>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>"#;
 
-        let ids = parse_disk_identifiers(plist).unwrap();
-        assert!(ids.contains(&"disk0".to_string()));
-        assert!(ids.contains(&"disk2".to_string()));
-        assert!(!ids.contains(&"disk0s1".to_string())); // Should not include partitions
-        assert!(!ids.contains(&"disk2s1".to_string())); // Should not include partitions
+        let disks = parse_disk_list(plist).unwrap();
+        let disk4 = disks.iter().find(|disk| disk.device == "disk4").unwrap();
+        let disk3 = disks.iter().find(|disk| disk.device == "disk3").unwrap();
+
+        assert_eq!(
+            disk4.partitions,
+            vec!["disk4s1".to_string(), "disk4s2".to_string()]
+        );
+        assert_eq!(
+            disk3.partitions,
+            vec!["disk3s1".to_string(), "disk3s2".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_parse_disk_list_adds_all_disks_partitions() {
+        let plist = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>AllDisks</key>
+  <array>
+    <string>disk3</string>
+    <string>disk3s1s1</string>
+  </array>
+  <key>AllDisksAndPartitions</key>
+  <array>
+    <dict>
+      <key>DeviceIdentifier</key>
+      <string>disk3</string>
+    </dict>
+  </array>
+</dict>
+</plist>"#;
+
+        let disks = parse_disk_list(plist).unwrap();
+        let disk3 = disks.iter().find(|disk| disk.device == "disk3").unwrap();
+        assert_eq!(disk3.partitions, vec!["disk3s1s1".to_string()]);
+    }
+
+    #[test]
+    fn test_parent_disk_identifier() {
+        assert_eq!(parent_disk_identifier("disk4s2"), Some("disk4"));
+        assert_eq!(parent_disk_identifier("disk3s1s1"), Some("disk3"));
+        assert_eq!(parent_disk_identifier("disk0"), None);
     }
 
     #[test]
     fn test_parse_plist_dict() {
-        let plist = r#"
-            <dict>
-                <key>VolumeName</key>
-                <string>Macintosh HD</string>
-                <key>TotalSize</key>
-                <integer>500000000000</integer>
-                <key>Internal</key>
-                <true/>
-            </dict>
-        "#;
+        let plist = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>VolumeName</key>
+    <string>Macintosh HD</string>
+    <key>TotalSize</key>
+    <integer>500000000000</integer>
+    <key>Internal</key>
+    <true/>
+  </dict>
+</plist>"#;
 
-        let props = parse_plist_dict(plist);
-        assert_eq!(props.get("VolumeName"), Some(&"Macintosh HD".to_string()));
-        assert_eq!(props.get("TotalSize"), Some(&"500000000000".to_string()));
-        assert_eq!(props.get("Internal"), Some(&"true".to_string()));
+        let props = plist_util::parse_plist_dict(plist).unwrap();
+        assert_eq!(
+            plist_util::dict_get_string(&props, "VolumeName"),
+            Some("Macintosh HD".to_string())
+        );
+        assert_eq!(
+            plist_util::dict_get_u64(&props, "TotalSize"),
+            Some(500_000_000_000)
+        );
+        assert_eq!(plist_util::dict_get_bool(&props, "Internal"), Some(true));
     }
 
     #[test]
     fn test_get_space_from_diskutil_exfat() {
         // Real values from a 4TB ExFAT volume (from diskutil info -plist)
-        let mut props = HashMap::new();
-        props.insert("TotalSize".to_string(), "4000645775360".to_string());
-        props.insert("FreeSpace".to_string(), "3983334572032".to_string());
+        let plist = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>TotalSize</key>
+    <integer>4000645775360</integer>
+    <key>FreeSpace</key>
+    <integer>3983334572032</integer>
+  </dict>
+</plist>"#;
+        let props = plist_util::parse_plist_dict(plist).unwrap();
 
         let total_size: u64 = 4_000_645_775_360; // ~4TB
         let expected_free: u64 = 3_983_334_572_032; // ~3.98TB
@@ -498,9 +581,19 @@ mod tests {
     #[test]
     fn test_get_space_from_diskutil_apfs() {
         // APFS volume with container-level free space
-        let mut props = HashMap::new();
-        props.insert("TotalSize".to_string(), "245107195904".to_string());
-        props.insert("APFSContainerFree".to_string(), "30000000000".to_string());
+        let plist = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>TotalSize</key>
+    <integer>245107195904</integer>
+    <key>FreeSpace</key>
+    <integer>0</integer>
+    <key>APFSContainerFree</key>
+    <integer>30000000000</integer>
+  </dict>
+</plist>"#;
+        let props = plist_util::parse_plist_dict(plist).unwrap();
 
         let total_size: u64 = 245_107_195_904; // ~245GB
         let (used, available) = get_space_from_diskutil(&props, total_size);
@@ -512,9 +605,78 @@ mod tests {
     }
 
     #[test]
+    fn test_get_space_from_diskutil_prefers_free_space_when_present() {
+        // If FreeSpace is present and non-zero, prefer it over container free.
+        let plist = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>TotalSize</key>
+    <integer>1000</integer>
+    <key>FreeSpace</key>
+    <integer>250</integer>
+    <key>APFSContainerFree</key>
+    <integer>900</integer>
+  </dict>
+</plist>"#;
+        let props = plist_util::parse_plist_dict(plist).unwrap();
+
+        let (used, available) = get_space_from_diskutil(&props, 1000);
+        assert_eq!(available, Some(250));
+        assert_eq!(used, Some(750));
+    }
+
+    #[test]
+    fn test_get_space_from_diskutil_uses_container_when_free_zero() {
+        // FreeSpace=0 should fall back to container free.
+        let plist = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>TotalSize</key>
+    <integer>1000</integer>
+    <key>FreeSpace</key>
+    <integer>0</integer>
+    <key>ContainerFree</key>
+    <integer>400</integer>
+  </dict>
+</plist>"#;
+        let props = plist_util::parse_plist_dict(plist).unwrap();
+
+        let (used, available) = get_space_from_diskutil(&props, 1000);
+        assert_eq!(available, Some(400));
+        assert_eq!(used, Some(600));
+    }
+
+    #[test]
+    fn test_get_space_from_diskutil_container_only() {
+        // When FreeSpace is missing, use container free.
+        let plist = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>TotalSize</key>
+    <integer>1000</integer>
+    <key>APFSContainerFree</key>
+    <integer>900</integer>
+  </dict>
+</plist>"#;
+        let props = plist_util::parse_plist_dict(plist).unwrap();
+
+        let (used, available) = get_space_from_diskutil(&props, 1000);
+        assert_eq!(available, Some(900));
+        assert_eq!(used, Some(100));
+    }
+
+    #[test]
     fn test_get_space_from_diskutil_no_space_info() {
         // Unmounted partition with no space info
-        let props = HashMap::new();
+        let plist = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict></dict>
+</plist>"#;
+        let props = plist_util::parse_plist_dict(plist).unwrap();
         let total_size: u64 = 1_000_000_000;
 
         let (used, available) = get_space_from_diskutil(&props, total_size);
@@ -526,10 +688,19 @@ mod tests {
     #[test]
     fn test_get_space_from_diskutil_large_volume() {
         // Test with very large volume (8TB) to ensure no overflow
-        let mut props = HashMap::new();
         let total_size: u64 = 8_000_000_000_000; // 8TB
         let free_space: u64 = 7_500_000_000_000; // 7.5TB
-        props.insert("FreeSpace".to_string(), free_space.to_string());
+        let plist = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>FreeSpace</key>
+    <integer>{free_space}</integer>
+  </dict>
+</plist>"#
+        );
+        let props = plist_util::parse_plist_dict(&plist).unwrap();
 
         let (used, available) = get_space_from_diskutil(&props, total_size);
 
@@ -563,17 +734,32 @@ mod tests {
 </dict>
 </plist>"#;
 
-        let props = parse_plist_dict(plist);
+        let props = plist_util::parse_plist_dict(plist).unwrap();
 
-        assert_eq!(props.get("VolumeName"), Some(&"T9".to_string()));
-        assert_eq!(props.get("FilesystemType"), Some(&"exfat".to_string()));
-        assert_eq!(props.get("TotalSize"), Some(&"4000645775360".to_string()));
-        assert_eq!(props.get("FreeSpace"), Some(&"3983334572032".to_string()));
-        assert_eq!(props.get("MountPoint"), Some(&"/Volumes/T9".to_string()));
-        assert_eq!(props.get("Internal"), Some(&"false".to_string()));
+        assert_eq!(
+            plist_util::dict_get_string(&props, "VolumeName"),
+            Some("T9".to_string())
+        );
+        assert_eq!(
+            plist_util::dict_get_string(&props, "FilesystemType"),
+            Some("exfat".to_string())
+        );
+        assert_eq!(
+            plist_util::dict_get_u64(&props, "TotalSize"),
+            Some(4_000_645_775_360)
+        );
+        assert_eq!(
+            plist_util::dict_get_u64(&props, "FreeSpace"),
+            Some(3_983_334_572_032)
+        );
+        assert_eq!(
+            plist_util::dict_get_string(&props, "MountPoint"),
+            Some("/Volumes/T9".to_string())
+        );
+        assert_eq!(plist_util::dict_get_bool(&props, "Internal"), Some(false));
 
         // Now test that space calculation works correctly with these values
-        let total_size: u64 = props.get("TotalSize").unwrap().parse().unwrap();
+        let total_size: u64 = plist_util::dict_get_u64(&props, "TotalSize").unwrap();
         let (used, available) = get_space_from_diskutil(&props, total_size);
 
         // ~4TB total, ~4TB free, ~17GB used

@@ -13,6 +13,7 @@
 //! - Supports `--dry-run` to preview operations
 
 mod backup;
+mod plist;
 mod repartition;
 mod status;
 

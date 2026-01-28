@@ -135,20 +135,17 @@ fn expand_path(path: &str) -> PathBuf {
 }
 
 /// Check if a path should be skipped
+/// Only skips specific macOS system files, NOT all dotfiles
 fn should_skip(path: &Path) -> bool {
-    // Check the file/directory name
+    // Check the file/directory name against the explicit skip list
     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
         if SKIP_PATTERNS.contains(&name) {
             return true;
         }
 
-        // Skip hidden files (starting with .)
-        if name.starts_with('.') && name != ".." && name != "." {
-            // Allow some hidden files that might be important
-            let allowed_hidden = [".gitignore", ".gitattributes", ".github", ".git"];
-            if !allowed_hidden.contains(&name) {
-                return true;
-            }
+        // Also skip AppleDouble files (._filename) which are macOS metadata
+        if name.starts_with("._") {
+            return true;
         }
     }
 
@@ -394,15 +391,21 @@ mod tests {
     }
 
     #[test]
-    fn test_should_allow_git_files() {
+    fn test_should_allow_dotfiles() {
+        // Regular dotfiles should NOT be skipped
         assert!(!should_skip(Path::new(".gitignore")));
         assert!(!should_skip(Path::new(".github")));
+        assert!(!should_skip(Path::new(".hidden")));
+        assert!(!should_skip(Path::new(".iso_manifest.txt")));
+        assert!(!should_skip(Path::new(".env")));
+        assert!(!should_skip(Path::new(".bashrc")));
     }
 
     #[test]
-    fn test_should_skip_hidden_files() {
-        assert!(should_skip(Path::new(".hidden")));
-        assert!(should_skip(Path::new(".secret")));
+    fn test_should_skip_apple_double_files() {
+        // AppleDouble metadata files (._filename) should be skipped
+        assert!(should_skip(Path::new("._myfile.txt")));
+        assert!(should_skip(Path::new("._Document.pdf")));
     }
 
     #[test]

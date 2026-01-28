@@ -11,9 +11,9 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
 use dialoguer::{Confirm, Input, Select};
-use std::collections::HashMap;
 use std::process::Command;
 
+use super::plist as plist_util;
 use crate::ui;
 
 /// Partition specification from user input
@@ -180,21 +180,17 @@ fn get_disk_info(disk_id: &str) -> Result<CurrentDiskInfo> {
     }
 
     let plist_str = String::from_utf8_lossy(&output.stdout);
-    let props = parse_plist_dict(&plist_str);
+    let props = plist_util::parse_plist_dict(&plist_str)?;
 
-    let name = props
-        .get("MediaName")
-        .or(props.get("IORegistryEntryName"))
-        .cloned()
+    let name = plist_util::dict_get_string(&props, "MediaName")
+        .or_else(|| plist_util::dict_get_string(&props, "IORegistryEntryName"))
         .unwrap_or_else(|| "Unknown".to_string());
 
-    let size = props
-        .get("TotalSize")
-        .or(props.get("Size"))
-        .and_then(|s| s.parse::<u64>().ok())
+    let size = plist_util::dict_get_u64(&props, "TotalSize")
+        .or_else(|| plist_util::dict_get_u64(&props, "Size"))
         .unwrap_or(0);
 
-    let internal = props.get("Internal").map(|s| s == "true").unwrap_or(false);
+    let internal = plist_util::dict_get_bool(&props, "Internal").unwrap_or(false);
     let boot = is_boot_disk(&props);
 
     // Get current partitions
@@ -211,16 +207,12 @@ fn get_disk_info(disk_id: &str) -> Result<CurrentDiskInfo> {
 }
 
 /// Check if this is a boot disk
-fn is_boot_disk(props: &HashMap<String, String>) -> bool {
+fn is_boot_disk(props: &plist::Dictionary) -> bool {
     // Check various indicators
     if props.get("BooterDeviceIdentifier").is_some() {
         return true;
     }
-    if props
-        .get("SystemImage")
-        .map(|s| s == "true")
-        .unwrap_or(false)
-    {
+    if plist_util::dict_get_bool(props, "SystemImage").unwrap_or(false) {
         return true;
     }
 
@@ -276,25 +268,19 @@ fn get_partition_info(part_id: &str) -> Result<CurrentPartition> {
     }
 
     let plist_str = String::from_utf8_lossy(&output.stdout);
-    let props = parse_plist_dict(&plist_str);
+    let props = plist_util::parse_plist_dict(&plist_str)?;
 
-    let name = props
-        .get("VolumeName")
-        .or(props.get("MediaName"))
-        .cloned()
+    let name = plist_util::dict_get_string(&props, "VolumeName")
+        .or_else(|| plist_util::dict_get_string(&props, "MediaName"))
         .unwrap_or_else(|| "Untitled".to_string());
 
-    let fs_type = props
-        .get("FilesystemType")
-        .or(props.get("FilesystemName"))
-        .or(props.get("Content"))
-        .cloned()
+    let fs_type = plist_util::dict_get_string(&props, "FilesystemType")
+        .or_else(|| plist_util::dict_get_string(&props, "FilesystemName"))
+        .or_else(|| plist_util::dict_get_string(&props, "Content"))
         .unwrap_or_else(|| "Unknown".to_string());
 
-    let size = props
-        .get("TotalSize")
-        .or(props.get("Size"))
-        .and_then(|s| s.parse::<u64>().ok())
+    let size = plist_util::dict_get_u64(&props, "TotalSize")
+        .or_else(|| plist_util::dict_get_u64(&props, "Size"))
         .unwrap_or(0);
 
     Ok(CurrentPartition {
@@ -303,43 +289,6 @@ fn get_partition_info(part_id: &str) -> Result<CurrentPartition> {
         fs_type,
         size,
     })
-}
-
-/// Parse plist dictionary
-fn parse_plist_dict(plist: &str) -> HashMap<String, String> {
-    let mut props = HashMap::new();
-    let mut current_key: Option<String> = None;
-
-    for line in plist.lines() {
-        let line = line.trim();
-
-        if line.starts_with("<key>") && line.ends_with("</key>") {
-            current_key = Some(
-                line.trim_start_matches("<key>")
-                    .trim_end_matches("</key>")
-                    .to_string(),
-            );
-        } else if let Some(ref key) = current_key {
-            if line.starts_with("<string>") && line.ends_with("</string>") {
-                let value = line
-                    .trim_start_matches("<string>")
-                    .trim_end_matches("</string>");
-                props.insert(key.clone(), value.to_string());
-            } else if line.starts_with("<integer>") && line.ends_with("</integer>") {
-                let value = line
-                    .trim_start_matches("<integer>")
-                    .trim_end_matches("</integer>");
-                props.insert(key.clone(), value.to_string());
-            } else if line == "<true/>" {
-                props.insert(key.clone(), "true".to_string());
-            } else if line == "<false/>" {
-                props.insert(key.clone(), "false".to_string());
-            }
-            current_key = None;
-        }
-    }
-
-    props
 }
 
 /// Print current disk layout
