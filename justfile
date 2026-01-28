@@ -1,5 +1,6 @@
-# Default target
-default: release
+# Default: show available recipes
+default:
+    @just --list
 
 # Development build
 build:
@@ -103,6 +104,10 @@ actions:
 # Open GitHub releases
 releases:
     open "https://github.com/albertocavalcante/bossa/releases"
+
+# Trigger nightly build workflow
+nightly:
+    gh workflow run nightly.yml
 
 # Create a new issue (opens in browser)
 new-issue:
