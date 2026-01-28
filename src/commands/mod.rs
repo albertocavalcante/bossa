@@ -8,6 +8,7 @@ pub mod crud;
 pub mod brew;
 pub mod caches;
 pub mod collections;
+pub mod disk;
 pub mod doctor;
 pub mod icloud;
 pub mod manifest;

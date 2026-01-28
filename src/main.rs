@@ -15,8 +15,8 @@ use anyhow::Result;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use cli::{
-    AddCommand, Cli, CollectionsCommand, Command, ICloudCommand, ManifestCommand, RefsCommand,
-    RmCommand, StorageCommand,
+    AddCommand, Cli, CollectionsCommand, Command, DiskCommand, ICloudCommand, ManifestCommand,
+    RefsCommand, RmCommand, StorageCommand,
 };
 use std::io;
 
@@ -200,6 +200,30 @@ fn main() -> Result<()> {
                 limit,
             } => commands::storage::duplicates(&manifests, list, min_size, limit),
         },
+        Command::Disk(cmd) => {
+            let disk_cmd = match cmd {
+                DiskCommand::Status => commands::disk::DiskCommand::Status,
+                DiskCommand::Backup {
+                    source,
+                    destination,
+                    dry_run,
+                } => commands::disk::DiskCommand::Backup {
+                    source,
+                    destination,
+                    dry_run,
+                },
+                DiskCommand::Repartition {
+                    disk,
+                    dry_run,
+                    confirm,
+                } => commands::disk::DiskCommand::Repartition {
+                    disk,
+                    dry_run,
+                    confirm,
+                },
+            };
+            commands::disk::run(disk_cmd)
+        }
         Command::Brew(cmd) => commands::brew::run(&ctx, cmd),
         Command::Refs(cmd) => {
             // Show deprecation warning

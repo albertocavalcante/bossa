@@ -81,6 +81,10 @@ pub enum Command {
     #[command(subcommand, name = "storage")]
     Storage(StorageCommand),
 
+    /// Disk management (status, backup, repartition)
+    #[command(subcommand)]
+    Disk(DiskCommand),
+
     /// Homebrew package management
     #[command(subcommand)]
     Brew(BrewCommand),
@@ -454,6 +458,65 @@ pub enum StorageCommand {
         /// Maximum duplicates to show per comparison (0 = unlimited)
         #[arg(long, default_value = "10")]
         limit: usize,
+    },
+}
+
+// ============================================================================
+// Disk Commands
+// ============================================================================
+
+#[derive(Debug, Subcommand)]
+pub enum DiskCommand {
+    /// Show all disks with partitions, formats, and space usage
+    ///
+    /// Lists internal and external disks with their partitions,
+    /// showing filesystem type (APFS, ExFAT, etc.), mount points,
+    /// and used/free space.
+    Status,
+
+    /// Backup directory to another location with progress
+    ///
+    /// Copies files while skipping system files (.DS_Store, .Spotlight-V100, etc.).
+    /// Shows a progress bar and validates destination has enough space.
+    ///
+    /// Examples:
+    ///   bossa disk backup /Volumes/T9/photos /Volumes/Backup/photos
+    ///   bossa disk backup ~/Documents /Volumes/External/Documents --dry-run
+    Backup {
+        /// Source directory to backup
+        source: String,
+
+        /// Destination directory
+        destination: String,
+
+        /// Preview what would be copied without copying
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+    },
+
+    /// Repartition an external drive (DESTRUCTIVE)
+    ///
+    /// Interactive guided repartition for external drives.
+    /// Will REFUSE to operate on internal or boot disks for safety.
+    ///
+    /// Examples:
+    ///   bossa disk repartition disk2                    # Interactive, shows command only
+    ///   bossa disk repartition disk2 --dry-run          # Preview mode
+    ///   bossa disk repartition disk2 --confirm          # Actually execute
+    ///
+    /// SAFETY: Always shows the generated diskutil command before execution.
+    /// Requires explicit --confirm flag to actually run the command.
+    Repartition {
+        /// Disk identifier (e.g., "disk2" or "/dev/disk2")
+        disk: String,
+
+        /// Preview what would happen without executing
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+
+        /// Actually execute the repartition (DESTRUCTIVE)
+        #[arg(long)]
+        confirm: bool,
     },
 }
 
