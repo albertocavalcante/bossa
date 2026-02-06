@@ -115,6 +115,10 @@ pub enum Command {
     /// Manage macOS defaults (imperative)
     #[command(subcommand)]
     Defaults(DefaultsCommand),
+
+    /// Manage logical locations for path abstraction
+    #[command(subcommand)]
+    Locations(LocationsCommand),
 }
 
 // ============================================================================
@@ -1170,6 +1174,47 @@ pub enum DefaultsType {
     Bool,
     Int,
     Float,
+}
+
+// ============================================================================
+// Locations Commands
+// ============================================================================
+
+/// Manage logical locations (path aliases)
+#[derive(Debug, Subcommand)]
+pub enum LocationsCommand {
+    /// List all configured locations
+    List,
+
+    /// Add a new location
+    Add {
+        /// Location name (e.g., "dev", "workspaces")
+        name: String,
+
+        /// Path for this location
+        path: String,
+    },
+
+    /// Remove a location
+    Remove {
+        /// Location name to remove
+        name: String,
+    },
+
+    /// Show the resolved path for a location
+    Show {
+        /// Location name
+        name: String,
+    },
+
+    /// Add an alias for a location
+    Alias {
+        /// Path pattern to alias (e.g., "~/dev")
+        path: String,
+
+        /// Location name this should resolve to
+        location: String,
+    },
 }
 
 // ============================================================================
