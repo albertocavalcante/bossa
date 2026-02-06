@@ -286,5 +286,6 @@ fn main() -> Result<()> {
         Command::Stow(cmd) => commands::stow::run(&ctx, cmd),
         Command::Theme(cmd) => commands::theme::run(&ctx, cmd),
         Command::Defaults(cmd) => commands::defaults::run(&ctx, cmd),
+        Command::Locations(cmd) => commands::locations::run(&ctx, cmd),
     }
 }

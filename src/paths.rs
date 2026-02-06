@@ -27,7 +27,9 @@
 //!    - macOS/Linux: `~/.local/state/bossa`
 
 use anyhow::{Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use crate::schema::LocationsConfig;
 
 /// Environment variable for config directory override
 pub const ENV_CONFIG_DIR: &str = "BOSSA_CONFIG_DIR";
@@ -193,6 +195,76 @@ fn expand_path(path: &str) -> PathBuf {
     expand(path)
 }
 
+/// Resolve a path with location variable expansion.
+///
+/// Expands `${locations.name}` references using the provided LocationsConfig,
+/// then expands ~ and environment variables.
+///
+/// # Examples
+/// ```
+/// use bossa::paths;
+/// use bossa::schema::LocationsConfig;
+/// use std::collections::HashMap;
+///
+/// let mut paths_map = HashMap::new();
+/// paths_map.insert("dev".to_string(), "/Volumes/T9/dev".to_string());
+/// let locations = LocationsConfig { paths: paths_map, ..Default::default() };
+/// let resolved = paths::resolve("${locations.dev}/ws/myproject", &locations);
+/// // Returns: /Volumes/T9/dev/ws/myproject
+/// ```
+pub fn resolve(path: &str, locations: &LocationsConfig) -> PathBuf {
+    // First expand ${locations.xxx} references
+    let mut result = path.to_string();
+
+    // Use simple string replacement to find ${locations.name} patterns
+    // For each match, look up the location and substitute
+    for (name, location_path) in &locations.paths {
+        let pattern = format!("${{locations.{}}}", name);
+        if result.contains(&pattern) {
+            // Recursively resolve the location path itself (it might reference other locations)
+            let expanded_location = resolve(location_path, locations);
+            result = result.replace(&pattern, &expanded_location.to_string_lossy());
+        }
+    }
+
+    // Then expand ~ and env vars using the existing expand function
+    expand(&result)
+}
+
+/// Identify which location (if any) a path belongs to.
+///
+/// Returns the location name if the path starts with a known location path.
+/// This is useful for determining which location a file or directory belongs to,
+/// enabling features like path normalization and location-based organization.
+///
+/// # Examples
+/// ```
+/// use bossa::paths;
+/// use bossa::schema::LocationsConfig;
+/// use std::collections::HashMap;
+/// use std::path::Path;
+///
+/// let mut paths_map = HashMap::new();
+/// paths_map.insert("dev".to_string(), "/Volumes/T9/dev".to_string());
+/// let locations = LocationsConfig { paths: paths_map, ..Default::default() };
+///
+/// let location = paths::identify_location(Path::new("/Volumes/T9/dev/ws/project"), &locations);
+/// assert_eq!(location, Some("dev".to_string()));
+/// ```
+#[allow(dead_code)] // Will be used by relocate command
+pub fn identify_location(path: &Path, locations: &LocationsConfig) -> Option<String> {
+    let path_str = path.to_string_lossy();
+
+    for (name, location_path) in &locations.paths {
+        let expanded = expand(location_path);
+        if path_str.starts_with(expanded.to_string_lossy().as_ref()) {
+            return Some(name.clone());
+        }
+    }
+
+    None
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -200,6 +272,8 @@ fn expand_path(path: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::LocationsConfig;
+    use std::collections::HashMap;
     use std::env;
 
     /// Helper to run a test with temporary env var
@@ -363,5 +437,190 @@ mod tests {
                 assert_eq!(result, home.join(".local").join("state").join("bossa"));
             });
         });
+    }
+
+    // ========================================================================
+    // Location-aware path resolution tests
+    // ========================================================================
+
+    fn make_locations_config(paths: Vec<(&str, &str)>) -> LocationsConfig {
+        let mut paths_map = HashMap::new();
+        for (name, path) in paths {
+            paths_map.insert(name.to_string(), path.to_string());
+        }
+        LocationsConfig {
+            paths: paths_map,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_resolve_simple_location() {
+        let locations = make_locations_config(vec![("dev", "/Volumes/T9/dev")]);
+
+        let result = resolve("${locations.dev}/ws/myproject", &locations);
+        assert_eq!(result, PathBuf::from("/Volumes/T9/dev/ws/myproject"));
+    }
+
+    #[test]
+    fn test_resolve_multiple_locations() {
+        let locations = make_locations_config(vec![
+            ("dev", "/Volumes/T9/dev"),
+            ("home", "/Users/testuser"),
+        ]);
+
+        let result = resolve("${locations.dev}/ws", &locations);
+        assert_eq!(result, PathBuf::from("/Volumes/T9/dev/ws"));
+
+        let result2 = resolve("${locations.home}/dotfiles", &locations);
+        assert_eq!(result2, PathBuf::from("/Users/testuser/dotfiles"));
+    }
+
+    #[test]
+    fn test_resolve_nested_locations() {
+        let locations = make_locations_config(vec![
+            ("dev", "/Volumes/T9/dev"),
+            ("workspaces", "${locations.dev}/ws"),
+        ]);
+
+        let result = resolve("${locations.workspaces}/myproject", &locations);
+        assert_eq!(result, PathBuf::from("/Volumes/T9/dev/ws/myproject"));
+    }
+
+    #[test]
+    fn test_resolve_with_tilde() {
+        let locations = make_locations_config(vec![("dotfiles", "~/dotfiles")]);
+
+        let result = resolve("${locations.dotfiles}/vim", &locations);
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(result, home.join("dotfiles").join("vim"));
+    }
+
+    #[test]
+    fn test_resolve_with_env_var() {
+        with_env_var("BOSSA_TEST_LOCATION", "/test/path", || {
+            let locations = make_locations_config(vec![("test", "$BOSSA_TEST_LOCATION/data")]);
+
+            let result = resolve("${locations.test}/file.txt", &locations);
+            assert_eq!(result, PathBuf::from("/test/path/data/file.txt"));
+        });
+    }
+
+    #[test]
+    fn test_resolve_no_location_reference() {
+        let locations = make_locations_config(vec![("dev", "/Volumes/T9/dev")]);
+
+        // Path without location reference should just be expanded normally
+        let result = resolve("/absolute/path", &locations);
+        assert_eq!(result, PathBuf::from("/absolute/path"));
+
+        let result2 = resolve("~/relative/path", &locations);
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(result2, home.join("relative").join("path"));
+    }
+
+    #[test]
+    fn test_resolve_unknown_location() {
+        let locations = make_locations_config(vec![("dev", "/Volumes/T9/dev")]);
+
+        // Unknown location reference should be left as-is (then expanded by shellexpand)
+        let result = resolve("${locations.unknown}/path", &locations);
+        // shellexpand doesn't know about ${locations.xxx}, so it's left as-is
+        assert_eq!(result, PathBuf::from("${locations.unknown}/path"));
+    }
+
+    #[test]
+    fn test_resolve_empty_locations() {
+        let locations = LocationsConfig::default();
+
+        let result = resolve("/some/path", &locations);
+        assert_eq!(result, PathBuf::from("/some/path"));
+    }
+
+    #[test]
+    fn test_resolve_multiple_references_same_location() {
+        let locations = make_locations_config(vec![("dev", "/Volumes/T9/dev")]);
+
+        let result = resolve("${locations.dev}/a:${locations.dev}/b", &locations);
+        assert_eq!(result, PathBuf::from("/Volumes/T9/dev/a:/Volumes/T9/dev/b"));
+    }
+
+    #[test]
+    fn test_identify_location_simple() {
+        let locations = make_locations_config(vec![("dev", "/Volumes/T9/dev")]);
+
+        let path = Path::new("/Volumes/T9/dev/ws/project");
+        let result = identify_location(path, &locations);
+        assert_eq!(result, Some("dev".to_string()));
+    }
+
+    #[test]
+    fn test_identify_location_exact_match() {
+        let locations = make_locations_config(vec![("dev", "/Volumes/T9/dev")]);
+
+        let path = Path::new("/Volumes/T9/dev");
+        let result = identify_location(path, &locations);
+        assert_eq!(result, Some("dev".to_string()));
+    }
+
+    #[test]
+    fn test_identify_location_no_match() {
+        let locations = make_locations_config(vec![("dev", "/Volumes/T9/dev")]);
+
+        let path = Path::new("/Users/testuser/documents");
+        let result = identify_location(path, &locations);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_identify_location_multiple_locations() {
+        let locations = make_locations_config(vec![
+            ("dev", "/Volumes/T9/dev"),
+            ("home", "/Users/testuser"),
+        ]);
+
+        let path1 = Path::new("/Volumes/T9/dev/ws/project");
+        assert_eq!(
+            identify_location(path1, &locations),
+            Some("dev".to_string())
+        );
+
+        let path2 = Path::new("/Users/testuser/documents/file.txt");
+        assert_eq!(
+            identify_location(path2, &locations),
+            Some("home".to_string())
+        );
+
+        let path3 = Path::new("/other/path");
+        assert_eq!(identify_location(path3, &locations), None);
+    }
+
+    #[test]
+    fn test_identify_location_with_tilde_expansion() {
+        let locations = make_locations_config(vec![("dotfiles", "~/dotfiles")]);
+
+        let home = dirs::home_dir().unwrap();
+        let path = home.join("dotfiles").join("vim");
+        let result = identify_location(&path, &locations);
+        assert_eq!(result, Some("dotfiles".to_string()));
+    }
+
+    #[test]
+    fn test_identify_location_empty_locations() {
+        let locations = LocationsConfig::default();
+
+        let path = Path::new("/some/path");
+        let result = identify_location(path, &locations);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_identify_location_partial_match_not_prefix() {
+        let locations = make_locations_config(vec![("dev", "/Volumes/T9/dev")]);
+
+        // This path contains "dev" but doesn't start with the location path
+        let path = Path::new("/other/Volumes/T9/dev/ws");
+        let result = identify_location(path, &locations);
+        assert_eq!(result, None);
     }
 }

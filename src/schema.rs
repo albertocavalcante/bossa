@@ -65,6 +65,10 @@ pub struct BossaConfig {
     /// Network configuration (proxies, registries)
     #[serde(default)]
     pub network: NetworkConfig,
+
+    /// Logical locations for path management
+    #[serde(default)]
+    pub locations: LocationsConfig,
 }
 
 impl BossaConfig {
@@ -121,6 +125,9 @@ impl BossaConfig {
 
         // Validate nova
         self.nova.validate()?;
+
+        // Validate locations
+        self.locations.validate()?;
 
         Ok(())
     }
@@ -1606,6 +1613,49 @@ impl NetworkConfig {
     /// Check if any proxy is configured
     pub fn has_proxy(&self) -> bool {
         self.http_proxy.is_some() || self.https_proxy.is_some()
+    }
+}
+
+// ============================================================================
+// Locations Configuration (Path Aliases)
+// ============================================================================
+
+/// Configuration for logical locations (path aliases)
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct LocationsConfig {
+    /// Named location mappings (e.g., "dev" -> "/Volumes/T9/dev")
+    #[serde(default)]
+    pub paths: HashMap<String, String>,
+
+    /// Aliases for historical paths that redirect to locations
+    /// e.g., "~/dev" -> "dev" (meaning ~/dev should resolve to locations.dev)
+    #[serde(default)]
+    pub aliases: HashMap<String, String>,
+}
+
+impl LocationsConfig {
+    /// Validate the locations config
+    pub fn validate(&self) -> Result<()> {
+        for name in self.paths.keys() {
+            // Validate name is alphanumeric + underscore
+            if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                anyhow::bail!(
+                    "Invalid location name '{}': must be alphanumeric or underscore",
+                    name
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Get a location path by name
+    pub fn get(&self, name: &str) -> Option<&str> {
+        self.paths.get(name).map(|s| s.as_str())
+    }
+
+    /// Check if a path matches any alias and return the location name
+    pub fn resolve_alias(&self, path: &str) -> Option<&str> {
+        self.aliases.get(path).map(|s| s.as_str())
     }
 }
 
