@@ -23,11 +23,11 @@ impl Symlink {
         }
     }
 
-    /// Expand ~ in paths
+    /// Expand ~ and environment variables in paths
     pub fn expand_paths(&self) -> Result<(PathBuf, PathBuf)> {
-        let source = shellexpand::tilde(&self.source.to_string_lossy()).to_string();
-        let target = shellexpand::tilde(&self.target.to_string_lossy()).to_string();
-        Ok((PathBuf::from(source), PathBuf::from(target)))
+        let source = crate::paths::expand(&self.source.to_string_lossy());
+        let target = crate::paths::expand(&self.target.to_string_lossy());
+        Ok((source, target))
     }
 
     /// Check current symlink state

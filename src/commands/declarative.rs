@@ -486,8 +486,7 @@ fn apply_collection(
 ) -> Result<()> {
     ui::section(&format!("Collection: {}", collection.name));
 
-    let root = shellexpand::tilde(&collection.path);
-    let root = PathBuf::from(root.as_ref());
+    let root = crate::paths::expand(&collection.path);
 
     // Find repos to clone
     let cloned_repos = get_cloned_repos(&root)?;
@@ -682,8 +681,7 @@ fn apply_workspace(
 
     // Setup worktrees
     for worktree in &workspace.worktrees {
-        let wt_path = shellexpand::tilde(&worktree.path);
-        let wt_path = PathBuf::from(wt_path.as_ref());
+        let wt_path = crate::paths::expand(&worktree.path);
 
         if !wt_path.exists() {
             ui::info(&format!("Creating worktree: {}", worktree.branch));
@@ -762,11 +760,8 @@ fn apply_storage_item(
 
     // Create symlinks
     for symlink in &storage.symlinks {
-        let target = shellexpand::tilde(&symlink.target);
-        let target = PathBuf::from(target.as_ref());
-
-        let source = shellexpand::tilde(&symlink.source);
-        let source = PathBuf::from(source.as_ref());
+        let target = crate::paths::expand(&symlink.target);
+        let source = crate::paths::expand(&symlink.source);
 
         if target.exists() {
             if !ctx.quiet {
@@ -865,8 +860,7 @@ fn diff_collections(
     let mut has_changes = false;
 
     for collection in collections {
-        let root = shellexpand::tilde(&collection.path);
-        let root = PathBuf::from(root.as_ref());
+        let root = crate::paths::expand(&collection.path);
 
         let cloned_repos = get_cloned_repos(&root)?;
         let configured_repos: HashSet<_> = collection
@@ -1020,10 +1014,7 @@ fn diff_storage(
         let missing_symlinks: Vec<_> = stor
             .symlinks
             .iter()
-            .filter(|s| {
-                let target = shellexpand::tilde(&s.target);
-                !PathBuf::from(target.as_ref()).exists()
-            })
+            .filter(|s| !crate::paths::expand(&s.target).exists())
             .collect();
 
         if missing_symlinks.is_empty() {
@@ -1060,8 +1051,7 @@ fn compute_state(config: &BossaConfig) -> Result<BossaState> {
 
     // Compute collections state
     for collection in &config.collections {
-        let root = shellexpand::tilde(&collection.path);
-        let root = PathBuf::from(root.as_ref());
+        let root = crate::paths::expand(&collection.path);
 
         let cloned_repos = get_cloned_repos(&root)?;
 
@@ -1095,10 +1085,7 @@ fn compute_state(config: &BossaConfig) -> Result<BossaState> {
         let symlinks: Vec<_> = storage
             .symlinks
             .iter()
-            .filter(|s| {
-                let target = shellexpand::tilde(&s.target);
-                PathBuf::from(target.as_ref()).exists()
-            })
+            .filter(|s| crate::paths::expand(&s.target).exists())
             .map(|s| s.target.clone())
             .collect();
 

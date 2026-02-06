@@ -175,8 +175,7 @@ pub struct Collection {
 impl Collection {
     /// Get the expanded path
     pub fn expanded_path(&self) -> Result<PathBuf> {
-        let expanded = shellexpand::tilde(&self.path);
-        Ok(PathBuf::from(expanded.as_ref()))
+        Ok(crate::paths::expand(&self.path))
     }
 
     /// Validate the collection
@@ -290,8 +289,7 @@ pub struct WorkspacesConfig {
 impl WorkspacesConfig {
     /// Get the expanded root path
     pub fn expanded_root(&self) -> Result<PathBuf> {
-        let expanded = shellexpand::tilde(&self.root);
-        Ok(PathBuf::from(expanded.as_ref()))
+        Ok(crate::paths::expand(&self.root))
     }
 
     /// Validate the workspaces config
@@ -447,8 +445,7 @@ pub struct Storage {
 impl Storage {
     /// Get the expanded mount path
     pub fn expanded_mount(&self) -> Result<PathBuf> {
-        let expanded = shellexpand::tilde(&self.mount);
-        Ok(PathBuf::from(expanded.as_ref()))
+        Ok(crate::paths::expand(&self.mount))
     }
 
     /// Check if the storage is mounted
@@ -497,15 +494,13 @@ pub struct Symlink {
 impl Symlink {
     /// Get the expanded from path
     pub fn expanded_from(&self) -> Result<PathBuf> {
-        let expanded = shellexpand::tilde(&self.from);
-        Ok(PathBuf::from(expanded.as_ref()))
+        Ok(crate::paths::expand(&self.from))
     }
 
     /// Get the expanded to path, replacing {mount} placeholder
     pub fn expanded_to(&self, mount_point: &str) -> Result<PathBuf> {
         let replaced = self.to.replace("{mount}", mount_point);
-        let expanded = shellexpand::tilde(&replaced);
-        Ok(PathBuf::from(expanded.as_ref()))
+        Ok(crate::paths::expand(&replaced))
     }
 
     /// Validate the symlink
