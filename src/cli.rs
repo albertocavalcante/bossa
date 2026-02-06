@@ -123,6 +123,9 @@ pub enum Command {
     /// Manage generated configuration files (git, etc.)
     #[command(subcommand)]
     Configs(ConfigsCommand),
+
+    /// Relocate a directory and update all path references
+    Relocate(RelocateCommand),
 }
 
 // ============================================================================
@@ -1219,6 +1222,48 @@ pub enum LocationsCommand {
         /// Location name this should resolve to
         location: String,
     },
+}
+
+// ============================================================================
+// Relocate Commands
+// ============================================================================
+
+/// Relocate a directory and update all references
+#[derive(Debug, Parser)]
+pub struct RelocateCommand {
+    /// Source path (the old location, e.g., ~/dev)
+    pub from: String,
+
+    /// Destination path (the new location, e.g., /Volumes/T9/dev)
+    pub to: String,
+
+    /// Create a symlink from old location to new for backwards compatibility
+    #[arg(long)]
+    pub symlink: bool,
+
+    /// Only scan for references, don't modify anything
+    #[arg(long)]
+    pub scan_only: bool,
+
+    /// Update config files but don't create symlink
+    #[arg(long)]
+    pub update_configs: bool,
+
+    /// Show what would be done without making changes
+    #[arg(long, short = 'n')]
+    pub dry_run: bool,
+
+    /// Skip confirmation prompts
+    #[arg(long, short = 'y')]
+    pub yes: bool,
+
+    /// Don't create backups before modifying files
+    #[arg(long)]
+    pub no_backup: bool,
+
+    /// Force operation even with warnings
+    #[arg(long)]
+    pub force: bool,
 }
 
 // ============================================================================
