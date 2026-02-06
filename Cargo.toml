@@ -86,3 +86,98 @@ lto = true # Link-time optimization
 codegen-units = 1 # Single codegen unit for better optimization
 panic = "abort" # Smaller binary
 strip = true # Strip symbols
+
+# Workspace-wide lint configuration
+[workspace.lints.rust]
+# unsafe_code is needed for libc/FFI calls
+unsafe_code = "warn"
+rust_2024_compatibility = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+# Pedantic - be strict about code quality
+pedantic = { level = "warn", priority = -1 }
+# Nursery - experimental but useful lints
+nursery = { level = "warn", priority = -1 }
+
+# Deny these - they're almost always bugs or bad practice
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+# Allow these pedantic lints (too noisy or not applicable)
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+too_many_lines = "allow"
+cognitive_complexity = "allow"
+similar_names = "allow"
+single_match_else = "allow"
+match_bool = "allow"
+struct_excessive_bools = "allow"
+fn_params_excessive_bools = "allow"
+if_not_else = "allow"
+doc_markdown = "allow"
+# Cargo metadata - not all crates need full metadata
+cargo_common_metadata = "allow"
+multiple_crate_versions = "allow"
+# These are fine in some contexts
+redundant_pub_crate = "allow"
+option_if_let_else = "allow"
+significant_drop_tightening = "allow"
+# Precision loss in display formatting is intentional
+cast_precision_loss = "allow"
+# File extension comparisons are case-sensitive on Unix (intentional)
+case_sensitive_file_extension_comparisons = "allow"
+# const fn suggestions - nice but not critical
+missing_const_for_fn = "allow"
+# Methods returning Self builders don't need must_use
+return_self_not_must_use = "allow"
+# cast_possible_wrap in controlled contexts
+cast_possible_wrap = "allow"
+# use_self in match arms - clippy can't auto-fix these
+use_self = "allow"
+# unused_self - often intentional for API design / future expansion
+unused_self = "allow"
+# needless_pass_by_value - can break public API
+needless_pass_by_value = "allow"
+# Cast sign issues - these are checked at runtime where needed
+cast_sign_loss = "allow"
+cast_possible_truncation = "allow"
+# Large stack arrays are fine on modern systems
+large_stack_arrays = "allow"
+# Template strings with {placeholders} are intentional, not format args
+literal_string_with_formatting_args = "allow"
+# Doc comments with ["examples"] are fine
+doc_link_with_quotes = "allow"
+# manual_let_else - match is often clearer
+manual_let_else = "allow"
+# unnecessary_wraps - Result can be useful for future error handling
+unnecessary_wraps = "allow"
+# match_same_arms - explicit arms are sometimes clearer
+match_same_arms = "allow"
+# branches_sharing_code - explicit is sometimes clearer
+branches_sharing_code = "allow"
+# or_fun_call - nested unwrap_or is fine
+or_fun_call = "allow"
+# trivially_copy_pass_by_ref - &self is idiomatic even for Copy types
+trivially_copy_pass_by_ref = "allow"
+# struct_field_names - storage_type in Storage is clear
+struct_field_names = "allow"
+# assigning_clones - clone() is clearer than clone_from()
+assigning_clones = "allow"
+# default_trait_access - Default::default() is fine
+default_trait_access = "allow"
+# match_wildcard_for_single_variants - explicit _ is fine
+match_wildcard_for_single_variants = "allow"
+# format_push_string - clearer than write!() for simple cases
+format_push_string = "allow"
+# ref_option - &Option<T> is sometimes clearer in function signatures
+ref_option = "allow"
+# map_unwrap_or - map().unwrap_or_else() can be clearer than map_or_else()
+map_unwrap_or = "allow"
+# items_after_statements - sometimes local imports make sense
+items_after_statements = "allow"
+
+[lints]
+workspace = true

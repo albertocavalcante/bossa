@@ -214,6 +214,7 @@ fn count_skipped(source: &Path) -> SkipInfo {
 
 /// Check if destination has enough space
 #[cfg(unix)]
+#[allow(unsafe_code)] // statvfs requires unsafe FFI
 fn check_destination_space(dest: &Path, required: u64) -> Result<()> {
     use std::ffi::CString;
     use std::mem::MaybeUninit;
@@ -223,8 +224,7 @@ fn check_destination_space(dest: &Path, required: u64) -> Result<()> {
         dest.to_path_buf()
     } else {
         dest.parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("/"))
+            .map_or_else(|| PathBuf::from("/"), std::path::Path::to_path_buf)
     };
 
     let path_str = check_path.to_string_lossy();
@@ -243,7 +243,7 @@ fn check_destination_space(dest: &Path, required: u64) -> Result<()> {
 
         // Cast needed on macOS, not on Linux
         #[allow(clippy::unnecessary_cast)]
-        let avail = stat.f_bavail as u64 * stat.f_frsize;
+        let avail = u64::from(stat.f_bavail) * stat.f_frsize;
         avail
     };
 

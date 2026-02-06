@@ -20,7 +20,7 @@ pub struct PathReference {
     pub ref_type: RefType,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RefType {
     /// cd alias: alias foo="cd /path"
     CdAlias,
@@ -76,7 +76,7 @@ impl ShellScanner {
             for entry in fs::read_dir(&fish_conf_d)? {
                 let entry = entry?;
                 let path = entry.path();
-                if path.extension().map(|e| e == "fish").unwrap_or(false) {
+                if path.extension().is_some_and(|e| e == "fish") {
                     results.extend(self.scan_file(&path)?);
                 }
             }

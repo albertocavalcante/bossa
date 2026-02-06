@@ -36,7 +36,7 @@ pub fn collect_icloud_stats() -> Option<ICloudStats> {
     for entry in WalkDir::new(&root)
         .max_depth(ICLOUD_MAX_DEPTH)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
     {
         if !entry.file_type().is_file() {
             continue;
@@ -72,8 +72,7 @@ fn is_hidden_file(entry: &walkdir::DirEntry) -> bool {
     entry
         .file_name()
         .to_str()
-        .map(|s| s.starts_with('.'))
-        .unwrap_or(false)
+        .is_some_and(|s| s.starts_with('.'))
 }
 
 // ============================================================================
@@ -139,7 +138,7 @@ fn load_manifest_info(db_path: &Path) -> Option<ManifestInfo> {
 
 /// Check if a path is a manifest database file (.db extension)
 fn is_manifest_db(path: &Path) -> bool {
-    path.extension().map(|e| e == "db").unwrap_or(false)
+    path.extension().is_some_and(|e| e == "db")
 }
 
 /// Extract manifest name from database path

@@ -241,7 +241,7 @@ impl Error {
             message: format!(
                 "brew command failed{}",
                 package_name
-                    .map(|n| format!(" for {}", n))
+                    .map(|n| format!(" for {n}"))
                     .unwrap_or_default()
             ),
             stderr: stderr.trim().to_string(),

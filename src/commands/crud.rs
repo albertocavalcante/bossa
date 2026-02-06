@@ -18,14 +18,14 @@ pub fn add_collection(
     path: &str,
     description: Option<&str>,
 ) -> Result<()> {
-    ui::header(&format!("Adding Collection: {}", name));
+    ui::header(&format!("Adding Collection: {name}"));
 
     // Load or create config
     let mut config = BossaConfig::load()?;
 
     // Check if already exists
     if config.collections.contains_key(name) {
-        ui::warn(&format!("Collection '{}' already exists in config", name));
+        ui::warn(&format!("Collection '{name}' already exists in config"));
         return Ok(());
     }
 
@@ -49,7 +49,7 @@ pub fn add_collection(
 
     // Save config
     config.save()?;
-    ui::success(&format!("Added collection '{}'", name));
+    ui::success(&format!("Added collection '{name}'"));
     ui::dim("Run 'bossa apply' to create the directory and clone repos");
 
     Ok(())
@@ -59,11 +59,11 @@ pub fn add_collection(
 pub fn add_repo(_ctx: &Context, collection: &str, url: &str, name: Option<&str>) -> Result<()> {
     // Auto-detect name from URL if not provided
     let repo_name = name
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .or_else(|| config::repo_name_from_url(url))
         .context("Could not determine repo name from URL. Use --name to specify.")?;
 
-    ui::header(&format!("Adding Repo: {}", repo_name));
+    ui::header(&format!("Adding Repo: {repo_name}"));
     ui::kv("Collection", collection);
     ui::kv("URL", url);
     ui::kv("Name", &repo_name);
@@ -80,13 +80,12 @@ pub fn add_repo(_ctx: &Context, collection: &str, url: &str, name: Option<&str>)
     let coll = config
         .collections
         .get_mut(collection)
-        .context(format!("Collection '{}' not found", collection))?;
+        .context(format!("Collection '{collection}' not found"))?;
 
     // Check if already exists
     if coll.find_repo(&repo_name).is_some() {
         ui::warn(&format!(
-            "Repo '{}' already exists in collection '{}'",
-            repo_name, collection
+            "Repo '{repo_name}' already exists in collection '{collection}'"
         ));
         return Ok(());
     }
@@ -102,8 +101,7 @@ pub fn add_repo(_ctx: &Context, collection: &str, url: &str, name: Option<&str>)
     // Save config
     config.save()?;
     ui::success(&format!(
-        "Added repo '{}' to collection '{}'",
-        repo_name, collection
+        "Added repo '{repo_name}' to collection '{collection}'"
     ));
     ui::dim("Run 'bossa apply' to clone the repository");
 
@@ -119,11 +117,11 @@ pub fn add_workspace(
 ) -> Result<()> {
     // Auto-detect name from URL if not provided
     let workspace_name = name
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .or_else(|| config::repo_name_from_url(url))
         .context("Could not determine workspace name from URL. Use --name to specify.")?;
 
-    ui::header(&format!("Adding Workspace: {}", workspace_name));
+    ui::header(&format!("Adding Workspace: {workspace_name}"));
     ui::kv("URL", url);
     ui::kv("Name", &workspace_name);
     let category_str = category.unwrap_or("default");
@@ -135,8 +133,7 @@ pub fn add_workspace(
     // Check if already exists
     if config.workspaces.find_repo(&workspace_name).is_some() {
         ui::warn(&format!(
-            "Workspace '{}' already exists in config",
-            workspace_name
+            "Workspace '{workspace_name}' already exists in config"
         ));
         return Ok(());
     }
@@ -152,7 +149,7 @@ pub fn add_workspace(
 
     // Save config
     config.save()?;
-    ui::success(&format!("Added workspace '{}'", workspace_name));
+    ui::success(&format!("Added workspace '{workspace_name}'"));
     ui::dim("Run 'bossa apply' to initialize the workspace");
 
     Ok(())
@@ -165,7 +162,7 @@ pub fn add_storage(
     mount: &str,
     storage_type: Option<&str>,
 ) -> Result<()> {
-    ui::header(&format!("Adding Storage: {}", name));
+    ui::header(&format!("Adding Storage: {name}"));
     ui::kv("Name", name);
     ui::kv("Mount point", mount);
 
@@ -173,20 +170,17 @@ pub fn add_storage(
         Some("external") | None => StorageType::External,
         Some("network") => StorageType::Network,
         Some("internal") => StorageType::Internal,
-        Some(t) => bail!(
-            "Unknown storage type: {}. Valid types: external, network, internal",
-            t
-        ),
+        Some(t) => bail!("Unknown storage type: {t}. Valid types: external, network, internal"),
     };
 
-    ui::kv("Type", &format!("{:?}", st).to_lowercase());
+    ui::kv("Type", &format!("{st:?}").to_lowercase());
 
     // Load config
     let mut config = BossaConfig::load()?;
 
     // Check if already exists
     if config.storage.contains_key(name) {
-        ui::warn(&format!("Storage '{}' already exists in config", name));
+        ui::warn(&format!("Storage '{name}' already exists in config"));
         return Ok(());
     }
 
@@ -203,7 +197,7 @@ pub fn add_storage(
 
     // Save config
     config.save()?;
-    ui::success(&format!("Added storage '{}'", name));
+    ui::success(&format!("Added storage '{name}'"));
     ui::dim("Run 'bossa apply' to set up symlinks and mounts");
 
     Ok(())
@@ -215,20 +209,20 @@ pub fn add_storage(
 
 /// Remove a collection from config
 pub fn rm_collection(_ctx: &Context, name: &str) -> Result<()> {
-    ui::header(&format!("Removing Collection: {}", name));
+    ui::header(&format!("Removing Collection: {name}"));
 
     // Load config
     let mut config = BossaConfig::load()?;
 
     // Remove collection
     if config.collections.remove(name).is_none() {
-        ui::warn(&format!("Collection '{}' not found in config", name));
+        ui::warn(&format!("Collection '{name}' not found in config"));
         return Ok(());
     }
 
     // Save config
     config.save()?;
-    ui::success(&format!("Removed collection '{}'", name));
+    ui::success(&format!("Removed collection '{name}'"));
     ui::dim("Note: This only modifies config - directories and repos are NOT deleted");
     ui::dim("You must manually delete the directory if needed");
 
@@ -237,7 +231,7 @@ pub fn rm_collection(_ctx: &Context, name: &str) -> Result<()> {
 
 /// Remove a repository from a collection
 pub fn rm_repo(_ctx: &Context, collection: &str, name: &str) -> Result<()> {
-    ui::header(&format!("Removing Repo: {}", name));
+    ui::header(&format!("Removing Repo: {name}"));
     ui::kv("Collection", collection);
     ui::kv("Repo", name);
 
@@ -248,13 +242,12 @@ pub fn rm_repo(_ctx: &Context, collection: &str, name: &str) -> Result<()> {
     let coll = config
         .collections
         .get_mut(collection)
-        .context(format!("Collection '{}' not found", collection))?;
+        .context(format!("Collection '{collection}' not found"))?;
 
     // Remove repo
     if !coll.remove_repo(name) {
         ui::warn(&format!(
-            "Repo '{}' not found in collection '{}'",
-            name, collection
+            "Repo '{name}' not found in collection '{collection}'"
         ));
         return Ok(());
     }
@@ -262,8 +255,7 @@ pub fn rm_repo(_ctx: &Context, collection: &str, name: &str) -> Result<()> {
     // Save config
     config.save()?;
     ui::success(&format!(
-        "Removed repo '{}' from collection '{}'",
-        name, collection
+        "Removed repo '{name}' from collection '{collection}'"
     ));
     ui::dim("Note: This only modifies config - the local clone was NOT deleted");
     ui::dim("You must manually delete the directory if needed");
@@ -273,20 +265,20 @@ pub fn rm_repo(_ctx: &Context, collection: &str, name: &str) -> Result<()> {
 
 /// Remove a workspace from config
 pub fn rm_workspace(_ctx: &Context, name: &str) -> Result<()> {
-    ui::header(&format!("Removing Workspace: {}", name));
+    ui::header(&format!("Removing Workspace: {name}"));
 
     // Load config
     let mut config = BossaConfig::load()?;
 
     // Remove workspace
     if !config.workspaces.remove_repo(name) {
-        ui::warn(&format!("Workspace '{}' not found in config", name));
+        ui::warn(&format!("Workspace '{name}' not found in config"));
         return Ok(());
     }
 
     // Save config
     config.save()?;
-    ui::success(&format!("Removed workspace '{}'", name));
+    ui::success(&format!("Removed workspace '{name}'"));
     ui::dim("Note: This only modifies config - worktrees and bare repo are NOT deleted");
     ui::dim("You must manually delete the directories if needed");
 
@@ -295,20 +287,20 @@ pub fn rm_workspace(_ctx: &Context, name: &str) -> Result<()> {
 
 /// Remove storage from config
 pub fn rm_storage(_ctx: &Context, name: &str) -> Result<()> {
-    ui::header(&format!("Removing Storage: {}", name));
+    ui::header(&format!("Removing Storage: {name}"));
 
     // Load config
     let mut config = BossaConfig::load()?;
 
     // Remove storage
     if config.storage.remove(name).is_none() {
-        ui::warn(&format!("Storage '{}' not found in config", name));
+        ui::warn(&format!("Storage '{name}' not found in config"));
         return Ok(());
     }
 
     // Save config
     config.save()?;
-    ui::success(&format!("Removed storage '{}'", name));
+    ui::success(&format!("Removed storage '{name}'"));
     ui::dim("Note: This only modifies config - symlinks and mounts are NOT removed");
     ui::dim("You must manually clean up symlinks if needed");
 
@@ -347,7 +339,7 @@ fn list_collections(_ctx: &Context) -> Result<()> {
         };
 
         let storage_info = if let Some(ref storage_name) = collection.storage {
-            format!(" [→ {}]", storage_name).dimmed().to_string()
+            format!(" [→ {storage_name}]").dimmed().to_string()
         } else {
             String::new()
         };
@@ -381,7 +373,7 @@ fn list_repos(_ctx: &Context, _collection: Option<&str>) -> Result<()> {
         let path = collection.expanded_path()?;
 
         if !collection.repos.is_empty() {
-            ui::section(&format!("Collection: {}", coll_name));
+            ui::section(&format!("Collection: {coll_name}"));
 
             for repo in &collection.repos {
                 total_repos += 1;
@@ -401,7 +393,7 @@ fn list_repos(_ctx: &Context, _collection: Option<&str>) -> Result<()> {
                     "  {} {} {}",
                     status,
                     repo.name.bold(),
-                    format!("({})", status_text).dimmed()
+                    format!("({status_text})").dimmed()
                 );
                 println!("    {}", repo.url.dimmed());
             }
@@ -413,7 +405,7 @@ fn list_repos(_ctx: &Context, _collection: Option<&str>) -> Result<()> {
         ui::dim("No repositories configured");
     } else {
         ui::kv("Total", &total_repos.to_string());
-        ui::kv("Cloned", &format!("{}/{}", cloned_count, total_repos));
+        ui::kv("Cloned", &format!("{cloned_count}/{total_repos}"));
     }
 
     Ok(())
@@ -431,7 +423,7 @@ fn list_workspaces(_ctx: &Context) -> Result<()> {
 
     for category in &categories {
         println!();
-        ui::section(&format!("Category: {}", category));
+        ui::section(&format!("Category: {category}"));
 
         let repos = config.workspaces.repos_by_category(category);
         for repo in repos {
@@ -441,7 +433,7 @@ fn list_workspaces(_ctx: &Context) -> Result<()> {
                 "  {} {} {}",
                 "○".cyan(),
                 repo.name.bold(),
-                format!("({} worktrees)", worktree_count).dimmed()
+                format!("({worktree_count} worktrees)").dimmed()
             );
             println!("    {}", repo.url.dimmed());
         }
@@ -514,20 +506,19 @@ pub fn show(_ctx: &Context, target: &str) -> Result<()> {
         "workspace" => show_workspace(resource_name),
         "storage" => show_storage(resource_name),
         _ => bail!(
-            "Unknown resource type: {}. Valid types: collections, workspaces, storage",
-            resource_type
+            "Unknown resource type: {resource_type}. Valid types: collections, workspaces, storage"
         ),
     }
 }
 
 fn show_collection(name: &str) -> Result<()> {
-    ui::header(&format!("Collection: {}", name));
+    ui::header(&format!("Collection: {name}"));
 
     let config = BossaConfig::load()?;
 
     let collection = config
         .find_collection(name)
-        .context(format!("Collection '{}' not found", name))?;
+        .context(format!("Collection '{name}' not found"))?;
 
     let path = collection.expanded_path()?;
 
@@ -597,13 +588,13 @@ fn show_collection(name: &str) -> Result<()> {
 }
 
 fn show_workspace(name: &str) -> Result<()> {
-    ui::header(&format!("Workspace: {}", name));
+    ui::header(&format!("Workspace: {name}"));
 
     let config = BossaConfig::load()?;
 
     let workspace = config
         .find_workspace_repo(name)
-        .context(format!("Workspace '{}' not found", name))?;
+        .context(format!("Workspace '{name}' not found"))?;
 
     let root = config.workspaces.expanded_root()?;
 
@@ -654,13 +645,13 @@ fn show_workspace(name: &str) -> Result<()> {
 }
 
 fn show_storage(name: &str) -> Result<()> {
-    ui::header(&format!("Storage: {}", name));
+    ui::header(&format!("Storage: {name}"));
 
     let config = BossaConfig::load()?;
 
     let storage = config
         .find_storage(name)
-        .context(format!("Storage '{}' not found", name))?;
+        .context(format!("Storage '{name}' not found"))?;
 
     let mount = storage.expanded_mount()?;
     let is_mounted = mount.exists();

@@ -131,7 +131,7 @@ fn execute_parallel<P: ProgressCallback>(
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(jobs)
         .build()
-        .map_err(|e| anyhow::anyhow!("Failed to create thread pool: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to create thread pool: {e}"))?;
 
     pool.install(|| {
         resources.par_iter().for_each(|resource| {

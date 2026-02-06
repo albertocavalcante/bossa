@@ -126,9 +126,9 @@ pub enum ResourceType {
 impl std::fmt::Display for ResourceType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ResourceType::Collections => write!(f, "collections"),
-            ResourceType::Workspaces => write!(f, "workspaces"),
-            ResourceType::Storage => write!(f, "storage"),
+            Self::Collections => write!(f, "collections"),
+            Self::Workspaces => write!(f, "workspaces"),
+            Self::Storage => write!(f, "storage"),
         }
     }
 }
@@ -218,7 +218,7 @@ pub fn status(ctx: &Context, target: Option<&str>) -> Result<()> {
     let config = load_config()?;
     let state = compute_state(&config)?;
 
-    let (resource_filter, name_filter) = target.map(parse_target).unwrap_or((None, None));
+    let (resource_filter, name_filter) = target.map_or((None, None), parse_target);
 
     // Show collections
     if resource_filter.is_none() || resource_filter == Some(ResourceType::Collections) {
@@ -260,8 +260,8 @@ fn show_collections_status(
         let collection_state = state.collections.iter().find(|s| s.name == collection.name);
 
         let total = collection.repositories.len();
-        let cloned = collection_state.map(|s| s.cloned_repos.len()).unwrap_or(0);
-        let failed = collection_state.map(|s| s.failed_repos.len()).unwrap_or(0);
+        let cloned = collection_state.map_or(0, |s| s.cloned_repos.len());
+        let failed = collection_state.map_or(0, |s| s.failed_repos.len());
 
         let status_icon = if cloned == total && failed == 0 {
             "✓".green()
@@ -275,11 +275,11 @@ fn show_collections_status(
             "  {} {} {}",
             status_icon,
             collection.name.bold(),
-            format!("({}/{})", cloned, total).dimmed()
+            format!("({cloned}/{total})").dimmed()
         );
 
         if let Some(desc) = &collection.description {
-            ui::dim(&format!("    {}", desc));
+            ui::dim(&format!("    {desc}"));
         }
 
         ui::dim(&format!("    Path: {}", collection.path));
@@ -318,8 +318,8 @@ fn show_workspaces_status(
     for workspace in workspaces {
         let ws_state = state.workspaces.iter().find(|s| s.name == workspace.name);
 
-        let bare_setup = ws_state.map(|s| s.bare_setup).unwrap_or(false);
-        let worktrees_count = ws_state.map(|s| s.worktrees.len()).unwrap_or(0);
+        let bare_setup = ws_state.is_some_and(|s| s.bare_setup);
+        let worktrees_count = ws_state.map_or(0, |s| s.worktrees.len());
         let expected_count = workspace.worktrees.len();
 
         let status_icon = if bare_setup && worktrees_count == expected_count {
@@ -334,14 +334,13 @@ fn show_workspaces_status(
             "  {} {} {}",
             status_icon,
             workspace.name.bold(),
-            format!("({}/{})", worktrees_count, expected_count).dimmed()
+            format!("({worktrees_count}/{expected_count})").dimmed()
         );
 
         if !ctx.quiet {
             ui::dim(&format!("    Bare: {}", if bare_setup { "✓" } else { "✗" }));
             ui::dim(&format!(
-                "    Worktrees: {}/{}",
-                worktrees_count, expected_count
+                "    Worktrees: {worktrees_count}/{expected_count}"
             ));
         }
     }
@@ -370,8 +369,8 @@ fn show_storage_status(
     for stor in storage {
         let stor_state = state.storage.iter().find(|s| s.name == stor.name);
 
-        let mounted = stor_state.map(|s| s.mounted).unwrap_or(false);
-        let symlinks_count = stor_state.map(|s| s.symlinks.len()).unwrap_or(0);
+        let mounted = stor_state.is_some_and(|s| s.mounted);
+        let symlinks_count = stor_state.map_or(0, |s| s.symlinks.len());
         let expected_count = stor.symlinks.len();
 
         let status_icon = if mounted && symlinks_count == expected_count {
@@ -386,16 +385,13 @@ fn show_storage_status(
             "  {} {} {}",
             status_icon,
             stor.name.bold(),
-            format!("({}/{})", symlinks_count, expected_count).dimmed()
+            format!("({symlinks_count}/{expected_count})").dimmed()
         );
 
         if !ctx.quiet {
             ui::dim(&format!("    Mount: {}", stor.mount_point));
             ui::dim(&format!("    Mounted: {}", if mounted { "✓" } else { "✗" }));
-            ui::dim(&format!(
-                "    Symlinks: {}/{}",
-                symlinks_count, expected_count
-            ));
+            ui::dim(&format!("    Symlinks: {symlinks_count}/{expected_count}"));
         }
     }
 
@@ -417,7 +413,7 @@ pub fn apply(ctx: &Context, target: Option<&str>, dry_run: bool, jobs: usize) ->
     let config = load_config()?;
     let mut state = compute_state(&config)?;
 
-    let (resource_filter, name_filter) = target.map(parse_target).unwrap_or((None, None));
+    let (resource_filter, name_filter) = target.map_or((None, None), parse_target);
 
     // Apply collections
     if resource_filter.is_none() || resource_filter == Some(ResourceType::Collections) {
@@ -585,9 +581,9 @@ fn apply_collection(
     // Summary
     println!();
     if failed_count == 0 {
-        ui::success(&format!("Cloned {} repositories", cloned_count));
+        ui::success(&format!("Cloned {cloned_count} repositories"));
     } else {
-        ui::warn(&format!("Cloned {}, {} failed", cloned_count, failed_count));
+        ui::warn(&format!("Cloned {cloned_count}, {failed_count} failed"));
 
         if !ctx.quiet {
             for (name, error) in failed_repos.lock().unwrap().iter() {
@@ -814,7 +810,7 @@ pub fn diff(ctx: &Context, target: Option<&str>) -> Result<()> {
     let config = load_config()?;
     let state = compute_state(&config)?;
 
-    let (resource_filter, name_filter) = target.map(parse_target).unwrap_or((None, None));
+    let (resource_filter, name_filter) = target.map_or((None, None), parse_target);
 
     let mut has_changes = false;
 
@@ -936,8 +932,8 @@ fn diff_workspaces(
     for workspace in workspaces {
         let ws_state = state.workspaces.iter().find(|s| s.name == workspace.name);
 
-        let bare_setup = ws_state.map(|s| s.bare_setup).unwrap_or(false);
-        let has_worktrees = ws_state.map(|s| !s.worktrees.is_empty()).unwrap_or(false);
+        let bare_setup = ws_state.is_some_and(|s| s.bare_setup);
+        let has_worktrees = ws_state.is_some_and(|s| !s.worktrees.is_empty());
 
         if bare_setup && has_worktrees {
             continue;
@@ -996,7 +992,7 @@ fn diff_storage(
     for stor in storage {
         let stor_state = state.storage.iter().find(|s| s.name == stor.name);
 
-        let mounted = stor_state.map(|s| s.mounted).unwrap_or(false);
+        let mounted = stor_state.is_some_and(|s| s.mounted);
 
         if !mounted {
             if !has_changes {

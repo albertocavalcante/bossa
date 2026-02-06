@@ -124,12 +124,11 @@ fn extract_name(args: &str, line_num: usize) -> Result<(String, &str)> {
             let name = &stripped[..end];
             let rest = &stripped[end + 1..];
             return Ok((name.to_string(), rest));
-        } else {
-            return Err(Error::BrewfileParse {
-                line: line_num,
-                message: "unclosed quote".to_string(),
-            });
         }
+        return Err(Error::BrewfileParse {
+            line: line_num,
+            message: "unclosed quote".to_string(),
+        });
     }
 
     // Check for single-quoted string
@@ -138,12 +137,11 @@ fn extract_name(args: &str, line_num: usize) -> Result<(String, &str)> {
             let name = &stripped[..end];
             let rest = &stripped[end + 1..];
             return Ok((name.to_string(), rest));
-        } else {
-            return Err(Error::BrewfileParse {
-                line: line_num,
-                message: "unclosed quote".to_string(),
-            });
         }
+        return Err(Error::BrewfileParse {
+            line: line_num,
+            message: "unclosed quote".to_string(),
+        });
     }
 
     // Unquoted - take until comma or whitespace

@@ -166,7 +166,7 @@ impl ToolInstaller for Buck2Installer {
         let output = Command::new(path)
             .arg("--version")
             .output()
-            .map_err(|e| Error::Other(format!("failed to execute buck2: {}", e)))?;
+            .map_err(|e| Error::Other(format!("failed to execute buck2: {e}")))?;
 
         if !output.status.success() {
             return Err(Error::Other(format!(
@@ -185,7 +185,7 @@ impl Buck2Installer {
         let output = Command::new(path)
             .arg("--version")
             .output()
-            .map_err(|e| Error::Other(format!("failed to execute buck2: {}", e)))?;
+            .map_err(|e| Error::Other(format!("failed to execute buck2: {e}")))?;
 
         if !output.status.success() {
             return Ok(None);
@@ -194,7 +194,10 @@ impl Buck2Installer {
         let stdout = String::from_utf8_lossy(&output.stdout);
         // Output format: "buck2 <version> <hash> <date>"
         // Example: "buck2 2024-01-15 abc1234 ..."
-        let version = stdout.split_whitespace().nth(1).map(|s| s.to_string());
+        let version = stdout
+            .split_whitespace()
+            .nth(1)
+            .map(std::string::ToString::to_string);
 
         Ok(version)
     }

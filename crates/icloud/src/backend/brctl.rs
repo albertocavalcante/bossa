@@ -158,14 +158,13 @@ impl BrctlBackend {
             } else if blocks > 0 {
                 // File has blocks allocated = downloaded locally
                 return Ok(DownloadState::Local);
-            } else {
-                // Zero-size file - check if download was requested
-                if self.has_download_requested_attr(path) {
-                    return Ok(DownloadState::Downloading { percent: 0 });
-                }
-                // Empty files are typically local
-                return Ok(DownloadState::Local);
             }
+            // Zero-size file - check if download was requested
+            if self.has_download_requested_attr(path) {
+                return Ok(DownloadState::Downloading { percent: 0 });
+            }
+            // Empty files are typically local
+            return Ok(DownloadState::Local);
         }
 
         Ok(DownloadState::Unknown)
@@ -186,9 +185,7 @@ impl BrctlBackend {
         if path.is_absolute() {
             path.to_path_buf()
         } else {
-            std::env::current_dir()
-                .map(|cwd| cwd.join(path))
-                .unwrap_or_else(|_| path.to_path_buf())
+            std::env::current_dir().map_or_else(|_| path.to_path_buf(), |cwd| cwd.join(path))
         }
     }
 }
@@ -199,7 +196,7 @@ impl Backend for BrctlBackend {
         let state = self.get_file_state(&path)?;
         let metadata = std::fs::metadata(&path).ok();
 
-        let mut status = FileStatus::new(path.clone(), state);
+        let mut status = FileStatus::new(path, state);
 
         if let Some(m) = metadata {
             if m.is_dir() {
@@ -235,7 +232,7 @@ impl Backend for BrctlBackend {
 
         // Convert path to string, handling special characters
         let path_str = path.to_str().ok_or_else(|| {
-            Error::InvalidPath(format!("path contains invalid UTF-8: {:?}", path))
+            Error::InvalidPath(format!("path contains invalid UTF-8: {}", path.display()))
         })?;
 
         // Execute eviction
@@ -255,7 +252,7 @@ impl Backend for BrctlBackend {
         }
 
         let path_str = path.to_str().ok_or_else(|| {
-            Error::InvalidPath(format!("path contains invalid UTF-8: {:?}", path))
+            Error::InvalidPath(format!("path contains invalid UTF-8: {}", path.display()))
         })?;
 
         self.run_brctl(&["download", path_str])?;

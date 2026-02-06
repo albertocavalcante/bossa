@@ -118,7 +118,7 @@ impl Package {
     /// Get the mas app ID if this is a mas package.
     pub fn mas_id(&self) -> Option<&str> {
         if self.package_type == PackageType::Mas {
-            self.options.get("id").map(|s| s.as_str())
+            self.options.get("id").map(String::as_str)
         } else {
             None
         }

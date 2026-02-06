@@ -221,7 +221,7 @@ fn duplicates(path_str: &str, min_size: u64, delete: bool) -> Result<()> {
         if i >= 19 && !delete {
             let remaining = groups.len() - 20;
             if remaining > 0 {
-                ui::dim(&format!("... and {} more duplicate groups", remaining));
+                ui::dim(&format!("... and {remaining} more duplicate groups"));
             }
             break;
         }
@@ -325,7 +325,7 @@ fn delete_duplicates(
 fn manifest_db_path(name: &str) -> Result<PathBuf> {
     let manifest_dir = config::config_dir()?.join("manifests");
     fs::create_dir_all(&manifest_dir)?;
-    Ok(manifest_dir.join(format!("{}.db", name)))
+    Ok(manifest_dir.join(format!("{name}.db")))
 }
 
 /// Count files in a directory
@@ -335,7 +335,10 @@ fn count_files(path: &Path) -> (u64, u64) {
     let mut file_count = 0u64;
     let mut total_size = 0u64;
 
-    for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(path)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
         if entry.file_type().is_file() {
             file_count += 1;
             if let Ok(meta) = entry.metadata() {

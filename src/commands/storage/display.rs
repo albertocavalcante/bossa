@@ -110,7 +110,7 @@ pub fn show_t9() -> Result<()> {
             );
         }
         Err(e) => {
-            ui::dim(&format!("Could not read space: {}", e));
+            ui::dim(&format!("Could not read space: {e}"));
         }
     }
 

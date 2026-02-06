@@ -24,15 +24,15 @@ pub fn run(_ctx: &AppContext, cmd: BrewCommand) -> Result<()> {
 
 /// Get the default Brewfile path.
 fn default_brewfile_path() -> PathBuf {
-    dirs::home_dir()
-        .map(|h| h.join("dotfiles/Brewfile"))
-        .unwrap_or_else(|| PathBuf::from("Brewfile"))
+    dirs::home_dir().map_or_else(
+        || PathBuf::from("Brewfile"),
+        |h| h.join("dotfiles/Brewfile"),
+    )
 }
 
 /// Get the Brewfile path, using the provided path or the default.
 fn get_brewfile_path(file: Option<String>) -> PathBuf {
-    file.map(PathBuf::from)
-        .unwrap_or_else(default_brewfile_path)
+    file.map_or_else(default_brewfile_path, PathBuf::from)
 }
 
 /// Format a package type with color.
@@ -83,7 +83,7 @@ fn create_client() -> Result<brewkit::Client, String> {
         Err(brewkit::Error::BrewNotFound) => {
             Err("Homebrew is not installed.\n\n  Install it with:\n    /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"\n\n  Or visit: https://brew.sh".to_string())
         }
-        Err(e) => Err(format!("Failed to initialize Homebrew client: {}", e)),
+        Err(e) => Err(format!("Failed to initialize Homebrew client: {e}")),
     }
 }
 
@@ -172,7 +172,7 @@ fn apply(essential: bool, dry_run: bool, file: Option<String>) -> Result<()> {
         client.write_brewfile(&brewfile, &temp_path)?;
         temp_path
     } else {
-        brewfile_path.clone()
+        brewfile_path
     };
 
     // Run brew bundle
@@ -232,7 +232,7 @@ fn apply(essential: bool, dry_run: bool, file: Option<String>) -> Result<()> {
             result.failed.len()
         );
         for (name, err) in &result.failed {
-            println!("    {} {}", name.red(), format!("- {}", err).dimmed());
+            println!("    {} {}", name.red(), format!("- {err}").dimmed());
         }
         println!();
     }
@@ -263,9 +263,7 @@ fn apply(essential: bool, dry_run: bool, file: Option<String>) -> Result<()> {
 fn capture(output: Option<String>) -> Result<()> {
     ui::header("Capturing Brew Packages");
 
-    let output_path = output
-        .map(PathBuf::from)
-        .unwrap_or_else(default_brewfile_path);
+    let output_path = output.map_or_else(default_brewfile_path, PathBuf::from);
 
     // Create brewkit client
     let client = match create_client() {
@@ -476,7 +474,7 @@ fn list(filter_type: Option<String>) -> Result<()> {
     if let Some(ref ft) = filter_type
         && filter.is_none()
     {
-        ui::error(&format!("Unknown package type: {}", ft));
+        ui::error(&format!("Unknown package type: {ft}"));
         ui::info("Valid types: tap, brew, cask, mas, vscode");
         return Ok(());
     }
@@ -510,13 +508,13 @@ fn list(filter_type: Option<String>) -> Result<()> {
             Err(e) => {
                 // Silently skip if the tool isn't available (e.g., mas, code)
                 if !matches!(e, brewkit::Error::Other(_)) {
-                    ui::warn(&format!("Could not list {}: {}", pkg_type, e));
+                    ui::warn(&format!("Could not list {pkg_type}: {e}"));
                 }
             }
         }
     }
 
-    progress::finish_success(&pb, &format!("Found {} packages", total));
+    progress::finish_success(&pb, &format!("Found {total} packages"));
     println!();
 
     if by_type.is_empty() {

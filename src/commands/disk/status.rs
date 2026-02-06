@@ -265,7 +265,7 @@ fn get_partition_details(part_id: &str) -> Result<PartitionInfo> {
         .context("Failed to run diskutil info for partition")?;
 
     if !output.status.success() {
-        anyhow::bail!("diskutil info failed for {}", part_id);
+        anyhow::bail!("diskutil info failed for {part_id}");
     }
 
     let plist_str = String::from_utf8_lossy(&output.stdout);
@@ -403,11 +403,11 @@ fn print_partition(part: &PartitionInfo) {
         };
 
         let percent_colored = if percent > 90 {
-            format!("{}%", percent).red()
+            format!("{percent}%").red()
         } else if percent > 75 {
-            format!("{}%", percent).yellow()
+            format!("{percent}%").yellow()
         } else {
-            format!("{}%", percent).green()
+            format!("{percent}%").green()
         };
 
         println!(

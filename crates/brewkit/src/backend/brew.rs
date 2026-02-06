@@ -27,7 +27,7 @@ impl BrewBackend {
             .args(args)
             .output()
             .map_err(|e| Error::CommandFailed {
-                message: format!("failed to execute brew: {}", e),
+                message: format!("failed to execute brew: {e}"),
                 stderr: String::new(),
             })?;
         Ok(output)
@@ -123,8 +123,7 @@ impl Backend for BrewBackend {
                         .as_array()
                         .and_then(|arr| arr.first())
                         .and_then(|f| f["installed"].as_array())
-                        .map(|arr| !arr.is_empty())
-                        .unwrap_or(false)
+                        .is_some_and(|arr| !arr.is_empty())
                 };
 
                 Ok(installed)
@@ -197,7 +196,7 @@ impl Backend for BrewBackend {
                         .as_array()
                         .and_then(|arr| arr.first())
                         .and_then(|c| c["installed"].as_str())
-                        .map(|s| s.to_string())
+                        .map(std::string::ToString::to_string)
                 } else {
                     json["formulae"]
                         .as_array()
@@ -205,7 +204,7 @@ impl Backend for BrewBackend {
                         .and_then(|f| f["installed"].as_array())
                         .and_then(|arr| arr.first())
                         .and_then(|i| i["version"].as_str())
-                        .map(|s| s.to_string())
+                        .map(std::string::ToString::to_string)
                 };
 
                 Ok(version)
@@ -332,7 +331,7 @@ fn parse_installed_casks(json: &serde_json::Value) -> Result<Vec<InstalledPackag
 /// Parse bundle output to extract results.
 fn parse_bundle_output(stdout: &str, stderr: &str, success: bool) -> Result<BundleResult> {
     let mut result = BundleResult::default();
-    let combined = format!("{}\n{}", stdout, stderr);
+    let combined = format!("{stdout}\n{stderr}");
 
     for line in combined.lines() {
         let line = line.trim();
@@ -397,14 +396,14 @@ fn run_mas_install(app_id: &str) -> Result<()> {
         .args(["install", app_id])
         .output()
         .map_err(|e| Error::CommandFailed {
-            message: format!("failed to execute mas: {}", e),
+            message: format!("failed to execute mas: {e}"),
             stderr: String::new(),
         })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(Error::CommandFailed {
-            message: format!("mas install failed for {}", app_id),
+            message: format!("mas install failed for {app_id}"),
             stderr: stderr.to_string(),
         });
     }
@@ -452,7 +451,7 @@ fn list_mas_installed() -> Result<Vec<InstalledPackage>> {
             };
 
             installed.push(InstalledPackage {
-                name: format!("{} ({})", name, id),
+                name: format!("{name} ({id})"),
                 package_type: PackageType::Mas,
                 version: version.to_string(),
                 installed_on_request: true,
@@ -472,14 +471,14 @@ fn run_vscode_install(extension: &str) -> Result<()> {
         .args(["--install-extension", extension])
         .output()
         .map_err(|e| Error::CommandFailed {
-            message: format!("failed to execute code: {}", e),
+            message: format!("failed to execute code: {e}"),
             stderr: String::new(),
         })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(Error::CommandFailed {
-            message: format!("vscode install failed for {}", extension),
+            message: format!("vscode install failed for {extension}"),
             stderr: stderr.to_string(),
         });
     }
@@ -492,14 +491,14 @@ fn run_vscode_uninstall(extension: &str) -> Result<()> {
         .args(["--uninstall-extension", extension])
         .output()
         .map_err(|e| Error::CommandFailed {
-            message: format!("failed to execute code: {}", e),
+            message: format!("failed to execute code: {e}"),
             stderr: String::new(),
         })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(Error::CommandFailed {
-            message: format!("vscode uninstall failed for {}", extension),
+            message: format!("vscode uninstall failed for {extension}"),
             stderr: stderr.to_string(),
         });
     }

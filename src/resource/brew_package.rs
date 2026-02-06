@@ -101,8 +101,7 @@ impl BrewPackage {
                         .as_array()
                         .and_then(|arr| arr.first())
                         .and_then(|f| f["installed"].as_array())
-                        .map(|arr| !arr.is_empty())
-                        .unwrap_or(false),
+                        .is_some_and(|arr| !arr.is_empty()),
                 };
 
                 Ok(installed)

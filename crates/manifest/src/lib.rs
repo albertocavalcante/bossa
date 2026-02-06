@@ -109,7 +109,10 @@ impl Manifest {
         let mut file_count = 0u64;
         let mut total_size = 0u64;
 
-        for entry in WalkDir::new(base_path).into_iter().filter_map(|e| e.ok()) {
+        for entry in WalkDir::new(base_path)
+            .into_iter()
+            .filter_map(std::result::Result::ok)
+        {
             if entry.file_type().is_file() {
                 file_count += 1;
                 if let Ok(meta) = entry.metadata() {
@@ -135,7 +138,10 @@ impl Manifest {
         let mut hashed = 0u64;
         let mut errors = 0u64;
 
-        for entry in WalkDir::new(base_path).into_iter().filter_map(|e| e.ok()) {
+        for entry in WalkDir::new(base_path)
+            .into_iter()
+            .filter_map(std::result::Result::ok)
+        {
             if !entry.file_type().is_file() {
                 continue;
             }
@@ -236,7 +242,10 @@ impl Manifest {
             let total_size: i64 = row.get(2)?;
             let count: i64 = row.get(3)?;
 
-            let paths: Vec<String> = paths_str.split('|').map(|s| s.to_string()).collect();
+            let paths: Vec<String> = paths_str
+                .split('|')
+                .map(std::string::ToString::to_string)
+                .collect();
 
             Ok(DuplicateGroup {
                 hash,
@@ -327,7 +336,7 @@ impl Manifest {
                     other_path: row.get(3)?,
                 })
             })?
-            .filter_map(|r| r.ok())
+            .filter_map(std::result::Result::ok)
             .collect();
 
         // Detach the other database
@@ -396,7 +405,7 @@ impl Manifest {
         let mut stmt = self.conn.prepare("SELECT id, path FROM files")?;
         let rows: Vec<(i64, String)> = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .filter_map(|r| r.ok())
+            .filter_map(std::result::Result::ok)
             .collect();
 
         let mut removed = 0;
@@ -439,9 +448,15 @@ fn hash_file(path: &Path) -> std::io::Result<String> {
 /// Uses the last path component, replacing invalid characters.
 pub fn path_to_name(path: &Path) -> String {
     path.file_name()
-        .or_else(|| path.components().next_back().map(|c| c.as_os_str()))
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "default".to_string())
+        .or_else(|| {
+            path.components()
+                .next_back()
+                .map(std::path::Component::as_os_str)
+        })
+        .map_or_else(
+            || "default".to_string(),
+            |s| s.to_string_lossy().to_string(),
+        )
         .replace(['/', '\\', ':'], "_")
 }
 
@@ -461,7 +476,7 @@ pub fn format_size(bytes: u64) -> String {
     } else if bytes >= KB {
         format!("{:.1} KB", bytes as f64 / KB as f64)
     } else {
-        format!("{} B", bytes)
+        format!("{bytes} B")
     }
 }
 

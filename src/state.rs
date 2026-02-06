@@ -177,7 +177,7 @@ impl BossaState {
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read state file: {}", path.display()))?;
 
-        let state: BossaState = toml::from_str(&content)
+        let state: Self = toml::from_str(&content)
             .with_context(|| format!("Failed to parse state file: {}", path.display()))?;
 
         log::debug!("Loaded state from {}", path.display());
@@ -619,7 +619,7 @@ mod tests {
 
         // Add 1000 collections
         for i in 0..1000 {
-            let collection_name = format!("collection-{}", i);
+            let collection_name = format!("collection-{i}");
             state.mark_repo_cloned(&collection_name, "repo1");
             state.mark_repo_cloned(&collection_name, "repo2");
         }
@@ -633,7 +633,7 @@ mod tests {
 
         // Add 1000 repos to a single collection
         for i in 0..1000 {
-            let repo_name = format!("repo-{}", i);
+            let repo_name = format!("repo-{i}");
             state.mark_repo_cloned("refs", &repo_name);
         }
 

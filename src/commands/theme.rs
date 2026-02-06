@@ -141,10 +141,10 @@ fn apply(ctx: &AppContext, name: &str, dry_run: bool) -> Result<()> {
     let def = config
         .themes
         .get(name)
-        .context(format!("Theme '{}' not found", name))?;
+        .context(format!("Theme '{name}' not found"))?;
 
     if !def.enabled {
-        bail!("Theme '{}' is disabled", name);
+        bail!("Theme '{name}' is disabled");
     }
 
     // Check requirements
@@ -180,7 +180,7 @@ fn apply(ctx: &AppContext, name: &str, dry_run: bool) -> Result<()> {
         } else {
             "Applying".green()
         };
-        ui::header(&format!("{} theme: {}", mode, name));
+        ui::header(&format!("{mode} theme: {name}"));
         println!();
 
         if !def.description.is_empty() {
@@ -281,8 +281,7 @@ fn apply(ctx: &AppContext, name: &str, dry_run: bool) -> Result<()> {
         );
     } else {
         ui::success(&format!(
-            "Theme '{}' applied ({} settings changed)",
-            name, changes
+            "Theme '{name}' applied ({changes} settings changed)"
         ));
     }
 
@@ -296,10 +295,10 @@ fn show(ctx: &AppContext, name: &str) -> Result<()> {
     let def = config
         .themes
         .get(name)
-        .context(format!("Theme '{}' not found", name))?;
+        .context(format!("Theme '{name}' not found"))?;
 
     if !ctx.quiet {
-        ui::header(&format!("Theme: {}", name));
+        ui::header(&format!("Theme: {name}"));
         println!();
     }
 
