@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use chrono::Utc;
 use colored::Colorize;
 use std::fs;
 use std::os::unix::fs as unix_fs;
@@ -6,6 +7,7 @@ use std::path::Path;
 
 use crate::cli::CachesCommand;
 use crate::config::{CachesConfig, ConfigFormat};
+use crate::state::{BossaState, TrackedSymlink};
 use crate::ui;
 
 /// Get home directory with proper error handling
@@ -231,6 +233,8 @@ fn apply(dry_run: bool) -> Result<()> {
                         fs::create_dir_all(parent)?;
                     }
                     unix_fs::symlink(&target, &source)?;
+                    // Track in unified symlink inventory
+                    track_symlink_in_inventory(&source, &target);
                     println!("  {} {} → {}", "✓".green(), symlink.name, symlink.target);
                 }
             }
@@ -244,6 +248,8 @@ fn apply(dry_run: bool) -> Result<()> {
                         fs::create_dir_all(&target)?;
                     }
                     unix_fs::symlink(&target, &source)?;
+                    // Track in unified symlink inventory
+                    track_symlink_in_inventory(&source, &target);
                     println!("  {} {} (fixed)", "✓".green(), symlink.name);
                 }
             }
@@ -274,6 +280,8 @@ fn apply(dry_run: bool) -> Result<()> {
                     }
                     // Create symlink
                     unix_fs::symlink(&target, &source)?;
+                    // Track in unified symlink inventory
+                    track_symlink_in_inventory(&source, &target);
                     println!("  {} {} (migrated)", "✓".green(), symlink.name);
                 }
             }
@@ -534,6 +542,25 @@ fn init(force: bool) -> Result<()> {
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/// Track a symlink in the unified inventory.
+/// This is called after successful symlink creation to record it in BossaState.
+/// Errors are logged but do not fail the operation (non-critical).
+fn track_symlink_in_inventory(source: &Path, target: &Path) {
+    if let Ok(mut state) = BossaState::load() {
+        state.symlinks.add(TrackedSymlink {
+            source: source.to_string_lossy().to_string(),
+            target: target.to_string_lossy().to_string(),
+            subsystem: "caches".to_string(),
+            created_at: Utc::now(),
+        });
+        if let Err(e) = state.save() {
+            log::warn!("Failed to save symlink to state: {}", e);
+        }
+    } else {
+        log::warn!("Failed to load state for symlink tracking");
+    }
+}
 
 #[derive(Debug)]
 enum SymlinkStatus {

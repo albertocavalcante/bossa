@@ -4,6 +4,7 @@
 //! specifically for dotfile management.
 
 use anyhow::{Context, Result, bail};
+use chrono::Utc;
 use colored::Colorize;
 use std::collections::HashMap;
 use std::fs;
@@ -12,6 +13,7 @@ use std::path::{Path, PathBuf};
 use crate::Context as AppContext;
 use crate::cli::StowCommand;
 use crate::schema::{BossaConfig, SymlinksConfig};
+use crate::state::{BossaState, TrackedSymlink};
 
 /// Symlink state for reporting
 #[derive(Debug, Clone)]
@@ -248,6 +250,13 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
     println!("{} {} symlinks...", mode, to_create.len() + to_fix.len());
     println!();
 
+    // Load state for tracking (only if not dry run)
+    let mut state = if !dry_run {
+        Some(BossaState::load().unwrap_or_default())
+    } else {
+        None
+    };
+
     // Create missing symlinks
     for op in &to_create {
         let rel_target = op
@@ -263,6 +272,10 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
 
         if !dry_run {
             create_symlink(&op.source, &op.target)?;
+            // Track the symlink in state
+            if let Some(ref mut s) = state {
+                track_symlink(s, &op.source, &op.target);
+            }
         }
     }
 
@@ -284,6 +297,12 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
             fs::remove_file(&op.target)
                 .with_context(|| format!("Failed to remove: {}", op.target.display()))?;
             create_symlink(&op.source, &op.target)?;
+            // Track the symlink in state (update with new source)
+            if let Some(ref mut s) = state {
+                // Remove old entry first (if any), then add new
+                s.symlinks.remove(&op.target.to_string_lossy());
+                track_symlink(s, &op.source, &op.target);
+            }
         }
     }
 
@@ -315,6 +334,10 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
                 })?;
                 create_symlink(&op.source, &op.target)?;
                 println!("    {} backed up to {}", "→".dimmed(), backup.display());
+                // Track the symlink in state
+                if let Some(ref mut s) = state {
+                    track_symlink(s, &op.source, &op.target);
+                }
             }
         }
     } else if !blocked.is_empty() {
@@ -331,6 +354,13 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
                 .unwrap_or(&op.target);
             println!("  {} {}", "⊘".red(), rel_target.display());
         }
+    }
+
+    // Save state if we made changes
+    if let Some(s) = state
+        && let Err(e) = s.save()
+    {
+        log::warn!("Failed to save state: {}", e);
     }
 
     println!();
@@ -501,6 +531,13 @@ fn unlink(packages: &[String], dry_run: bool) -> Result<()> {
     println!("{} {} symlinks...", mode, to_unlink.len());
     println!();
 
+    // Load state for tracking (only if not dry run)
+    let mut state = if !dry_run {
+        Some(BossaState::load().unwrap_or_default())
+    } else {
+        None
+    };
+
     for op in &to_unlink {
         let rel_target = op
             .target
@@ -515,7 +552,18 @@ fn unlink(packages: &[String], dry_run: bool) -> Result<()> {
         if !dry_run {
             fs::remove_file(&op.target)
                 .with_context(|| format!("Failed to remove: {}", op.target.display()))?;
+            // Remove from state tracking
+            if let Some(ref mut s) = state {
+                s.symlinks.remove(&op.target.to_string_lossy());
+            }
         }
+    }
+
+    // Save state if we made changes
+    if let Some(s) = state
+        && let Err(e) = s.save()
+    {
+        log::warn!("Failed to save state: {}", e);
     }
 
     println!();
@@ -802,4 +850,14 @@ fn create_symlink(source: &Path, target: &Path) -> Result<()> {
     bail!("Symlinks not supported on this platform");
 
     Ok(())
+}
+
+/// Track a symlink in the state inventory
+fn track_symlink(state: &mut BossaState, source: &Path, target: &Path) {
+    state.symlinks.add(TrackedSymlink {
+        source: source.to_string_lossy().to_string(),
+        target: target.to_string_lossy().to_string(),
+        subsystem: "stow".to_string(),
+        created_at: Utc::now(),
+    });
 }

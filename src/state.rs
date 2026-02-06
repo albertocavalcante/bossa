@@ -5,9 +5,72 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::paths;
+
+// ============================================================================
+// Symlink Tracking Structures
+// ============================================================================
+
+/// A tracked symlink with metadata about its origin
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TrackedSymlink {
+    /// What the symlink points to (source/target of the link)
+    pub source: String,
+    /// Where the symlink lives (the symlink file itself)
+    pub target: String,
+    /// Which subsystem created it: "stow", "caches", "storage"
+    pub subsystem: String,
+    /// When it was created
+    pub created_at: DateTime<Utc>,
+}
+
+/// Inventory of all tracked symlinks
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct SymlinkInventory {
+    pub entries: Vec<TrackedSymlink>,
+}
+
+impl SymlinkInventory {
+    /// Add a symlink to the inventory
+    pub fn add(&mut self, symlink: TrackedSymlink) {
+        self.entries.push(symlink);
+    }
+
+    /// Remove a symlink by its target path. Returns true if found and removed.
+    pub fn remove(&mut self, target: &str) -> bool {
+        let initial_len = self.entries.len();
+        self.entries.retain(|s| s.target != target);
+        self.entries.len() < initial_len
+    }
+
+    /// Find all symlinks whose source starts with the given prefix
+    pub fn find_by_source_prefix(&self, prefix: &Path) -> Vec<&TrackedSymlink> {
+        let prefix_str = prefix.to_string_lossy();
+        self.entries
+            .iter()
+            .filter(|s| s.source.starts_with(prefix_str.as_ref()))
+            .collect()
+    }
+
+    /// Find all symlinks whose target starts with the given prefix
+    pub fn find_by_target_prefix(&self, prefix: &Path) -> Vec<&TrackedSymlink> {
+        let prefix_str = prefix.to_string_lossy();
+        self.entries
+            .iter()
+            .filter(|s| s.target.starts_with(prefix_str.as_ref()))
+            .collect()
+    }
+
+    /// Find all symlinks created by a specific subsystem
+    pub fn find_by_subsystem(&self, subsystem: &str) -> Vec<&TrackedSymlink> {
+        self.entries
+            .iter()
+            .filter(|s| s.subsystem == subsystem)
+            .collect()
+    }
+}
 
 // ============================================================================
 // State Structures
@@ -27,6 +90,10 @@ pub struct BossaState {
     /// State for storage volumes (e.g., T9)
     #[serde(default)]
     pub storage: HashMap<String, StorageState>,
+
+    /// Global symlink inventory tracking all managed symlinks
+    #[serde(default)]
+    pub symlinks: SymlinkInventory,
 
     /// Last time the state was updated
     pub last_updated: DateTime<Utc>,
@@ -268,6 +335,7 @@ impl Default for BossaState {
             collections: HashMap::new(),
             workspaces: WorkspacesState::default(),
             storage: HashMap::new(),
+            symlinks: SymlinkInventory::default(),
             last_updated: Utc::now(),
         }
     }
