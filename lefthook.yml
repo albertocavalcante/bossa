@@ -6,37 +6,37 @@ pre-commit:
   commands:
     # Check Rust formatting
     cargo-fmt:
-      glob: "*.rs"
+      glob: "**/*.rs"
       run: cargo fmt -- --check
 
     # Run Clippy linter
     cargo-clippy:
-      glob: "*.rs"
+      glob: "**/*.rs"
       run: cargo clippy --all-targets --all-features -- -D warnings
 
     # Shell script linting
     shellcheck:
-      glob: "*.sh"
+      glob: "**/*.sh"
       run: shellcheck {staged_files}
 
     # Check Markdown formatting
     dprint-md:
-      glob: "*.md"
+      glob: "**/*.md"
       run: dprint check {staged_files}
 
     # Check TOML formatting
     dprint-toml:
-      glob: "*.toml"
+      glob: "**/*.toml"
       run: dprint check {staged_files}
 
     # Check JSON formatting
     dprint-json:
-      glob: "*.json"
+      glob: "**/*.json"
       run: dprint check {staged_files}
 
     # Check YAML formatting
     dprint-yaml:
-      glob: "*.{yaml,yml}"
+      glob: "**/*.{yaml,yml}"
       run: dprint check {staged_files}
 
     # GitHub Actions workflow linting

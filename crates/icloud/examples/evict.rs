@@ -42,7 +42,7 @@ fn main() -> icloud::Result<()> {
                 print!("Evicting {}... ", file.path.display());
                 match client.evict(&file.path) {
                     Ok(()) => println!("done"),
-                    Err(e) => println!("error: {}", e),
+                    Err(e) => println!("error: {e}"),
                 }
             }
         } else {
