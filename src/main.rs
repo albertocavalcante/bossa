@@ -285,5 +285,6 @@ fn main() -> Result<()> {
         Command::Tools(cmd) => commands::tools::run(&ctx, cmd),
         Command::Stow(cmd) => commands::stow::run(&ctx, cmd),
         Command::Theme(cmd) => commands::theme::run(&ctx, cmd),
+        Command::Defaults(cmd) => commands::defaults::run(&ctx, cmd),
     }
 }

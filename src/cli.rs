@@ -111,6 +111,10 @@ pub enum Command {
     /// Apply GNOME/GTK theme presets (Linux only)
     #[command(subcommand)]
     Theme(ThemeCommand),
+
+    /// Manage macOS defaults (imperative)
+    #[command(subcommand)]
+    Defaults(DefaultsCommand),
 }
 
 // ============================================================================
@@ -1120,6 +1124,52 @@ pub enum ThemeCommand {
         /// Theme preset name
         name: String,
     },
+}
+
+// ============================================================================
+// Defaults Commands
+// ============================================================================
+
+#[derive(Debug, Subcommand)]
+pub enum DefaultsCommand {
+    /// Set a macOS default value
+    ///
+    /// Sets a value in the macOS defaults system.
+    ///
+    /// Examples:
+    ///   bossa defaults set com.apple.finder AppleShowAllFiles true
+    ///   bossa defaults set NSGlobalDomain KeyRepeat -int 2
+    Set {
+        /// Domain (e.g., com.apple.finder, NSGlobalDomain)
+        domain: String,
+
+        /// Key (e.g., AppleShowAllFiles)
+        key: String,
+
+        /// Value
+        value: String,
+
+        /// Type (string, bool, int, float) - auto-detected if not provided
+        #[arg(short = 't', long = "type")]
+        r#type: Option<DefaultsType>,
+    },
+
+    /// Read a macOS default value
+    Read {
+        /// Domain (e.g., com.apple.finder)
+        domain: String,
+
+        /// Key (optional, reads entire domain if omitted)
+        key: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum DefaultsType {
+    String,
+    Bool,
+    Int,
+    Float,
 }
 
 // ============================================================================
