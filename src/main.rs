@@ -7,6 +7,7 @@ mod paths;
 mod progress;
 mod resource;
 mod runner;
+mod scanner;
 mod schema;
 mod state;
 mod sudo;
@@ -289,5 +290,6 @@ fn main() -> Result<()> {
         Command::Defaults(cmd) => commands::defaults::run(&ctx, cmd),
         Command::Locations(cmd) => commands::locations::run(&ctx, cmd),
         Command::Configs(cmd) => commands::configs::run(&ctx, cmd),
+        Command::Relocate(cmd) => commands::relocate::run(&ctx, cmd),
     }
 }
