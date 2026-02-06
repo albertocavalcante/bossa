@@ -144,13 +144,15 @@ impl DockFolder {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let expanded_path = shellexpand::tilde(&self.path).to_string();
-        Ok(stdout.contains(&expanded_path))
+        let expanded_path = crate::paths::expand(&self.path);
+        Ok(stdout.contains(expanded_path.to_string_lossy().as_ref()))
     }
 
     /// Add folder to dock using dockutil
     fn add_to_dock(&self, _ctx: &ApplyContext) -> Result<()> {
-        let expanded_path = shellexpand::tilde(&self.path).to_string();
+        let expanded_path = crate::paths::expand(&self.path)
+            .to_string_lossy()
+            .to_string();
 
         let mut args = vec!["--add", &expanded_path, "--no-restart"];
         args.extend_from_slice(&["--view", &self.view]);

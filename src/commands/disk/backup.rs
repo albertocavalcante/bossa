@@ -129,9 +129,9 @@ pub fn run(source: &str, destination: &str, dry_run: bool) -> Result<()> {
     Ok(())
 }
 
-/// Expand ~ in paths
+/// Expand ~ and environment variables in paths
 fn expand_path(path: &str) -> PathBuf {
-    PathBuf::from(shellexpand::tilde(path).as_ref())
+    crate::paths::expand(path)
 }
 
 /// Check if a path should be skipped

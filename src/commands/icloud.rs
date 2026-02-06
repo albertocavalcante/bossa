@@ -420,9 +420,9 @@ fn download_directory(client: &Client, path: &Path) -> Result<()> {
 // Helpers
 // ============================================================================
 
-/// Expand ~ in paths
+/// Expand ~ and environment variables in paths
 fn expand_path(path: &str) -> PathBuf {
-    PathBuf::from(shellexpand::tilde(path).as_ref())
+    crate::paths::expand(path)
 }
 
 /// Print file status details

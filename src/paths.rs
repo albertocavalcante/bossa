@@ -164,10 +164,33 @@ pub fn legacy_config_dir() -> Result<PathBuf> {
     Ok(home.join(".config").join("workspace-setup"))
 }
 
-/// Expand ~ and environment variables in a path string
-fn expand_path(path: &str) -> PathBuf {
-    let expanded = shellexpand::tilde(path);
+/// Expand ~ and environment variables in a path string.
+///
+/// This is the canonical path expansion function for bossa. All modules
+/// should use this instead of calling shellexpand directly.
+///
+/// # Examples
+///
+/// ```
+/// use bossa::paths;
+///
+/// // Expands ~ to home directory
+/// let home_path = paths::expand("~/dotfiles");
+///
+/// // Expands environment variables
+/// let var_path = paths::expand("$HOME/dotfiles");
+///
+/// // Both work together
+/// let mixed = paths::expand("~/${PROJECT}/config");
+/// ```
+pub fn expand(path: &str) -> PathBuf {
+    let expanded = shellexpand::full(path).unwrap_or(std::borrow::Cow::Borrowed(path));
     PathBuf::from(expanded.as_ref())
+}
+
+/// Internal alias for backwards compatibility within this module
+fn expand_path(path: &str) -> PathBuf {
+    expand(path)
 }
 
 // ============================================================================
@@ -296,16 +319,31 @@ mod tests {
     }
 
     #[test]
-    fn test_expand_path_with_tilde() {
-        let result = expand_path("~/test/path");
+    fn test_expand_with_tilde() {
+        let result = expand("~/test/path");
         let home = dirs::home_dir().unwrap();
         assert_eq!(result, home.join("test").join("path"));
     }
 
     #[test]
-    fn test_expand_path_absolute() {
-        let result = expand_path("/absolute/path");
+    fn test_expand_absolute() {
+        let result = expand("/absolute/path");
         assert_eq!(result, PathBuf::from("/absolute/path"));
+    }
+
+    #[test]
+    fn test_expand_with_env_var() {
+        with_env_var("BOSSA_TEST_VAR", "test_value", || {
+            let result = expand("/path/$BOSSA_TEST_VAR/file");
+            assert_eq!(result, PathBuf::from("/path/test_value/file"));
+        });
+    }
+
+    #[test]
+    fn test_expand_unknown_env_var_unchanged() {
+        // Unknown env vars are left as-is by shellexpand::full
+        let result = expand("/path/$NONEXISTENT_VAR_12345/file");
+        assert_eq!(result, PathBuf::from("/path/$NONEXISTENT_VAR_12345/file"));
     }
 
     #[test]

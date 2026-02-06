@@ -1461,8 +1461,7 @@ fn get_git_latest_tag(repo_url: &str) -> Result<String> {
 /// Get the installation directory.
 fn get_install_dir(custom_dir: Option<&str>) -> Result<PathBuf> {
     if let Some(dir) = custom_dir {
-        let expanded = shellexpand::tilde(dir);
-        return Ok(PathBuf::from(expanded.as_ref()));
+        return Ok(crate::paths::expand(dir));
     }
 
     dirs::home_dir()

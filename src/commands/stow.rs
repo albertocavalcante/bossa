@@ -632,7 +632,7 @@ fn get_symlinks_config(config: &BossaConfig) -> Result<&SymlinksConfig> {
 }
 
 fn expand_path(path: &str) -> PathBuf {
-    PathBuf::from(shellexpand::tilde(path).to_string())
+    crate::paths::expand(path)
 }
 
 /// Collect all symlink operations for the given config

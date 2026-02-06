@@ -93,7 +93,7 @@ impl ProgressCallback for IndicatifProgress {
 // ============================================================================
 
 fn scan(path_str: &str, force: bool) -> Result<()> {
-    let path = PathBuf::from(shellexpand::tilde(path_str).as_ref());
+    let path = crate::paths::expand(path_str);
     let name = manifest::path_to_name(&path);
 
     ui::header(&format!("Scanning: {}", path.display()));
@@ -151,7 +151,7 @@ fn scan(path_str: &str, force: bool) -> Result<()> {
 // ============================================================================
 
 fn stats(path_str: &str) -> Result<()> {
-    let path = PathBuf::from(shellexpand::tilde(path_str).as_ref());
+    let path = crate::paths::expand(path_str);
     let name = manifest::path_to_name(&path);
 
     ui::header(&format!("Manifest Stats: {}", path.display()));
@@ -193,7 +193,7 @@ fn stats(path_str: &str) -> Result<()> {
 // ============================================================================
 
 fn duplicates(path_str: &str, min_size: u64, delete: bool) -> Result<()> {
-    let path = PathBuf::from(shellexpand::tilde(path_str).as_ref());
+    let path = crate::paths::expand(path_str);
     let name = manifest::path_to_name(&path);
 
     ui::header(&format!("Duplicates: {}", path.display()));

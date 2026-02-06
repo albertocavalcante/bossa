@@ -212,8 +212,7 @@ impl CachesConfig {
 
     /// Expand a source path (handles ~ and env vars)
     pub fn expand_source(&self, source: &str) -> PathBuf {
-        let expanded = shellexpand::tilde(source);
-        PathBuf::from(expanded.as_ref())
+        crate::paths::expand(source)
     }
 
     /// Get full target path on external drive

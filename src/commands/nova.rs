@@ -250,8 +250,12 @@ fn add_symlink_resources(plan: &mut ExecutionPlan, config: &BossaConfig) -> Resu
         return Ok(());
     }
 
-    let source_base = shellexpand::tilde(&symlinks.source).to_string();
-    let target_base = shellexpand::tilde(&symlinks.target).to_string();
+    let source_base = crate::paths::expand(&symlinks.source)
+        .to_string_lossy()
+        .to_string();
+    let target_base = crate::paths::expand(&symlinks.target)
+        .to_string_lossy()
+        .to_string();
 
     for package in &symlinks.packages {
         let package_source = std::path::Path::new(&source_base).join(package);
