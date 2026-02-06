@@ -2,6 +2,7 @@ mod cli;
 mod commands;
 mod config;
 mod engine;
+mod generators;
 mod paths;
 mod progress;
 mod resource;
@@ -287,5 +288,6 @@ fn main() -> Result<()> {
         Command::Theme(cmd) => commands::theme::run(&ctx, cmd),
         Command::Defaults(cmd) => commands::defaults::run(&ctx, cmd),
         Command::Locations(cmd) => commands::locations::run(&ctx, cmd),
+        Command::Configs(cmd) => commands::configs::run(&ctx, cmd),
     }
 }

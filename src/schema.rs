@@ -69,6 +69,10 @@ pub struct BossaConfig {
     /// Logical locations for path management
     #[serde(default)]
     pub locations: LocationsConfig,
+
+    /// Generated config files
+    #[serde(default)]
+    pub configs: ConfigsSection,
 }
 
 impl BossaConfig {
@@ -1657,6 +1661,75 @@ impl LocationsConfig {
     pub fn resolve_alias(&self, path: &str) -> Option<&str> {
         self.aliases.get(path).map(|s| s.as_str())
     }
+}
+
+// ============================================================================
+// Config Generation (Git)
+// ============================================================================
+
+/// Configuration for generated config files
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ConfigsSection {
+    /// Git configuration
+    #[serde(default)]
+    pub git: Option<GitConfig>,
+}
+
+/// Git configuration that will be generated to ~/.gitconfig
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct GitConfig {
+    /// Target file path (default: ~/.gitconfig)
+    #[serde(default = "GitConfig::default_target")]
+    pub target: String,
+
+    /// User identity
+    #[serde(default)]
+    pub user: GitUserConfig,
+
+    /// Core settings
+    #[serde(default)]
+    pub core: HashMap<String, toml::Value>,
+
+    /// Init settings
+    #[serde(default)]
+    pub init: HashMap<String, toml::Value>,
+
+    /// Pull settings
+    #[serde(default)]
+    pub pull: HashMap<String, toml::Value>,
+
+    /// Push settings
+    #[serde(default)]
+    pub push: HashMap<String, toml::Value>,
+
+    /// Merge settings
+    #[serde(default)]
+    pub merge: HashMap<String, toml::Value>,
+
+    /// Diff settings
+    #[serde(default)]
+    pub diff: HashMap<String, toml::Value>,
+
+    /// Aliases
+    #[serde(default)]
+    pub alias: HashMap<String, String>,
+
+    /// Additional sections (for any other git config sections)
+    #[serde(flatten)]
+    pub extra: HashMap<String, HashMap<String, toml::Value>>,
+}
+
+impl GitConfig {
+    fn default_target() -> String {
+        "~/.gitconfig".to_string()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct GitUserConfig {
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub signingkey: Option<String>,
 }
 
 // ============================================================================
