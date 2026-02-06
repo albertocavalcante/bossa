@@ -257,7 +257,7 @@ fn find_brew() -> Result<String> {
 
     for path in &paths {
         if std::path::Path::new(path).exists() {
-            return Ok(path.to_string());
+            return Ok((*path).to_string());
         }
     }
 

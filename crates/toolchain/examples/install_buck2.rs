@@ -15,7 +15,7 @@ fn main() {
         Ok(true) => {
             println!("Buck2 is already installed.");
             if let Ok(Some(version)) = client.version(Tool::Buck2) {
-                println!("Current version: {}", version);
+                println!("Current version: {version}");
             }
             println!("\nUse --force to reinstall.");
         }
@@ -23,7 +23,7 @@ fn main() {
             println!("Buck2 is not installed. Installing...");
         }
         Err(e) => {
-            println!("Error checking installation: {}", e);
+            println!("Error checking installation: {e}");
         }
     }
 
@@ -42,11 +42,11 @@ fn main() {
             if result.was_upgrade
                 && let Some(prev) = result.previous_version
             {
-                println!("  Upgraded from: {}", prev);
+                println!("  Upgraded from: {prev}");
             }
         }
         Err(e) => {
-            eprintln!("\nInstallation failed: {}", e);
+            eprintln!("\nInstallation failed: {e}");
             std::process::exit(1);
         }
     }
