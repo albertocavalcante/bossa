@@ -292,10 +292,35 @@ Simple mode for common cases, advanced options available:
 # Simple: One command does everything
 bossa relocate ~/dev /Volumes/T9/dev
 
+# Full relocation with symlink fallback for backwards compatibility
+bossa relocate ~/dev /Volumes/T9/dev --symlink
+
+# Just scan for hardcoded paths without moving
+bossa relocate ~/dev /Volumes/T9/dev --scan-only
+
+# Update configs but don't create symlink
+bossa relocate ~/dev /Volumes/T9/dev --update-configs
+
 # Advanced: Step by step with control
 bossa locations scan ~/dev              # Just scan
 bossa locations relocate dev /Vol/T9/dev --dry-run  # Preview
 bossa locations relocate dev /Vol/T9/dev            # Execute
+```
+
+### CLI Interface
+
+```bash
+bossa relocate <old-path> <new-path> [OPTIONS]
+
+Options:
+  --symlink         Create a symlink from old location to new location
+                    for backwards compatibility (~/dev -> /Volumes/T9/dev)
+  --scan-only       Only scan for references, don't modify anything
+  --update-configs  Update config files but don't create symlink
+  --dry-run         Show what would be changed without making changes
+  --yes             Skip confirmation prompts
+  --no-backup       Don't create backups (dangerous)
+  --force           Force update even with errors
 ```
 
 ### Principle 2: Visual Diff Before Changes
@@ -338,6 +363,91 @@ Not Updated (9):
 Summary: 38 updates, 9 manual, 0 errors
 
 Proceed? [y/N/d(diff)/q(quit)]
+```
+
+### Principle 2b: Symlink Fallback for Backwards Compatibility
+
+When using `--symlink`, the command creates a symlink from the old location to the
+new location after relocation. This provides a safety net for:
+
+- Shell aliases that still reference old paths
+- Scripts that haven't been updated
+- Hardcoded paths in various tools
+- IDE configurations that are difficult to update
+
+```
+$ bossa relocate ~/dev /Volumes/T9/dev --symlink
+
+Moving content from ~/dev to /Volumes/T9/dev...
+  ✓ Moved 234 files (12.4 GB)
+
+Creating backwards-compatibility symlink...
+  ✓ ~/dev -> /Volumes/T9/dev
+
+Post-relocation status:
+  ✓ Old path (~/dev) now redirects to new location
+  ✓ Existing scripts and aliases will continue to work
+  ⚠ Consider updating references over time for clarity
+```
+
+### Principle 2c: Shell RC / Alias Scanning
+
+The relocate command automatically scans shell configuration files for hardcoded
+paths and offers to update them:
+
+```
+$ bossa relocate ~/dev /Volumes/T9/dev
+
+Scanning shell configuration files...
+
+Found 7 path references in shell configs:
+
+~/.zshrc (4 matches):
+  Line 45:
+    - gvy="cd /Users/adsc/dev/ws/gvy"
+    + gvy="cd /Volumes/T9/dev/ws/gvy"
+
+  Line 46:
+    - bossa="cd /Users/adsc/dev/ws/bossa"
+    + bossa="cd /Volumes/T9/dev/ws/bossa"
+
+  Line 52:
+    - export DEV_HOME=~/dev
+    + export DEV_HOME=/Volumes/T9/dev
+
+  Line 78:
+    - export PATH="$PATH:~/dev/scripts"
+    + export PATH="$PATH:/Volumes/T9/dev/scripts"
+
+~/.bashrc (1 match):
+  Line 12:
+    - alias proj="cd ~/dev/projects"
+    + alias proj="cd /Volumes/T9/dev/projects"
+
+~/.config/fish/config.fish (2 matches):
+  Line 8:
+    - set -gx DEV_HOME ~/dev
+    + set -gx DEV_HOME /Volumes/T9/dev
+
+  Line 15:
+    - function ws; cd ~/dev/ws/$argv; end
+    + function ws; cd /Volumes/T9/dev/ws/$argv; end
+
+───────────────────────────────────────────────────────
+Update shell configs? [y/N/s(selective)]
+```
+
+When selecting `s` for selective mode:
+
+```
+Update ~/.zshrc line 45 (gvy alias)? [y/n] y
+Update ~/.zshrc line 46 (bossa alias)? [y/n] y
+Update ~/.zshrc line 52 (DEV_HOME export)? [y/n] y
+Update ~/.zshrc line 78 (PATH addition)? [y/n] n  # Keep old path in PATH
+...
+
+✓ Updated 6 of 7 references
+  Backups saved to ~/.local/state/bossa/backups/2026-02-05T14-30-00/
 ```
 
 ### Principle 3: Safe Defaults with Escape Hatches
@@ -671,16 +781,118 @@ ui::section("Symlinks") {
 | TOML/JSON path extraction | P1       | Medium | config_scanner.rs (new) |
 | Shell rc file parsing     | P1       | Medium | config_scanner.rs       |
 | Pattern matching          | P1       | Small  | config_scanner.rs       |
+| Shell alias detection     | P1       | Medium | config_scanner.rs       |
+| Export/PATH detection     | P1       | Medium | config_scanner.rs       |
+| Fish config support       | P2       | Small  | config_scanner.rs       |
+
+#### Shell RC Scanner Implementation
+
+The shell RC scanner should detect various path patterns:
+
+```rust
+/// Patterns to detect in shell config files
+pub enum ShellPathPattern {
+    /// alias name="cd /path/to/dir"
+    CdAlias { name: String, path: String, line: usize },
+
+    /// export VAR=/path/to/dir or export VAR="$HOME/path"
+    ExportVar { name: String, path: String, line: usize },
+
+    /// PATH additions: export PATH="$PATH:/some/path"
+    PathAddition { path: String, line: usize },
+
+    /// Fish: set -gx VAR /path
+    FishSet { name: String, path: String, line: usize },
+
+    /// Fish: function name; cd /path; end
+    FishFunction { name: String, path: String, line: usize },
+
+    /// Generic path reference (fallback)
+    GenericPath { path: String, line: usize },
+}
+
+impl ShellConfigScanner {
+    pub fn scan_file(&self, path: &Path, old_location: &Path) -> Result<Vec<ShellPathPattern>> {
+        let content = fs::read_to_string(path)?;
+        let mut matches = Vec::new();
+
+        for (line_num, line) in content.lines().enumerate() {
+            // Skip comments
+            if line.trim_start().starts_with('#') {
+                continue;
+            }
+
+            // Detect alias patterns: alias name="cd /path" or alias name='cd /path'
+            if let Some(caps) = ALIAS_CD_REGEX.captures(line) {
+                // ...
+            }
+
+            // Detect export patterns: export VAR=/path or export VAR="value"
+            if let Some(caps) = EXPORT_REGEX.captures(line) {
+                // ...
+            }
+
+            // Fish-specific patterns
+            if path.extension().map_or(false, |e| e == "fish") {
+                // set -gx VAR value
+                // function name; cd /path; end
+            }
+        }
+
+        matches
+    }
+}
+```
 
 ### Phase 4: Relocate Command
 
-| Task             | Priority | Effort | Files                      |
-| ---------------- | -------- | ------ | -------------------------- |
-| Scan workflow    | P1       | Medium | commands/relocate.rs (new) |
-| Backup creation  | P1       | Small  | commands/relocate.rs       |
-| Config rewriting | P1       | Large  | commands/relocate.rs       |
-| Rollback command | P2       | Medium | commands/relocate.rs       |
-| Interactive mode | P2       | Medium | commands/relocate.rs       |
+| Task                         | Priority | Effort | Files                      |
+| ---------------------------- | -------- | ------ | -------------------------- |
+| Scan workflow                | P1       | Medium | commands/relocate.rs (new) |
+| Backup creation              | P1       | Small  | commands/relocate.rs       |
+| Config rewriting             | P1       | Large  | commands/relocate.rs       |
+| Symlink fallback (--symlink) | P1       | Small  | commands/relocate.rs       |
+| Shell RC scanning            | P1       | Medium | commands/relocate.rs       |
+| Selective update mode        | P2       | Medium | commands/relocate.rs       |
+| Rollback command             | P2       | Medium | commands/relocate.rs       |
+| Interactive mode             | P2       | Medium | commands/relocate.rs       |
+
+#### Symlink Fallback Implementation
+
+```rust
+/// Create backwards-compatibility symlink from old to new location
+fn create_fallback_symlink(old_path: &Path, new_path: &Path) -> Result<()> {
+    // Verify old path no longer exists (was moved)
+    if old_path.exists() && !old_path.is_symlink() {
+        bail!(
+            "Old path still exists: {}\n\
+             Cannot create symlink until content is moved",
+            old_path.display()
+        );
+    }
+
+    // Remove existing symlink if present
+    if old_path.is_symlink() {
+        fs::remove_file(old_path)
+            .with_context(|| format!("Failed to remove existing symlink: {}", old_path.display()))?;
+    }
+
+    // Create parent directory if needed
+    if let Some(parent) = old_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    // Create symlink: old_path -> new_path
+    std::os::unix::fs::symlink(new_path, old_path)
+        .with_context(|| format!(
+            "Failed to create symlink: {} -> {}",
+            old_path.display(),
+            new_path.display()
+        ))?;
+
+    Ok(())
+}
+```
 
 ### Phase 5: Integration & Polish
 
@@ -776,16 +988,18 @@ fn test_relocate_updates_symlinks() {
 
 ## Success Criteria
 
-| Criterion               | Measurement                              |
-| ----------------------- | ---------------------------------------- |
-| **Zero Manual Updates** | `bossa relocate` updates all references  |
-| **Complete Coverage**   | All symlinks + config files updated      |
-| **Safe Operation**      | Dry-run accurate, backups always created |
-| **Rollback Works**      | Can undo any relocate                    |
-| **Self-Healing**        | `bossa doctor` detects + suggests fixes  |
-| **Shell Integration**   | Navigation works after relocate          |
-| **Idiomatic Code**      | Follows existing bossa patterns          |
-| **Well Tested**         | >80% coverage on new code                |
+| Criterion                | Measurement                                     |
+| ------------------------ | ----------------------------------------------- |
+| **Zero Manual Updates**  | `bossa relocate` updates all references         |
+| **Complete Coverage**    | All symlinks + config files updated             |
+| **Safe Operation**       | Dry-run accurate, backups always created        |
+| **Rollback Works**       | Can undo any relocate                           |
+| **Self-Healing**         | `bossa doctor` detects + suggests fixes         |
+| **Shell Integration**    | Navigation works after relocate                 |
+| **Backwards Compatible** | `--symlink` flag provides fallback for scripts  |
+| **Shell RC Updates**     | Detects and updates aliases/exports in rc files |
+| **Idiomatic Code**       | Follows existing bossa patterns                 |
+| **Well Tested**          | >80% coverage on new code                       |
 
 ---
 
@@ -796,6 +1010,20 @@ fn test_relocate_updates_symlinks() {
 - `~/.bashrc`, `~/.zshrc`, `~/.profile`
 - `~/.bash_profile`, `~/.zprofile`
 - `~/.config/fish/config.fish`
+- `~/.config/fish/conf.d/*.fish`
+
+#### Shell Path Patterns to Detect
+
+| Pattern Type        | Example                                 | Regex Pattern                             |
+| ------------------- | --------------------------------------- | ----------------------------------------- |
+| CD Alias            | `alias gvy="cd /Users/adsc/dev/ws/gvy"` | `alias\s+\w+\s*=\s*["']cd\s+([^"']+)["']` |
+| Export Variable     | `export DEV_HOME=~/dev`                 | `export\s+\w+\s*=\s*["']?([^"'\s]+)["']?` |
+| PATH Addition       | `export PATH="$PATH:~/dev/scripts"`     | `PATH.*:([^:"\s]+)`                       |
+| Source Command      | `source ~/dev/dotfiles/aliases.sh`      | `source\s+["']?([^"'\s]+)["']?`           |
+| Fish Set            | `set -gx DEV_HOME ~/dev`                | `set\s+-\w*x\w*\s+\w+\s+(.+)`             |
+| Fish Function       | `function ws; cd ~/dev/ws/$argv; end`   | `function.*cd\s+([^;]+)`                  |
+| Variable Assignment | `DEV_HOME=~/dev`                        | `^\s*\w+\s*=\s*["']?([^"'\s]+)["']?`      |
+| Eval/Command Sub    | `` eval `cd ~/dev && command` ``        | Complex - use AST parsing                 |
 
 ### Tool Configs
 
