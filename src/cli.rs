@@ -119,6 +119,10 @@ pub enum Command {
     /// Manage logical locations for path abstraction
     #[command(subcommand)]
     Locations(LocationsCommand),
+
+    /// Manage generated configuration files (git, etc.)
+    #[command(subcommand)]
+    Configs(ConfigsCommand),
 }
 
 // ============================================================================
@@ -1214,6 +1218,39 @@ pub enum LocationsCommand {
 
         /// Location name this should resolve to
         location: String,
+    },
+}
+
+// ============================================================================
+// Configs Commands
+// ============================================================================
+
+/// Manage generated configuration files
+#[derive(Debug, Subcommand)]
+pub enum ConfigsCommand {
+    /// Apply (generate) configuration files
+    Apply {
+        /// Specific config to apply (e.g., "git"). If omitted, applies all.
+        config: Option<String>,
+
+        /// Show what would be done without making changes
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+    },
+
+    /// Show diff between current and generated config
+    Diff {
+        /// Specific config to diff (e.g., "git"). If omitted, diffs all.
+        config: Option<String>,
+    },
+
+    /// Show status of generated configs
+    Status,
+
+    /// Show what would be generated for a config
+    Show {
+        /// Config to show (e.g., "git")
+        config: String,
     },
 }
 
