@@ -206,7 +206,7 @@ impl Client {
             .iter()
             .filter_map(|p| expand_and_validate_path(p.as_ref()).ok())
             .collect();
-        let path_refs: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
+        let path_refs: Vec<&Path> = paths.iter().map(std::path::PathBuf::as_path).collect();
         self.backend.evict_bulk(&path_refs, options)
     }
 
@@ -222,7 +222,7 @@ impl Client {
             .iter()
             .filter_map(|p| expand_and_validate_path(p.as_ref()).ok())
             .collect();
-        let path_refs: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
+        let path_refs: Vec<&Path> = paths.iter().map(std::path::PathBuf::as_path).collect();
         self.backend.download_bulk(&path_refs, options)
     }
 
@@ -276,9 +276,7 @@ impl Client {
         let files = self.list(path)?;
         Ok(files
             .into_iter()
-            .filter(|f| {
-                f.state.is_local() && !f.is_dir && f.size.map(|s| s >= min_size).unwrap_or(false)
-            })
+            .filter(|f| f.state.is_local() && !f.is_dir && f.size.is_some_and(|s| s >= min_size))
             .collect())
     }
 

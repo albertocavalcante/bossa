@@ -219,7 +219,7 @@ pub fn resolve(path: &str, locations: &LocationsConfig) -> PathBuf {
     // Use simple string replacement to find ${locations.name} patterns
     // For each match, look up the location and substitute
     for (name, location_path) in &locations.paths {
-        let pattern = format!("${{locations.{}}}", name);
+        let pattern = format!("${{locations.{name}}}");
         if result.contains(&pattern) {
             // Recursively resolve the location path itself (it might reference other locations)
             let expanded_location = resolve(location_path, locations);
@@ -282,6 +282,7 @@ mod tests {
     /// This function uses unsafe env::set_var/remove_var which can cause issues
     /// if other threads read environment variables concurrently.
     /// Only use in single-threaded test contexts.
+    #[allow(unsafe_code)]
     fn with_env_var<F, R>(key: &str, value: &str, f: F) -> R
     where
         F: FnOnce() -> R,
@@ -304,6 +305,7 @@ mod tests {
     /// This function uses unsafe env::remove_var/set_var which can cause issues
     /// if other threads read environment variables concurrently.
     /// Only use in single-threaded test contexts.
+    #[allow(unsafe_code)]
     fn without_env_var<F, R>(key: &str, f: F) -> R
     where
         F: FnOnce() -> R,

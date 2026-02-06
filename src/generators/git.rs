@@ -21,13 +21,13 @@ pub fn generate(config: &GitConfig, locations: &crate::schema::LocationsConfig) 
     {
         output.push_str("[user]\n");
         if let Some(ref name) = config.user.name {
-            output.push_str(&format!("    name = {}\n", name));
+            output.push_str(&format!("    name = {name}\n"));
         }
         if let Some(ref email) = config.user.email {
-            output.push_str(&format!("    email = {}\n", email));
+            output.push_str(&format!("    email = {email}\n"));
         }
         if let Some(ref key) = config.user.signingkey {
-            output.push_str(&format!("    signingkey = {}\n", key));
+            output.push_str(&format!("    signingkey = {key}\n"));
         }
         output.push('\n');
     }
@@ -46,7 +46,7 @@ pub fn generate(config: &GitConfig, locations: &crate::schema::LocationsConfig) 
         let mut aliases: Vec<_> = config.alias.iter().collect();
         aliases.sort_by_key(|(k, _)| *k);
         for (name, command) in aliases {
-            output.push_str(&format!("    {} = {}\n", name, command));
+            output.push_str(&format!("    {name} = {command}\n"));
         }
         output.push('\n');
     }
@@ -78,14 +78,14 @@ fn write_section(
         return Ok(());
     }
 
-    output.push_str(&format!("[{}]\n", name));
+    output.push_str(&format!("[{name}]\n"));
 
     let mut items: Vec<_> = values.iter().collect();
     items.sort_by_key(|(k, _)| *k);
 
     for (key, value) in items {
         let formatted = format_value(value, locations);
-        output.push_str(&format!("    {} = {}\n", key, formatted));
+        output.push_str(&format!("    {key} = {formatted}\n"));
     }
     output.push('\n');
 

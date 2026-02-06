@@ -52,7 +52,7 @@ pub fn run(ctx: &AppContext, args: NovaArgs) -> Result<()> {
     // Execute
     let opts = ExecuteOptions {
         dry_run: args.dry_run,
-        jobs: args.jobs.map(|j| j as usize).unwrap_or(4),
+        jobs: args.jobs.map_or(4, |j| j as usize),
         yes: false,
         verbose: ctx.verbose > 0,
     };
@@ -140,7 +140,7 @@ fn determine_stages(args: &NovaArgs) -> Vec<&'static str> {
 
     // If --only specified, use only those
     if let Some(ref only) = args.only {
-        let only_set: Vec<&str> = only.split(',').map(|s| s.trim()).collect();
+        let only_set: Vec<&str> = only.split(',').map(str::trim).collect();
         return ALL_STAGES
             .iter()
             .filter(|&&s| {
@@ -156,7 +156,7 @@ fn determine_stages(args: &NovaArgs) -> Vec<&'static str> {
 
     // If --skip specified, remove those
     if let Some(ref skip) = args.skip {
-        let skip_set: Vec<&str> = skip.split(',').map(|s| s.trim()).collect();
+        let skip_set: Vec<&str> = skip.split(',').map(str::trim).collect();
         return ALL_STAGES
             .iter()
             .filter(|&&s| !skip_set.contains(&s))
@@ -176,7 +176,7 @@ fn add_defaults_resources(
         let res_value = convert_default_value(value);
 
         let mut resource = MacOSDefault::from_domain_key(domain_key, res_value)
-            .with_context(|| format!("Invalid default key: {}", domain_key))?;
+            .with_context(|| format!("Invalid default key: {domain_key}"))?;
 
         // Check if this default requires sudo
         if sudo_config.default_requires_sudo(domain_key) {
@@ -383,7 +383,7 @@ fn convert_default_value(value: &SchemaDefaultValue) -> ResDefaultValue {
         SchemaDefaultValue::String(s) => ResDefaultValue::String(s.clone()),
         SchemaDefaultValue::Array(_) => {
             // For now, convert arrays to string representation
-            ResDefaultValue::String(format!("{:?}", value))
+            ResDefaultValue::String(format!("{value:?}"))
         }
     }
 }

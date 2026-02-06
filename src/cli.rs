@@ -764,87 +764,87 @@ pub enum NovaStage {
 }
 
 impl NovaStage {
-    pub fn all() -> &'static [NovaStage] {
+    pub fn all() -> &'static [Self] {
         &[
-            NovaStage::Defaults,
-            NovaStage::Terminal,
-            NovaStage::GitSigning,
-            NovaStage::Homebrew,
-            NovaStage::Bash,
-            NovaStage::Essential,
-            NovaStage::Brew,
-            NovaStage::Pnpm,
-            NovaStage::Dock,
-            NovaStage::Ecosystem,
-            NovaStage::Handlers,
-            NovaStage::Stow,
-            NovaStage::Caches,
-            NovaStage::Mcp,
-            NovaStage::Refs,
-            NovaStage::Workspaces,
+            Self::Defaults,
+            Self::Terminal,
+            Self::GitSigning,
+            Self::Homebrew,
+            Self::Bash,
+            Self::Essential,
+            Self::Brew,
+            Self::Pnpm,
+            Self::Dock,
+            Self::Ecosystem,
+            Self::Handlers,
+            Self::Stow,
+            Self::Caches,
+            Self::Mcp,
+            Self::Refs,
+            Self::Workspaces,
         ]
     }
 
     pub fn name(&self) -> &'static str {
         match self {
-            NovaStage::Defaults => "defaults",
-            NovaStage::Terminal => "terminal",
-            NovaStage::GitSigning => "git-signing",
-            NovaStage::Homebrew => "homebrew",
-            NovaStage::Bash => "bash",
-            NovaStage::Essential => "essential",
-            NovaStage::Brew => "brew",
-            NovaStage::Pnpm => "pnpm",
-            NovaStage::Dock => "dock",
-            NovaStage::Ecosystem => "ecosystem",
-            NovaStage::Handlers => "handlers",
-            NovaStage::Stow => "stow",
-            NovaStage::Caches => "caches",
-            NovaStage::Mcp => "mcp",
-            NovaStage::Refs => "refs",
-            NovaStage::Workspaces => "workspaces",
+            Self::Defaults => "defaults",
+            Self::Terminal => "terminal",
+            Self::GitSigning => "git-signing",
+            Self::Homebrew => "homebrew",
+            Self::Bash => "bash",
+            Self::Essential => "essential",
+            Self::Brew => "brew",
+            Self::Pnpm => "pnpm",
+            Self::Dock => "dock",
+            Self::Ecosystem => "ecosystem",
+            Self::Handlers => "handlers",
+            Self::Stow => "stow",
+            Self::Caches => "caches",
+            Self::Mcp => "mcp",
+            Self::Refs => "refs",
+            Self::Workspaces => "workspaces",
         }
     }
 
     pub fn description(&self) -> &'static str {
         match self {
-            NovaStage::Defaults => "macOS system defaults",
-            NovaStage::Terminal => "Terminal font setup",
-            NovaStage::GitSigning => "Git signing key setup",
-            NovaStage::Homebrew => "Homebrew installation",
-            NovaStage::Bash => "Bash 4+ bootstrap",
-            NovaStage::Essential => "Essential packages (stow, jq, gh, etc.)",
-            NovaStage::Brew => "Full Brewfile packages",
-            NovaStage::Pnpm => "Node packages via pnpm",
-            NovaStage::Dock => "Dock configuration",
-            NovaStage::Ecosystem => "Ecosystem extensions",
-            NovaStage::Handlers => "File handlers (duti)",
-            NovaStage::Stow => "Dotfile symlinks (native stow replacement)",
-            NovaStage::Caches => "Cache symlinks to external drive",
-            NovaStage::Mcp => "MCP server configuration",
-            NovaStage::Refs => "Reference repositories",
-            NovaStage::Workspaces => "Developer workspaces",
+            Self::Defaults => "macOS system defaults",
+            Self::Terminal => "Terminal font setup",
+            Self::GitSigning => "Git signing key setup",
+            Self::Homebrew => "Homebrew installation",
+            Self::Bash => "Bash 4+ bootstrap",
+            Self::Essential => "Essential packages (stow, jq, gh, etc.)",
+            Self::Brew => "Full Brewfile packages",
+            Self::Pnpm => "Node packages via pnpm",
+            Self::Dock => "Dock configuration",
+            Self::Ecosystem => "Ecosystem extensions",
+            Self::Handlers => "File handlers (duti)",
+            Self::Stow => "Dotfile symlinks (native stow replacement)",
+            Self::Caches => "Cache symlinks to external drive",
+            Self::Mcp => "MCP server configuration",
+            Self::Refs => "Reference repositories",
+            Self::Workspaces => "Developer workspaces",
         }
     }
 
-    pub fn from_name(name: &str) -> Option<NovaStage> {
+    pub fn from_name(name: &str) -> Option<Self> {
         match name {
-            "defaults" => Some(NovaStage::Defaults),
-            "terminal" => Some(NovaStage::Terminal),
-            "git-signing" => Some(NovaStage::GitSigning),
-            "homebrew" => Some(NovaStage::Homebrew),
-            "bash" => Some(NovaStage::Bash),
-            "essential" => Some(NovaStage::Essential),
-            "brew" => Some(NovaStage::Brew),
-            "pnpm" => Some(NovaStage::Pnpm),
-            "dock" => Some(NovaStage::Dock),
-            "ecosystem" => Some(NovaStage::Ecosystem),
-            "handlers" => Some(NovaStage::Handlers),
-            "stow" => Some(NovaStage::Stow),
-            "caches" => Some(NovaStage::Caches),
-            "mcp" => Some(NovaStage::Mcp),
-            "refs" => Some(NovaStage::Refs),
-            "workspaces" => Some(NovaStage::Workspaces),
+            "defaults" => Some(Self::Defaults),
+            "terminal" => Some(Self::Terminal),
+            "git-signing" => Some(Self::GitSigning),
+            "homebrew" => Some(Self::Homebrew),
+            "bash" => Some(Self::Bash),
+            "essential" => Some(Self::Essential),
+            "brew" => Some(Self::Brew),
+            "pnpm" => Some(Self::Pnpm),
+            "dock" => Some(Self::Dock),
+            "ecosystem" => Some(Self::Ecosystem),
+            "handlers" => Some(Self::Handlers),
+            "stow" => Some(Self::Stow),
+            "caches" => Some(Self::Caches),
+            "mcp" => Some(Self::Mcp),
+            "refs" => Some(Self::Refs),
+            "workspaces" => Some(Self::Workspaces),
             _ => None,
         }
     }
@@ -1384,14 +1384,14 @@ mod tests {
     fn test_target_parse_dot_only() {
         let target = Target::parse(".");
         assert_eq!(target.resource_type, "");
-        assert_eq!(target.name, Some("".to_string()));
+        assert_eq!(target.name, Some(String::new()));
     }
 
     #[test]
     fn test_target_parse_trailing_dot() {
         let target = Target::parse("collections.");
         assert_eq!(target.resource_type, "collections");
-        assert_eq!(target.name, Some("".to_string()));
+        assert_eq!(target.name, Some(String::new()));
     }
 
     #[test]
@@ -1499,7 +1499,7 @@ mod tests {
     fn test_target_very_long_strings() {
         let long_type = "a".repeat(10000);
         let long_name = "b".repeat(10000);
-        let target_str = format!("{}.{}", long_type, long_name);
+        let target_str = format!("{long_type}.{long_name}");
 
         let target = Target::parse(&target_str);
         assert_eq!(target.resource_type.len(), 10000);

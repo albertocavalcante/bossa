@@ -62,7 +62,7 @@ fn sort_by_dependencies<'a>(
         .filter(|&(_, degree)| *degree == 0)
         .map(|(&name, _)| name)
         .collect();
-    queue.sort(); // Deterministic order
+    queue.sort_unstable(); // Deterministic order
 
     let mut sorted: Vec<(&String, &ToolDefinition)> = Vec::new();
     let mut processed = 0;
@@ -207,7 +207,10 @@ fn apply(ctx: &Context, filter_tools: &[String], dry_run: bool, force: bool) -> 
     let tools_to_apply: Vec<_> = if filter_tools.is_empty() {
         config.tools.enabled_tools().collect()
     } else {
-        let filter_set: HashSet<_> = filter_tools.iter().map(|s| s.as_str()).collect();
+        let filter_set: HashSet<_> = filter_tools
+            .iter()
+            .map(std::string::String::as_str)
+            .collect();
         config
             .tools
             .enabled_tools()
@@ -257,7 +260,7 @@ fn apply(ctx: &Context, filter_tools: &[String], dry_run: bool, force: bool) -> 
         // Check platform availability
         if !def.is_available_for_current_platform() {
             if !ctx.quiet {
-                ui::dim(&format!("  ⊘ {} (not available for this platform)", name));
+                ui::dim(&format!("  ⊘ {name} (not available for this platform)"));
             }
             skipped += 1;
             continue;
@@ -270,7 +273,7 @@ fn apply(ctx: &Context, filter_tools: &[String], dry_run: bool, force: bool) -> 
 
         if is_installed && !force {
             if !ctx.quiet {
-                ui::dim(&format!("  ✓ {} (already installed)", name));
+                ui::dim(&format!("  ✓ {name} (already installed)"));
             }
             skipped += 1;
             continue;
@@ -282,7 +285,7 @@ fn apply(ctx: &Context, filter_tools: &[String], dry_run: bool, force: bool) -> 
         }
 
         if !ctx.quiet {
-            ui::info(&format!("  Installing {}...", name));
+            ui::info(&format!("  Installing {name}..."));
         }
 
         match install_from_definition(ctx, name, def, &config.tools) {
@@ -291,7 +294,7 @@ fn apply(ctx: &Context, filter_tools: &[String], dry_run: bool, force: bool) -> 
                 state.save()?;
 
                 if !ctx.quiet {
-                    ui::success(&format!("  ✓ {} installed", name));
+                    ui::success(&format!("  ✓ {name} installed"));
                     if let Some(ref msg) = def.post_install {
                         println!();
                         ui::dim(msg);
@@ -301,7 +304,7 @@ fn apply(ctx: &Context, filter_tools: &[String], dry_run: bool, force: bool) -> 
                 installed += 1;
             }
             Err(e) => {
-                ui::error(&format!("  ✗ {} failed: {}", name, e));
+                ui::error(&format!("  ✗ {name} failed: {e}"));
                 failed += 1;
             }
         }
@@ -318,7 +321,7 @@ fn apply(ctx: &Context, filter_tools: &[String], dry_run: bool, force: bool) -> 
     }
 
     if failed > 0 {
-        bail!("{} tool(s) failed to install", failed);
+        bail!("{failed} tool(s) failed to install");
     }
 
     Ok(())
@@ -410,7 +413,7 @@ fn install_from_definition(
                 .collect();
 
             let install_script = build_install_script(
-                all_packages.first().map(|s| s.as_str()),
+                all_packages.first().map(std::string::String::as_str),
                 &pkg_manager,
                 if all_packages.len() > 1 {
                     Some(&all_packages[1..])
@@ -479,10 +482,7 @@ fn install_from_definition(
             let asset_pattern = def.asset.as_ref().map(|a| def.expand_template(a, name));
 
             let url = if let Some(asset) = asset_pattern {
-                format!(
-                    "https://github.com/{}/releases/download/{}/{}",
-                    repo, version, asset
-                )
+                format!("https://github.com/{repo}/releases/download/{version}/{asset}")
             } else {
                 bail!("asset pattern required for github-release source");
             };
@@ -542,7 +542,7 @@ fn install_from_definition(
             let source_url = if let Some(ref git) = def.git {
                 git.clone()
             } else if let Some(ref crate_name) = def.crate_name {
-                format!("https://crates.io/crates/{}", crate_name)
+                format!("https://crates.io/crates/{crate_name}")
             } else {
                 "cargo".to_string()
             };
@@ -585,7 +585,7 @@ fn install_from_definition(
             let binary_path = find_npm_binary(&pm, &binary_name)?;
 
             Ok(InstalledTool {
-                url: format!("npm:{}", npm_package),
+                url: format!("npm:{npm_package}"),
                 binary: binary_name,
                 install_path: binary_path.to_string_lossy().to_string(),
                 installed_at: chrono::Utc::now().to_rfc3339(),
@@ -630,7 +630,7 @@ fn install_from_url(
             );
         }
         if !ctx.quiet {
-            ui::warn(&format!("Reinstalling '{}' (--force)", name));
+            ui::warn(&format!("Reinstalling '{name}' (--force)"));
         }
     }
 
@@ -639,7 +639,7 @@ fn install_from_url(
     fs::create_dir_all(&install_path)?;
 
     if !ctx.quiet {
-        ui::info(&format!("Installing {} from {}", name, url));
+        ui::info(&format!("Installing {name} from {url}"));
     }
 
     // Download the archive
@@ -656,7 +656,7 @@ fn install_from_url(
 
     // Extract the binary
     if !ctx.quiet {
-        ui::info(&format!("Extracting binary '{}'...", binary_name));
+        ui::info(&format!("Extracting binary '{binary_name}'..."));
     }
     let binary_data = extract_targz(&data, binary_name, archive_path)?;
     if !ctx.quiet {
@@ -685,7 +685,7 @@ fn install_from_url(
     config.save()?;
 
     if !ctx.quiet {
-        ui::success(&format!("Tool '{}' installed successfully!", name));
+        ui::success(&format!("Tool '{name}' installed successfully!"));
     }
 
     Ok(())
@@ -709,7 +709,7 @@ fn install_from_container(
 ) -> Result<()> {
     // Validate runtime
     if runtime != "podman" && runtime != "docker" {
-        bail!("Runtime must be 'podman' or 'docker', got '{}'", runtime);
+        bail!("Runtime must be 'podman' or 'docker', got '{runtime}'");
     }
 
     // Check if runtime is available
@@ -728,7 +728,7 @@ fn install_from_container(
             );
         }
         if !ctx.quiet {
-            ui::warn(&format!("Reinstalling '{}' (--force)", name));
+            ui::warn(&format!("Reinstalling '{name}' (--force)"));
         }
     }
 
@@ -740,11 +740,10 @@ fn install_from_container(
     let binary_name = PathBuf::from(binary_path)
         .file_name()
         .and_then(|n| n.to_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| name.to_string());
+        .map_or_else(|| name.to_string(), std::string::ToString::to_string);
 
     if !ctx.quiet {
-        ui::header(&format!("Installing {} from container", name));
+        ui::header(&format!("Installing {name} from container"));
         ui::kv("Image", image);
         if let Some(pkg) = package {
             ui::kv("Package", pkg);
@@ -774,7 +773,7 @@ fn install_from_container(
     );
 
     if !ctx.quiet {
-        ui::info(&format!("Creating container from {}...", image));
+        ui::info(&format!("Creating container from {image}..."));
     }
 
     // Run container with install script
@@ -815,10 +814,7 @@ fn install_from_container(
         }
         remove_container(runtime, &container_name)?;
     } else if !ctx.quiet {
-        ui::info(&format!(
-            "Container '{}' kept for debugging",
-            container_name
-        ));
+        ui::info(&format!("Container '{container_name}' kept for debugging"));
     }
 
     if !ctx.quiet {
@@ -838,7 +834,7 @@ fn install_from_container(
         source: "container".to_string(),
         container: Some(ContainerMeta {
             image: image.to_string(),
-            package: package.map(|s| s.to_string()),
+            package: package.map(std::string::ToString::to_string),
             binary_path: binary_path.to_string(),
             package_manager: Some(pkg_manager),
             runtime: runtime.to_string(),
@@ -848,7 +844,7 @@ fn install_from_container(
     config.save()?;
 
     if !ctx.quiet {
-        ui::success(&format!("Tool '{}' installed successfully!", name));
+        ui::success(&format!("Tool '{name}' installed successfully!"));
     }
 
     Ok(())
@@ -889,7 +885,7 @@ fn list(_ctx: &Context, show_all: bool) -> Result<()> {
             ""
         };
 
-        println!("  {} {}{}", status, name, in_config);
+        println!("  {status} {name}{in_config}");
         ui::kv("    Binary", &tool.binary);
         ui::kv("    Path", &tool.install_path);
         ui::kv("    Source", &tool.source);
@@ -923,7 +919,7 @@ fn list(_ctx: &Context, show_all: bool) -> Result<()> {
                 for name in not_installed {
                     if let Some(def) = cfg.tools.get(name) {
                         let status = if def.enabled { "○" } else { "○ (disabled)" };
-                        println!("  {} {}", status, name);
+                        println!("  {status} {name}");
                         if !def.description.is_empty() {
                             ui::kv("    Description", &def.description);
                         }
@@ -949,13 +945,10 @@ fn status(_ctx: &Context, name: &str) -> Result<()> {
     let defined = config.as_ref().and_then(|c| c.tools.get(name));
 
     if installed.is_none() && defined.is_none() {
-        bail!(
-            "Tool '{}' not found (not installed and not defined in config)",
-            name
-        );
+        bail!("Tool '{name}' not found (not installed and not defined in config)");
     }
 
-    ui::header(&format!("Tool: {}", name));
+    ui::header(&format!("Tool: {name}"));
     println!();
 
     // Show installed status
@@ -1079,7 +1072,7 @@ fn uninstall(ctx: &Context, name: &str) -> Result<()> {
 
     let tool = config
         .remove(name)
-        .context(format!("Tool '{}' not found", name))?;
+        .context(format!("Tool '{name}' not found"))?;
 
     // Remove the binary file
     let binary_path = PathBuf::from(&tool.install_path);
@@ -1096,7 +1089,7 @@ fn uninstall(ctx: &Context, name: &str) -> Result<()> {
     config.save()?;
 
     if !ctx.quiet {
-        ui::success(&format!("Tool '{}' uninstalled successfully!", name));
+        ui::success(&format!("Tool '{name}' uninstalled successfully!"));
     }
 
     Ok(())
@@ -1169,7 +1162,7 @@ fn outdated(ctx: &Context, filter_tools: &[String], as_json: bool) -> Result<()>
                     Some((name, def))
                 } else {
                     if !ctx.quiet {
-                        ui::warn(&format!("Tool '{}' not found", name));
+                        ui::warn(&format!("Tool '{name}' not found"));
                     }
                     None
                 }
@@ -1375,7 +1368,7 @@ fn extract_version(s: &str) -> Option<String> {
 
 /// Get latest release version from GitHub
 fn get_github_latest_release(repo: &str) -> Result<String> {
-    let url = format!("https://api.github.com/repos/{}/releases/latest", repo);
+    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
 
     let agent = ureq::Agent::new_with_defaults();
     let mut response = agent
@@ -1398,7 +1391,7 @@ fn get_github_latest_release(repo: &str) -> Result<String> {
 
 /// Get latest version from crates.io
 fn get_crates_io_latest(crate_name: &str) -> Result<String> {
-    let url = format!("https://crates.io/api/v1/crates/{}", crate_name);
+    let url = format!("https://crates.io/api/v1/crates/{crate_name}");
 
     let agent = ureq::Agent::new_with_defaults();
     let mut response = agent
@@ -1414,7 +1407,7 @@ fn get_crates_io_latest(crate_name: &str) -> Result<String> {
 
     body["crate"]["newest_version"]
         .as_str()
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .context("No newest_version in response")
 }
 
@@ -1443,8 +1436,7 @@ fn get_git_latest_tag(repo_url: &str) -> Result<String> {
             if tag
                 .chars()
                 .next()
-                .map(|c| c.is_ascii_digit() || c == 'v')
-                .unwrap_or(false)
+                .is_some_and(|c| c.is_ascii_digit() || c == 'v')
             {
                 return Ok(tag.trim_start_matches('v').to_string());
             }
@@ -1498,9 +1490,10 @@ fn extract_targz(data: &[u8], binary_name: &str, archive_path: Option<&str>) -> 
     let mut archive = Archive::new(decoder);
 
     // Build target paths to search for
-    let target_with_path = archive_path
-        .map(|p| format!("{}/{}", p.trim_matches('/'), binary_name))
-        .unwrap_or_else(|| binary_name.to_string());
+    let target_with_path = archive_path.map_or_else(
+        || binary_name.to_string(),
+        |p| format!("{}/{}", p.trim_matches('/'), binary_name),
+    );
 
     for entry in archive.entries()? {
         let mut entry = entry?;
@@ -1508,9 +1501,9 @@ fn extract_targz(data: &[u8], binary_name: &str, archive_path: Option<&str>) -> 
         let path_str = path.to_string_lossy();
 
         // Check if this entry matches our target
-        let is_match = path_str.ends_with(&format!("/{}", binary_name))
+        let is_match = path_str.ends_with(&format!("/{binary_name}"))
             || path_str == binary_name
-            || path_str.ends_with(&format!("/{}", target_with_path))
+            || path_str.ends_with(&format!("/{target_with_path}"))
             || path_str == target_with_path
             || path.file_name().is_some_and(|n| n == binary_name);
 
@@ -1523,8 +1516,7 @@ fn extract_targz(data: &[u8], binary_name: &str, archive_path: Option<&str>) -> 
     }
 
     bail!(
-        "Binary '{}' not found in archive. Use --path/archive_path to specify the directory inside the archive.",
-        binary_name
+        "Binary '{binary_name}' not found in archive. Use --path/archive_path to specify the directory inside the archive."
     )
 }
 
@@ -1536,18 +1528,19 @@ fn extract_zip(data: &[u8], binary_name: &str, archive_path: Option<&str>) -> Re
     let mut archive = zip::ZipArchive::new(reader)?;
 
     // Build target paths to search for
-    let target_with_path = archive_path
-        .map(|p| format!("{}/{}", p.trim_matches('/'), binary_name))
-        .unwrap_or_else(|| binary_name.to_string());
+    let target_with_path = archive_path.map_or_else(
+        || binary_name.to_string(),
+        |p| format!("{}/{}", p.trim_matches('/'), binary_name),
+    );
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
         let path_str = file.name();
 
         // Check if this entry matches our target
-        let is_match = path_str.ends_with(&format!("/{}", binary_name))
+        let is_match = path_str.ends_with(&format!("/{binary_name}"))
             || path_str == binary_name
-            || path_str.ends_with(&format!("/{}", target_with_path))
+            || path_str.ends_with(&format!("/{target_with_path}"))
             || path_str == target_with_path
             || std::path::Path::new(path_str)
                 .file_name()
@@ -1561,8 +1554,7 @@ fn extract_zip(data: &[u8], binary_name: &str, archive_path: Option<&str>) -> Re
     }
 
     bail!(
-        "Binary '{}' not found in zip archive. Use archive_path to specify the directory inside the archive.",
-        binary_name
+        "Binary '{binary_name}' not found in zip archive. Use archive_path to specify the directory inside the archive."
     )
 }
 
@@ -1596,18 +1588,12 @@ fn check_runtime_available(runtime: &str) -> Result<()> {
     match output {
         Ok(o) if o.status.success() => Ok(()),
         Ok(_) => bail!(
-            "'{}' is installed but returned an error. Check your {} installation.",
-            runtime,
-            runtime
+            "'{runtime}' is installed but returned an error. Check your {runtime} installation."
         ),
         Err(_) => bail!(
-            "'{}' not found. Please install {} first.\n\
-             On macOS: brew install {}\n\
-             On Fedora: sudo dnf install {}",
-            runtime,
-            runtime,
-            runtime,
-            runtime
+            "'{runtime}' not found. Please install {runtime} first.\n\
+             On macOS: brew install {runtime}\n\
+             On Fedora: sudo dnf install {runtime}"
         ),
     }
 }
@@ -1646,7 +1632,7 @@ fn build_install_script(
 
     // Pre-install command
     if let Some(pre) = pre_install {
-        script.push_str(&format!("{}\n", pre));
+        script.push_str(&format!("{pre}\n"));
     }
 
     // Install packages if specified
@@ -1654,7 +1640,7 @@ fn build_install_script(
         let all_packages: Vec<&str> = std::iter::once(pkg)
             .chain(
                 dependencies
-                    .map(|d| d.iter().map(|s| s.as_str()))
+                    .map(|d| d.iter().map(std::string::String::as_str))
                     .into_iter()
                     .flatten(),
             )
@@ -1663,24 +1649,22 @@ fn build_install_script(
         let packages_str = all_packages.join(" ");
 
         let install_cmd = match pkg_manager {
-            "apk" => format!("apk add --no-cache {}", packages_str),
+            "apk" => format!("apk add --no-cache {packages_str}"),
             "apt" => format!(
-                "apt-get update && apt-get install -y --no-install-recommends {}",
-                packages_str
+                "apt-get update && apt-get install -y --no-install-recommends {packages_str}"
             ),
-            "microdnf" => format!("microdnf install -y {} && microdnf clean all", packages_str),
-            "dnf" => format!("dnf install -y {} && dnf clean all", packages_str),
-            "yum" => format!("yum install -y {} && yum clean all", packages_str),
-            other => format!("{} install -y {}", other, packages_str),
+            "microdnf" => format!("microdnf install -y {packages_str} && microdnf clean all"),
+            "dnf" => format!("dnf install -y {packages_str} && dnf clean all"),
+            "yum" => format!("yum install -y {packages_str} && yum clean all"),
+            other => format!("{other} install -y {packages_str}"),
         };
 
-        script.push_str(&format!("{}\n", install_cmd));
+        script.push_str(&format!("{install_cmd}\n"));
     }
 
     // Verify binary exists
     script.push_str(&format!(
-        "test -f {} || (echo 'Binary not found: {}' && exit 1)\n",
-        binary_path, binary_path
+        "test -f {binary_path} || (echo 'Binary not found: {binary_path}' && exit 1)\n"
     ));
 
     script
@@ -1702,13 +1686,13 @@ fn run_container(
     ctx: &Context,
 ) -> Result<ContainerRunResult> {
     if ctx.verbose > 0 {
-        ui::dim(&format!("Running script in container:\n{}", script));
+        ui::dim(&format!("Running script in container:\n{script}"));
     }
 
     let output = Command::new(runtime)
         .args(["run", "--name", container_name, image, "sh", "-c", script])
         .output()
-        .context(format!("Failed to run {} container", runtime))?;
+        .context(format!("Failed to run {runtime} container"))?;
 
     Ok(ContainerRunResult {
         success: output.status.success(),
@@ -1724,14 +1708,13 @@ fn copy_from_container(
     container_path: &str,
     local_path: &Path,
 ) -> Result<()> {
-    let source = format!("{}:{}", container_name, container_path);
+    let source = format!("{container_name}:{container_path}");
 
     let output = Command::new(runtime)
         .args(["cp", &source, &local_path.to_string_lossy()])
         .output()
         .context(format!(
-            "Failed to copy file from container using {}",
-            runtime
+            "Failed to copy file from container using {runtime}"
         ))?;
 
     if !output.status.success() {
@@ -1747,7 +1730,7 @@ fn remove_container(runtime: &str, container_name: &str) -> Result<()> {
     let output = Command::new(runtime)
         .args(["rm", "-f", container_name])
         .output()
-        .context(format!("Failed to remove container using {}", runtime))?;
+        .context(format!("Failed to remove container using {runtime}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1912,7 +1895,7 @@ fn run_npm_install(
 ) -> Result<NpmInstallResult> {
     // Build package spec with optional version
     let package_spec = if let Some(v) = version {
-        format!("{}@{}", package, v)
+        format!("{package}@{v}")
     } else {
         package.to_string()
     };
@@ -1941,7 +1924,7 @@ fn run_npm_install(
     let output = Command::new(pm)
         .args(&args)
         .output()
-        .with_context(|| format!("Failed to run {} install", pm))?;
+        .with_context(|| format!("Failed to run {pm} install"))?;
 
     Ok(NpmInstallResult {
         success: output.status.success(),
@@ -1959,7 +1942,7 @@ fn find_npm_binary(pm: &str, binary_name: &str) -> Result<PathBuf> {
         .context("Failed to get npm prefix")?;
 
     if !bin_dir_output.status.success() {
-        bail!("Failed to get {} prefix", pm);
+        bail!("Failed to get {pm} prefix");
     }
 
     let prefix = String::from_utf8_lossy(&bin_dir_output.stdout)
@@ -2020,7 +2003,7 @@ fn find_npm_binary(pm: &str, binary_name: &str) -> Result<PathBuf> {
 
 /// Get latest version from npm registry.
 fn get_npm_latest(package: &str) -> Result<String> {
-    let url = format!("https://registry.npmjs.org/{}/latest", package);
+    let url = format!("https://registry.npmjs.org/{package}/latest");
 
     let agent = ureq::Agent::new_with_defaults();
     let mut response = agent
@@ -2036,7 +2019,7 @@ fn get_npm_latest(package: &str) -> Result<String> {
 
     body["version"]
         .as_str()
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .context("No version in npm response")
 }
 

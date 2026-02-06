@@ -71,7 +71,7 @@ pub fn display_diff(diffs: &[ResourceDiff]) {
                         "(not installed){}",
                         details
                             .as_ref()
-                            .map(|d| format!(" → {}", d))
+                            .map(|d| format!(" → {d}"))
                             .unwrap_or_default()
                     )
                 }

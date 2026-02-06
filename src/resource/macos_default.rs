@@ -53,7 +53,7 @@ impl MacOSDefault {
         // Find the last dot that separates domain from key
         let parts: Vec<&str> = domain_key.rsplitn(2, '.').collect();
         if parts.len() != 2 {
-            bail!("Invalid domain.key format: {}", domain_key);
+            bail!("Invalid domain.key format: {domain_key}");
         }
 
         Ok(Self::new(parts[1], parts[0], value))
@@ -159,10 +159,10 @@ impl Resource for MacOSDefault {
         match self.read_current()? {
             None => Ok(ResourceState::Absent),
             Some(current) if current == self.value => Ok(ResourceState::Present {
-                details: Some(format!("{:?}", current)),
+                details: Some(format!("{current:?}")),
             }),
             Some(current) => Ok(ResourceState::Modified {
-                from: format!("{:?}", current),
+                from: format!("{current:?}"),
                 to: format!("{:?}", self.value),
             }),
         }

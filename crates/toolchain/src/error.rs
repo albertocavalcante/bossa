@@ -221,7 +221,7 @@ impl From<ureq::Error> for Error {
     fn from(err: ureq::Error) -> Self {
         match err {
             ureq::Error::StatusCode(code) => Self::HttpError {
-                message: format!("HTTP {}", code),
+                message: format!("HTTP {code}"),
                 status: Some(code),
             },
             other => Self::HttpError {

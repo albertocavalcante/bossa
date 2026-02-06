@@ -31,7 +31,7 @@ fn apply(_ctx: &AppContext, config_name: Option<&str>, dry_run: bool) -> Result<
             }
         }
         Some(name) => {
-            anyhow::bail!("Unknown config '{}'. Available: git", name);
+            anyhow::bail!("Unknown config '{name}'. Available: git");
         }
     }
 
@@ -54,7 +54,7 @@ fn apply_git(
         println!();
         println!("{}", "Would generate:".yellow());
         println!("{}", "─".repeat(60).dimmed());
-        println!("{}", content);
+        println!("{content}");
         println!("{}", "─".repeat(60).dimmed());
         println!();
         println!("{}", "Dry run - no changes made.".dimmed());
@@ -94,7 +94,7 @@ fn diff(_ctx: &AppContext, config_name: Option<&str>) -> Result<()> {
             }
         }
         Some(name) => {
-            anyhow::bail!("Unknown config '{}'. Available: git", name);
+            anyhow::bail!("Unknown config '{name}'. Available: git");
         }
     }
 
@@ -106,7 +106,7 @@ fn diff_git(config: &BossaConfig, git_config: &crate::schema::GitConfig) -> Resu
 
     match generators::git::diff(git_config, &config.locations)? {
         Some(diff_output) => {
-            println!("{}", diff_output);
+            println!("{diff_output}");
         }
         None => {
             println!("{}", "No changes - config is up to date.".green());
@@ -158,13 +158,13 @@ fn show(_ctx: &AppContext, config_name: &str) -> Result<()> {
         "git" => {
             if let Some(ref git_config) = config.configs.git {
                 let content = generators::git::generate(git_config, &config.locations)?;
-                println!("{}", content);
+                println!("{content}");
             } else {
                 anyhow::bail!("No git config defined in config.toml. Add [configs.git] section.");
             }
         }
         name => {
-            anyhow::bail!("Unknown config '{}'. Available: git", name);
+            anyhow::bail!("Unknown config '{name}'. Available: git");
         }
     }
 

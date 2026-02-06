@@ -37,7 +37,7 @@ fn list() -> Result<()> {
 
         println!("  {} {} = {}", icon, name.bold(), resolved.display());
         if path != &resolved.to_string_lossy().to_string() {
-            println!("      {}", format!("({})", path).dimmed());
+            println!("      {}", format!("({path})").dimmed());
         }
     }
 
@@ -57,7 +57,7 @@ fn add(name: &str, path: &str) -> Result<()> {
 
     // Validate name
     if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-        anyhow::bail!("Location name must be alphanumeric (got: {})", name);
+        anyhow::bail!("Location name must be alphanumeric (got: {name})");
     }
 
     config
@@ -81,7 +81,7 @@ fn remove(name: &str) -> Result<()> {
     let mut config = BossaConfig::load()?;
 
     if config.locations.paths.remove(name).is_none() {
-        anyhow::bail!("Location '{}' not found", name);
+        anyhow::bail!("Location '{name}' not found");
     }
 
     // Also remove any aliases pointing to this location
@@ -101,7 +101,7 @@ fn show(name: &str) -> Result<()> {
         .locations
         .paths
         .get(name)
-        .with_context(|| format!("Location '{}' not found", name))?;
+        .with_context(|| format!("Location '{name}' not found"))?;
 
     let resolved = crate::paths::resolve(path, &config.locations);
     println!("{}", resolved.display());
@@ -115,9 +115,7 @@ fn alias(path: &str, location: &str) -> Result<()> {
     // Verify location exists
     if !config.locations.paths.contains_key(location) {
         anyhow::bail!(
-            "Location '{}' not found. Add it first with: bossa locations add {} <path>",
-            location,
-            location
+            "Location '{location}' not found. Add it first with: bossa locations add {location} <path>"
         );
     }
 

@@ -114,7 +114,7 @@ impl BossaConfig {
         for (name, collection) in &self.collections {
             collection
                 .validate()
-                .with_context(|| format!("Invalid collection '{}'", name))?;
+                .with_context(|| format!("Invalid collection '{name}'"))?;
         }
 
         // Validate workspaces
@@ -124,7 +124,7 @@ impl BossaConfig {
         for (name, storage) in &self.storage {
             storage
                 .validate()
-                .with_context(|| format!("Invalid storage '{}'", name))?;
+                .with_context(|| format!("Invalid storage '{name}'"))?;
         }
 
         // Validate nova
@@ -548,7 +548,7 @@ impl NovaConfig {
         let mut seen = std::collections::HashSet::new();
         for stage in &self.stages {
             if !seen.insert(stage) {
-                anyhow::bail!("Duplicate stage: {}", stage);
+                anyhow::bail!("Duplicate stage: {stage}");
             }
         }
 
@@ -626,23 +626,23 @@ pub enum DefaultValue {
     Int(i64),
     Float(f64),
     String(String),
-    Array(Vec<DefaultValue>),
+    Array(Vec<Self>),
 }
 
 impl DefaultValue {
     /// Convert to defaults command argument format
     pub fn to_defaults_args(&self) -> Vec<String> {
         match self {
-            DefaultValue::Bool(b) => vec!["-bool".to_string(), b.to_string()],
-            DefaultValue::Int(i) => vec!["-int".to_string(), i.to_string()],
-            DefaultValue::Float(f) => vec!["-float".to_string(), f.to_string()],
-            DefaultValue::String(s) => vec!["-string".to_string(), s.clone()],
-            DefaultValue::Array(arr) => {
+            Self::Bool(b) => vec!["-bool".to_string(), b.to_string()],
+            Self::Int(i) => vec!["-int".to_string(), i.to_string()],
+            Self::Float(f) => vec!["-float".to_string(), f.to_string()],
+            Self::String(s) => vec!["-string".to_string(), s.clone()],
+            Self::Array(arr) => {
                 let mut args = vec!["-array".to_string()];
                 for item in arr {
                     match item {
-                        DefaultValue::String(s) => args.push(s.clone()),
-                        _ => args.push(format!("{:?}", item)),
+                        Self::String(s) => args.push(s.clone()),
+                        _ => args.push(format!("{item:?}")),
                     }
                 }
                 args
@@ -1291,8 +1291,8 @@ impl ToolDefinition {
         let style = self.platform_style.as_deref().unwrap_or("long");
 
         match style {
-            "long" => format!("{}-{}", os_name, arch_name),
-            "short" | "go" => format!("{}_{}", os_name, arch_name),
+            "long" => format!("{os_name}-{arch_name}"),
+            "short" | "go" => format!("{os_name}_{arch_name}"),
             "os-only" => os_name.to_string(),
             "arch-only" => arch_name.to_string(),
             // Custom pattern: use as-is with {os} and {arch} placeholders
@@ -1375,36 +1375,26 @@ impl ToolDefinition {
                 let has_pattern_url = self.base_url.is_some() && self.path.is_some();
                 if !has_direct_url && !has_pattern_url {
                     anyhow::bail!(
-                        "Tool '{}': HTTP source requires either 'url' or 'base_url' + 'path'",
-                        name
+                        "Tool '{name}': HTTP source requires either 'url' or 'base_url' + 'path'"
                     );
                 }
             }
             ToolSource::Container => {
                 if self.image.is_none() {
-                    anyhow::bail!("Tool '{}': Container source requires 'image' field", name);
+                    anyhow::bail!("Tool '{name}': Container source requires 'image' field");
                 }
                 if self.binary_path.is_none() {
-                    anyhow::bail!(
-                        "Tool '{}': Container source requires 'binary_path' field",
-                        name
-                    );
+                    anyhow::bail!("Tool '{name}': Container source requires 'binary_path' field");
                 }
             }
             ToolSource::GithubRelease => {
                 if self.repo.is_none() {
-                    anyhow::bail!(
-                        "Tool '{}': GitHub release source requires 'repo' field",
-                        name
-                    );
+                    anyhow::bail!("Tool '{name}': GitHub release source requires 'repo' field");
                 }
             }
             ToolSource::Cargo => {
                 if self.crate_name.is_none() && self.git.is_none() {
-                    anyhow::bail!(
-                        "Tool '{}': Cargo source requires 'crate' or 'git' field",
-                        name
-                    );
+                    anyhow::bail!("Tool '{name}': Cargo source requires 'crate' or 'git' field");
                 }
             }
             ToolSource::Npm => {
@@ -1643,10 +1633,7 @@ impl LocationsConfig {
         for name in self.paths.keys() {
             // Validate name is alphanumeric + underscore
             if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                anyhow::bail!(
-                    "Invalid location name '{}': must be alphanumeric or underscore",
-                    name
-                );
+                anyhow::bail!("Invalid location name '{name}': must be alphanumeric or underscore");
             }
         }
         Ok(())
@@ -1654,12 +1641,12 @@ impl LocationsConfig {
 
     /// Get a location path by name
     pub fn get(&self, name: &str) -> Option<&str> {
-        self.paths.get(name).map(|s| s.as_str())
+        self.paths.get(name).map(std::string::String::as_str)
     }
 
     /// Check if a path matches any alias and return the location name
     pub fn resolve_alias(&self, path: &str) -> Option<&str> {
-        self.aliases.get(path).map(|s| s.as_str())
+        self.aliases.get(path).map(std::string::String::as_str)
     }
 }
 
@@ -1925,7 +1912,7 @@ stages = ["defaults", "homebrew", "essential", "stow", "collections", "workspace
         assert!(collection.validate().is_ok());
 
         // Empty path should fail
-        collection.path = "".to_string();
+        collection.path = String::new();
         assert!(collection.validate().is_err());
     }
 
@@ -1936,7 +1923,7 @@ stages = ["defaults", "homebrew", "essential", "stow", "collections", "workspace
             url: "git@github.com:user/test-repo.git".to_string(),
             category: "projects".to_string(),
             worktrees: vec!["main".to_string()],
-            description: "".to_string(),
+            description: String::new(),
         };
 
         let root = PathBuf::from("/home/user/ws");
@@ -1997,10 +1984,10 @@ extra_field = 123
     #[test]
     fn test_collection_empty_name() {
         let repo = CollectionRepo {
-            name: "".to_string(),
+            name: String::new(),
             url: "https://github.com/user/repo".to_string(),
             default_branch: "main".to_string(),
-            description: "".to_string(),
+            description: String::new(),
         };
         assert!(repo.validate().is_err());
     }
@@ -2009,9 +1996,9 @@ extra_field = 123
     fn test_collection_empty_url() {
         let repo = CollectionRepo {
             name: "test".to_string(),
-            url: "".to_string(),
+            url: String::new(),
             default_branch: "main".to_string(),
-            description: "".to_string(),
+            description: String::new(),
         };
         assert!(repo.validate().is_err());
     }
@@ -2022,7 +2009,7 @@ extra_field = 123
             name: "   ".to_string(),
             url: "https://github.com/user/repo".to_string(),
             default_branch: "main".to_string(),
-            description: "".to_string(),
+            description: String::new(),
         };
         // Fixed: whitespace-only names should now fail validation
         assert!(repo.validate().is_err());
@@ -2033,9 +2020,9 @@ extra_field = 123
         let repo = WorkspaceRepo {
             name: "test".to_string(),
             url: "https://github.com/user/test".to_string(),
-            category: "".to_string(),
+            category: String::new(),
             worktrees: vec![],
-            description: "".to_string(),
+            description: String::new(),
         };
         assert!(repo.validate().is_err());
     }
@@ -2047,7 +2034,7 @@ extra_field = 123
             url: "https://github.com/user/test".to_string(),
             category: "projects".to_string(),
             worktrees: vec![],
-            description: "".to_string(),
+            description: String::new(),
         };
         // Fixed: path traversal attempts should now fail validation
         assert!(repo.validate().is_err());
@@ -2056,7 +2043,7 @@ extra_field = 123
     #[test]
     fn test_symlink_empty_from() {
         let symlink = Symlink {
-            from: "".to_string(),
+            from: String::new(),
             to: "/somewhere".to_string(),
         };
         assert!(symlink.validate().is_err());
@@ -2066,7 +2053,7 @@ extra_field = 123
     fn test_symlink_empty_to() {
         let symlink = Symlink {
             from: "~/test".to_string(),
-            to: "".to_string(),
+            to: String::new(),
         };
         assert!(symlink.validate().is_err());
     }
@@ -2084,10 +2071,10 @@ extra_field = 123
     #[test]
     fn test_storage_empty_mount() {
         let storage = Storage {
-            mount: "".to_string(),
+            mount: String::new(),
             storage_type: StorageType::External,
             symlinks: vec![],
-            description: "".to_string(),
+            description: String::new(),
         };
         assert!(storage.validate().is_err());
     }
@@ -2119,14 +2106,14 @@ extra_field = 123
             name: "test-repo".to_string(),
             url: "https://github.com/user/test1".to_string(),
             default_branch: "main".to_string(),
-            description: "".to_string(),
+            description: String::new(),
         };
 
         let repo2 = CollectionRepo {
             name: "test-repo".to_string(),                    // Same name
             url: "https://github.com/user/test2".to_string(), // Different URL
             default_branch: "main".to_string(),
-            description: "".to_string(),
+            description: String::new(),
         };
 
         collection.add_repo(repo1);
@@ -2141,11 +2128,11 @@ extra_field = 123
     fn test_workspace_extremely_long_name() {
         let long_name = "a".repeat(10000);
         let repo = WorkspaceRepo {
-            name: long_name.clone(),
+            name: long_name,
             url: "https://github.com/user/test".to_string(),
             category: "projects".to_string(),
             worktrees: vec![],
-            description: "".to_string(),
+            description: String::new(),
         };
         assert!(repo.validate().is_ok());
 
@@ -2199,21 +2186,21 @@ name = "rust"
                     url: "url1".to_string(),
                     category: "utils".to_string(),
                     worktrees: vec![],
-                    description: "".to_string(),
+                    description: String::new(),
                 },
                 WorkspaceRepo {
                     name: "repo2".to_string(),
                     url: "url2".to_string(),
                     category: "projects".to_string(),
                     worktrees: vec![],
-                    description: "".to_string(),
+                    description: String::new(),
                 },
                 WorkspaceRepo {
                     name: "repo3".to_string(),
                     url: "url3".to_string(),
                     category: "utils".to_string(),
                     worktrees: vec![],
-                    description: "".to_string(),
+                    description: String::new(),
                 },
             ],
             ..Default::default()
@@ -2253,12 +2240,11 @@ name = "rust"
                 name: attempt.to_string(),
                 url: "https://github.com/user/repo".to_string(),
                 default_branch: "main".to_string(),
-                description: "".to_string(),
+                description: String::new(),
             };
             assert!(
                 repo.validate().is_err(),
-                "Path traversal should be rejected: {}",
-                attempt
+                "Path traversal should be rejected: {attempt}"
             );
         }
     }
@@ -2280,12 +2266,11 @@ name = "rust"
                 url: "https://github.com/user/test".to_string(),
                 category: "projects".to_string(),
                 worktrees: vec![],
-                description: "".to_string(),
+                description: String::new(),
             };
             assert!(
                 repo.validate().is_err(),
-                "Path traversal should be rejected: {}",
-                attempt
+                "Path traversal should be rejected: {attempt}"
             );
         }
     }
@@ -2297,7 +2282,7 @@ name = "rust"
             url: "https://github.com/user/test".to_string(),
             category: "   ".to_string(),
             worktrees: vec![],
-            description: "".to_string(),
+            description: String::new(),
         };
         // Fixed: whitespace-only categories should now fail validation
         assert!(repo.validate().is_err());

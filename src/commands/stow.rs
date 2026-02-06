@@ -360,7 +360,7 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
     if let Some(s) = state
         && let Err(e) = s.save()
     {
-        log::warn!("Failed to save state: {}", e);
+        log::warn!("Failed to save state: {e}");
     }
 
     println!();
@@ -401,7 +401,7 @@ fn list() -> Result<()> {
 
         let status = if exists { "✓".green() } else { "✗".red() };
 
-        println!("  {} {}", status, package);
+        println!("  {status} {package}");
     }
 
     println!();
@@ -444,7 +444,7 @@ fn add(package: &str) -> Result<()> {
     config.save()?;
 
     println!("{} Added '{}' to symlinks config", "✓".green(), package);
-    println!("  Run 'bossa stow sync {}' to create symlinks", package);
+    println!("  Run 'bossa stow sync {package}' to create symlinks");
 
     Ok(())
 }
@@ -563,7 +563,7 @@ fn unlink(packages: &[String], dry_run: bool) -> Result<()> {
     if let Some(s) = state
         && let Err(e) = s.save()
     {
-        log::warn!("Failed to save state: {}", e);
+        log::warn!("Failed to save state: {e}");
     }
 
     println!();
@@ -594,9 +594,7 @@ fn init(source: Option<&str>, target: Option<&str>, force: bool) -> Result<()> {
     });
 
     // Default target: ~
-    let target_path = target
-        .map(expand_path)
-        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default());
+    let target_path = target.map_or_else(|| dirs::home_dir().unwrap_or_default(), expand_path);
 
     if !source_path.exists() {
         bail!("Source directory does not exist: {}", source_path.display());

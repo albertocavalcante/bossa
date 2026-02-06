@@ -7,6 +7,7 @@ use super::types::DiskSpace;
 /// Get disk space for a given path
 #[cfg(unix)]
 #[allow(clippy::unnecessary_cast)] // Cast needed on macOS, not on Linux
+#[allow(unsafe_code)] // statvfs requires unsafe FFI
 pub fn get_disk_space(path: &str) -> Result<DiskSpace> {
     use std::ffi::CString;
     use std::mem::MaybeUninit;
@@ -20,14 +21,14 @@ pub fn get_disk_space(path: &str) -> Result<DiskSpace> {
         let result = libc::statvfs(c_path.as_ptr(), stat.as_mut_ptr());
 
         if result != 0 {
-            anyhow::bail!("statvfs failed for {}", path);
+            anyhow::bail!("statvfs failed for {path}");
         }
 
         let stat = stat.assume_init();
 
         Ok(DiskSpace {
-            total: stat.f_blocks as u64 * stat.f_frsize,
-            available: stat.f_bavail as u64 * stat.f_frsize,
+            total: u64::from(stat.f_blocks) * stat.f_frsize,
+            available: u64::from(stat.f_bavail) * stat.f_frsize,
         })
     }
 }
@@ -83,7 +84,7 @@ mod tests {
 
     #[test]
     fn test_format_disk_usage() {
-        let format = |n: u64| format!("{} B", n);
+        let format = |n: u64| format!("{n} B");
         assert_eq!(format_disk_usage(50, 100, format), "50 B / 100 B (50%)");
     }
 

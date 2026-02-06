@@ -67,7 +67,7 @@ impl SudoContext {
     pub fn acquire(reason: &str) -> Result<Self> {
         // Prompt user with reason
         eprintln!();
-        eprintln!("  Sudo required: {}", reason);
+        eprintln!("  Sudo required: {reason}");
         eprintln!();
 
         // Validate sudo (will prompt for password)
@@ -102,7 +102,7 @@ impl SudoContext {
             .arg(cmd)
             .args(args)
             .output()
-            .with_context(|| format!("Failed to execute: sudo {} {:?}", cmd, args))?;
+            .with_context(|| format!("Failed to execute: sudo {cmd} {args:?}"))?;
 
         Ok(output)
     }

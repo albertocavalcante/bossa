@@ -86,7 +86,7 @@ fn write_grouped(output: &mut String, brewfile: &Brewfile, options: &WriteOption
         first_section = false;
 
         // Write section header
-        writeln!(output, "# {}", header).unwrap();
+        writeln!(output, "# {header}").unwrap();
 
         for package in packages {
             write_package(output, package, options);
@@ -113,13 +113,13 @@ fn write_package(output: &mut String, package: &Package, options: &WriteOptions)
 
         // Determine if value should be a symbol or string
         if is_symbol_value(value) {
-            write!(output, "{}: :{}", key, value).unwrap();
+            write!(output, "{key}: :{value}").unwrap();
         } else if value.chars().all(|c| c.is_ascii_digit()) {
             // Numeric value
-            write!(output, "{}: {}", key, value).unwrap();
+            write!(output, "{key}: {value}").unwrap();
         } else {
             // String value
-            write!(output, "{}: \"{}\"", key, value).unwrap();
+            write!(output, "{key}: \"{value}\"").unwrap();
         }
     }
 
@@ -127,7 +127,7 @@ fn write_package(output: &mut String, package: &Package, options: &WriteOptions)
     if options.include_versions
         && let Some(version) = &package.version
     {
-        write!(output, " # {}", version).unwrap();
+        write!(output, " # {version}").unwrap();
     }
 
     writeln!(output).unwrap();

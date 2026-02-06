@@ -65,9 +65,7 @@ fn status(path: Option<String>) -> Result<()> {
     let client = Client::new().context("Failed to initialize iCloud client")?;
     let icloud_root = client.icloud_root()?;
 
-    let target_path = path
-        .map(|p| expand_path(&p))
-        .unwrap_or_else(|| icloud_root.clone());
+    let target_path = path.map_or_else(|| icloud_root.clone(), |p| expand_path(&p));
 
     ui::header("iCloud Drive Status");
     println!();
@@ -102,9 +100,7 @@ fn list(path: Option<String>, local_only: bool, cloud_only: bool) -> Result<()> 
     let client = Client::new().context("Failed to initialize iCloud client")?;
     let icloud_root = client.icloud_root()?;
 
-    let target_path = path
-        .map(|p| expand_path(&p))
-        .unwrap_or_else(|| icloud_root.clone());
+    let target_path = path.map_or_else(|| icloud_root.clone(), |p| expand_path(&p));
 
     if !client.is_in_icloud(&target_path) {
         anyhow::bail!("Path is not in iCloud Drive: {}", target_path.display());
@@ -151,12 +147,10 @@ fn find_evictable(path: Option<String>, min_size_str: &str) -> Result<()> {
     let client = Client::new().context("Failed to initialize iCloud client")?;
     let icloud_root = client.icloud_root()?;
 
-    let target_path = path
-        .map(|p| expand_path(&p))
-        .unwrap_or_else(|| icloud_root.clone());
+    let target_path = path.map_or_else(|| icloud_root.clone(), |p| expand_path(&p));
 
     let min_size = ui::parse_size(min_size_str)
-        .map_err(|e| anyhow::anyhow!("Invalid size '{}': {}", min_size_str, e))?;
+        .map_err(|e| anyhow::anyhow!("Invalid size '{min_size_str}': {e}"))?;
 
     if !client.is_in_icloud(&target_path) {
         anyhow::bail!("Path is not in iCloud Drive: {}", target_path.display());
@@ -185,10 +179,7 @@ fn find_evictable(path: Option<String>, min_size_str: &str) -> Result<()> {
     let total_size: u64 = sorted.iter().filter_map(|f| f.size).sum();
 
     for file in &sorted {
-        let size_str = file
-            .size
-            .map(ui::format_size)
-            .unwrap_or_else(|| "?".to_string());
+        let size_str = file.size.map_or_else(|| "?".to_string(), ui::format_size);
         let rel_path = file.path.strip_prefix(&target_path).unwrap_or(&file.path);
         println!("  {} {}", size_str.yellow().bold(), rel_path.display());
     }
@@ -215,7 +206,7 @@ fn evict(path: &str, recursive: bool, min_size: Option<&str>, dry_run: bool) -> 
     }
 
     let min_bytes = min_size
-        .map(|s| ui::parse_size(s).map_err(|e| anyhow::anyhow!("Invalid size '{}': {}", s, e)))
+        .map(|s| ui::parse_size(s).map_err(|e| anyhow::anyhow!("Invalid size '{s}': {e}")))
         .transpose()?;
 
     if dry_run {
@@ -255,7 +246,7 @@ fn evict_single_file(
     }
 
     if let Some(min) = min_bytes
-        && status.size.map(|s| s < min).unwrap_or(true)
+        && status.size.is_none_or(|s| s < min)
     {
         ui::info(&format!(
             "Skipping: file smaller than {}",
@@ -264,10 +255,7 @@ fn evict_single_file(
         return Ok(());
     }
 
-    let size_str = status
-        .size
-        .map(ui::format_size)
-        .unwrap_or_else(|| "?".to_string());
+    let size_str = status.size.map_or_else(|| "?".to_string(), ui::format_size);
 
     if dry_run {
         println!("  Would evict: {} ({})", path.display(), size_str);
@@ -290,7 +278,7 @@ fn evict_directory(
             return false;
         }
         if let Some(min) = min_bytes {
-            status.size.map(|s| s >= min).unwrap_or(false)
+            status.size.is_some_and(|s| s >= min)
         } else {
             true
         }
@@ -312,10 +300,7 @@ fn evict_directory(
 
     if dry_run {
         for file in &files {
-            let size_str = file
-                .size
-                .map(ui::format_size)
-                .unwrap_or_else(|| "?".to_string());
+            let size_str = file.size.map_or_else(|| "?".to_string(), ui::format_size);
             let rel_path = file.path.strip_prefix(path).unwrap_or(&file.path);
             println!("  Would evict: {} ({})", rel_path.display(), size_str);
         }
@@ -428,10 +413,7 @@ fn expand_path(path: &str) -> PathBuf {
 /// Print file status details
 fn print_file_status(file: &FileStatus) {
     let state_str = format_state(&file.state);
-    let size_str = file
-        .size
-        .map(ui::format_size)
-        .unwrap_or_else(|| "-".to_string());
+    let size_str = file.size.map_or_else(|| "-".to_string(), ui::format_size);
 
     ui::kv("Path", &file.path.display().to_string());
     ui::kv("Status", &state_str);
@@ -470,15 +452,15 @@ fn print_file_line(file: &FileStatus, base_path: &Path) {
     let state_icon = match file.state {
         DownloadState::Local => "●".green(),
         DownloadState::Cloud => "○".blue(),
-        DownloadState::Downloading { percent } => format!("↓{}%", percent).cyan().bold(),
-        DownloadState::Uploading { percent } => format!("↑{}%", percent).yellow().bold(),
+        DownloadState::Downloading { percent } => format!("↓{percent}%").cyan().bold(),
+        DownloadState::Uploading { percent } => format!("↑{percent}%").yellow().bold(),
         DownloadState::Unknown => "?".dimmed(),
     };
 
-    let size_str = file
-        .size
-        .map(|s| format!("{:>8}", ui::format_size(s)))
-        .unwrap_or_else(|| "       -".to_string());
+    let size_str = file.size.map_or_else(
+        || "       -".to_string(),
+        |s| format!("{:>8}", ui::format_size(s)),
+    );
 
     let rel_path = file.path.strip_prefix(base_path).unwrap_or(&file.path);
     let name = if file.is_dir {
@@ -496,10 +478,10 @@ fn format_state(state: &DownloadState) -> String {
         DownloadState::Local => "Local (downloaded)".green().to_string(),
         DownloadState::Cloud => "Cloud-only (evicted)".blue().to_string(),
         DownloadState::Downloading { percent } => {
-            format!("Downloading ({}%)", percent).cyan().to_string()
+            format!("Downloading ({percent}%)").cyan().to_string()
         }
         DownloadState::Uploading { percent } => {
-            format!("Uploading ({}%)", percent).yellow().to_string()
+            format!("Uploading ({percent}%)").yellow().to_string()
         }
         DownloadState::Unknown => "Unknown".dimmed().to_string(),
     }
@@ -519,7 +501,7 @@ where
         let entry = match entry {
             Ok(e) => e,
             Err(e) => {
-                errors.push(format!("{}", e));
+                errors.push(format!("{e}"));
                 continue;
             }
         };

@@ -69,13 +69,13 @@ pub fn run(disk: &str, dry_run: bool, confirm: bool) -> Result<()> {
     if disk_info.internal {
         ui::error("Cannot repartition internal disk!");
         ui::dim("This command only works on external drives for safety.");
-        anyhow::bail!("Refusing to repartition internal disk: {}", disk_id);
+        anyhow::bail!("Refusing to repartition internal disk: {disk_id}");
     }
 
     if disk_info.boot {
         ui::error("Cannot repartition boot disk!");
         ui::dim("The system is running from this disk.");
-        anyhow::bail!("Refusing to repartition boot disk: {}", disk_id);
+        anyhow::bail!("Refusing to repartition boot disk: {disk_id}");
     }
 
     // Show current layout
@@ -145,8 +145,7 @@ pub fn run(disk: &str, dry_run: bool, confirm: bool) -> Result<()> {
 
     if !Confirm::new()
         .with_prompt(format!(
-            "Are you ABSOLUTELY SURE you want to repartition {}?",
-            disk_id
+            "Are you ABSOLUTELY SURE you want to repartition {disk_id}?"
         ))
         .default(false)
         .interact()
@@ -268,7 +267,7 @@ fn get_partition_info(part_id: &str) -> Result<CurrentPartition> {
         .context("Failed to get partition info")?;
 
     if !output.status.success() {
-        anyhow::bail!("Failed to get partition info for {}", part_id);
+        anyhow::bail!("Failed to get partition info for {part_id}");
     }
 
     let plist_str = String::from_utf8_lossy(&output.stdout);
@@ -526,7 +525,10 @@ fn execute_repartition(disk_id: &str, partitions: &[PartitionSpec]) -> Result<()
         .flat_map(|spec| vec![spec.fs_type.clone(), spec.name.clone(), spec.size.clone()])
         .collect();
 
-    let arg_refs: Vec<&str> = partition_args.iter().map(|s| s.as_str()).collect();
+    let arg_refs: Vec<&str> = partition_args
+        .iter()
+        .map(std::string::String::as_str)
+        .collect();
 
     // Combine args
     let mut full_args = args.clone();
@@ -543,7 +545,7 @@ fn execute_repartition(disk_id: &str, partitions: &[PartitionSpec]) -> Result<()
         .context("Failed to execute diskutil")?;
 
     if !status.success() {
-        anyhow::bail!("diskutil command failed with status: {}", status);
+        anyhow::bail!("diskutil command failed with status: {status}");
     }
 
     println!();

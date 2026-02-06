@@ -110,8 +110,7 @@ fn filter_manifests(
 fn report_missing_manifests(not_found: &[String]) {
     for name in not_found {
         ui::warn(&format!(
-            "Manifest '{}' not found (case-insensitive search)",
-            name
+            "Manifest '{name}' not found (case-insensitive search)"
         ));
     }
 }
@@ -180,11 +179,11 @@ fn compare_pair(
     display_limit: usize,
 ) -> Result<(u64, u64)> {
     let manifest_a =
-        manifest::Manifest::open(path_a).context(format!("Failed to open manifest: {}", name_a))?;
+        manifest::Manifest::open(path_a).context(format!("Failed to open manifest: {name_a}"))?;
 
     let cross_dups = manifest_a
         .compare_with(path_b, min_size)
-        .context(format!("Failed to compare {} with {}", name_a, name_b))?;
+        .context(format!("Failed to compare {name_a} with {name_b}"))?;
 
     if cross_dups.is_empty() {
         return Ok((0, 0));
@@ -196,9 +195,9 @@ fn compare_pair(
     // Display header
     println!(
         "  {} {} {}\n",
-        format!("{} (source)", name_a).green(),
+        format!("{name_a} (source)").green(),
         "↔".dimmed(),
-        format!("{} (also exists)", name_b).blue()
+        format!("{name_b} (also exists)").blue()
     );
 
     // Display duplicates (respect limit, 0 = unlimited)

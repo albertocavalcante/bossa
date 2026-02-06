@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use crate::Context as AppContext;
@@ -56,8 +57,8 @@ pub fn run(ctx: &AppContext, cmd: RelocateCommand) -> Result<()> {
                 "->".cyan(),
                 ShellScanner::replace_path(
                     &r.content,
-                    &from_path.to_string_lossy(),
-                    &to_path.to_string_lossy()
+                    from_path.to_string_lossy().as_ref(),
+                    to_path.to_string_lossy().as_ref()
                 )
                 .trim()
             );
@@ -111,7 +112,6 @@ pub fn run(ctx: &AppContext, cmd: RelocateCommand) -> Result<()> {
     if !cmd.yes && !ctx.quiet {
         println!();
         print!("Proceed with updates? [y/N] ");
-        use std::io::{self, Write};
         io::stdout().flush()?;
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;

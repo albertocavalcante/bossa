@@ -21,28 +21,26 @@ impl ConfigFormat {
     /// Get file extension for this format
     pub fn extension(&self) -> &'static str {
         match self {
-            ConfigFormat::Json => "json",
-            ConfigFormat::Toml => "toml",
+            Self::Json => "json",
+            Self::Toml => "toml",
         }
     }
 
     /// Parse content in this format
     pub fn parse<T: DeserializeOwned>(&self, content: &str) -> Result<T> {
         match self {
-            ConfigFormat::Json => serde_json::from_str(content).context("Invalid JSON format"),
-            ConfigFormat::Toml => toml::from_str(content).context("Invalid TOML format"),
+            Self::Json => serde_json::from_str(content).context("Invalid JSON format"),
+            Self::Toml => toml::from_str(content).context("Invalid TOML format"),
         }
     }
 
     /// Serialize to this format
     pub fn serialize<T: Serialize>(&self, value: &T) -> Result<String> {
         match self {
-            ConfigFormat::Json => {
+            Self::Json => {
                 serde_json::to_string_pretty(value).context("Failed to serialize to JSON")
             }
-            ConfigFormat::Toml => {
-                toml::to_string_pretty(value).context("Failed to serialize to TOML")
-            }
+            Self::Toml => toml::to_string_pretty(value).context("Failed to serialize to TOML"),
         }
     }
 }
@@ -50,13 +48,13 @@ impl ConfigFormat {
 /// Find config file, preferring TOML over JSON if both exist
 pub fn find_config_file(dir: &std::path::Path, base_name: &str) -> Option<(PathBuf, ConfigFormat)> {
     // Prefer TOML
-    let toml_path = dir.join(format!("{}.toml", base_name));
+    let toml_path = dir.join(format!("{base_name}.toml"));
     if toml_path.exists() {
         return Some((toml_path, ConfigFormat::Toml));
     }
 
     // Fall back to JSON
-    let json_path = dir.join(format!("{}.json", base_name));
+    let json_path = dir.join(format!("{base_name}.json"));
     if json_path.exists() {
         return Some((json_path, ConfigFormat::Json));
     }
@@ -69,12 +67,8 @@ pub fn load_config<T: DeserializeOwned>(
     dir: &std::path::Path,
     base_name: &str,
 ) -> Result<(T, ConfigFormat)> {
-    let (path, format) = find_config_file(dir, base_name).with_context(|| {
-        format!(
-            "Config file not found: {}.toml or {}.json",
-            base_name, base_name
-        )
-    })?;
+    let (path, format) = find_config_file(dir, base_name)
+        .with_context(|| format!("Config file not found: {base_name}.toml or {base_name}.json"))?;
 
     let content =
         fs::read_to_string(&path).with_context(|| format!("Could not read {}", path.display()))?;
@@ -222,7 +216,7 @@ impl CachesConfig {
 
     /// Create a default config with common cache locations
     pub fn default_config() -> Self {
-        CachesConfig {
+        Self {
             external_drive: ExternalDrive {
                 name: "T9".to_string(),
                 mount_point: "/Volumes/T9".to_string(),
@@ -264,7 +258,7 @@ impl CachesConfig {
 /// Extract repo name from a git URL
 pub fn repo_name_from_url(url: &str) -> Option<String> {
     let url = url.trim_end_matches('/').trim_end_matches(".git");
-    url.rsplit('/').next().map(|s| s.to_string())
+    url.rsplit('/').next().map(std::string::ToString::to_string)
 }
 
 /// Detect default branch for a remote URL
@@ -344,7 +338,7 @@ broken =
 
     #[test]
     fn test_parse_malformed_toml_missing_quotes() {
-        let bad_toml = r#"name = test"#;
+        let bad_toml = r"name = test";
         let result: Result<HashMap<String, String>> = ConfigFormat::Toml.parse(bad_toml);
         assert!(result.is_err());
     }
@@ -403,7 +397,7 @@ broken =
 
     #[test]
     fn test_repo_name_from_url_empty() {
-        assert_eq!(repo_name_from_url(""), Some("".to_string()));
+        assert_eq!(repo_name_from_url(""), Some(String::new()));
     }
 
     #[test]
@@ -433,7 +427,7 @@ broken =
     #[test]
     fn test_repo_name_from_url_very_long() {
         let long_name = "a".repeat(500);
-        let url = format!("https://github.com/user/{}.git", long_name);
+        let url = format!("https://github.com/user/{long_name}.git");
         assert_eq!(repo_name_from_url(&url), Some(long_name));
     }
 }

@@ -91,7 +91,7 @@ fn read_default(_ctx: &Context, domain: &str, key: Option<&str>) -> Result<()> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    print!("{}", stdout);
+    print!("{stdout}");
 
     Ok(())
 }
@@ -99,20 +99,19 @@ fn read_default(_ctx: &Context, domain: &str, key: Option<&str>) -> Result<()> {
 fn parse_value(value: &str, type_hint: Option<DefaultsType>) -> Result<DefaultValue> {
     match type_hint {
         Some(DefaultsType::Bool) => {
-            let b =
-                parse_bool(value).ok_or_else(|| anyhow::anyhow!("Invalid boolean: {}", value))?;
+            let b = parse_bool(value).ok_or_else(|| anyhow::anyhow!("Invalid boolean: {value}"))?;
             Ok(DefaultValue::Bool(b))
         }
         Some(DefaultsType::Int) => {
             let i = value
                 .parse::<i64>()
-                .context(format!("Invalid integer: {}", value))?;
+                .context(format!("Invalid integer: {value}"))?;
             Ok(DefaultValue::Int(i))
         }
         Some(DefaultsType::Float) => {
             let f = value
                 .parse::<f64>()
-                .context(format!("Invalid float: {}", value))?;
+                .context(format!("Invalid float: {value}"))?;
             Ok(DefaultValue::Float(f))
         }
         Some(DefaultsType::String) => Ok(DefaultValue::String(value.to_string())),

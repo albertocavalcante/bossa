@@ -28,10 +28,7 @@ pub struct PrintCallback;
 
 impl RetryCallback for PrintCallback {
     fn on_retry(&self, attempt: u32, max_attempts: u32, error: &Error, delay_secs: u64) {
-        eprintln!(
-            "Attempt {}/{} failed: {}. Retrying in {}s...",
-            attempt, max_attempts, error, delay_secs
-        );
+        eprintln!("Attempt {attempt}/{max_attempts} failed: {error}. Retrying in {delay_secs}s...");
     }
 }
 

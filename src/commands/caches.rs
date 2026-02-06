@@ -101,9 +101,9 @@ fn status() -> Result<()> {
             size_str.dimmed()
         );
 
-        if let SymlinkStatus::Broken = status {
+        if matches!(status, SymlinkStatus::Broken) {
             println!("      {} Symlink target missing", "↳".dimmed());
-        } else if let SymlinkStatus::NotSymlink = status {
+        } else if matches!(status, SymlinkStatus::NotSymlink) {
             println!("      {} Source exists but is not a symlink", "↳".dimmed());
         }
     }
@@ -120,7 +120,7 @@ fn status() -> Result<()> {
                     .map(|c| c.contains("--output_base"))
                     .unwrap_or(false);
                 if has_output_base {
-                    println!("    output_base: {}", output_base);
+                    println!("    output_base: {output_base}");
                 } else {
                     println!(
                         "  {} output_base not configured in ~/.bazelrc",
@@ -298,15 +298,14 @@ fn apply(dry_run: bool) -> Result<()> {
                 "# User-level Bazel configuration\n\
                  # Managed by bossa caches\n\n\
                  # Store output base on external drive to save internal SSD space\n\
-                 startup --output_base={}\n",
-                output_base
+                 startup --output_base={output_base}\n"
             );
 
             // Create output_base dir
             let output_base_path = Path::new(output_base);
             if !output_base_path.exists() {
                 if dry_run {
-                    println!("  [DRY] Would create {}", output_base);
+                    println!("  [DRY] Would create {output_base}");
                 } else {
                     fs::create_dir_all(output_base_path)?;
                 }
@@ -346,13 +345,13 @@ fn apply(dry_run: bool) -> Result<()> {
 
             let mut lines = Vec::new();
             if let Some(system_path) = &jb.system_path {
-                lines.push(format!("idea.system.path={}", system_path));
+                lines.push(format!("idea.system.path={system_path}"));
                 if !dry_run {
                     fs::create_dir_all(system_path)?;
                 }
             }
             if let Some(log_path) = &jb.log_path {
-                lines.push(format!("idea.log.path={}", log_path));
+                lines.push(format!("idea.log.path={log_path}"));
                 if !dry_run {
                     fs::create_dir_all(log_path)?;
                 }
@@ -555,7 +554,7 @@ fn track_symlink_in_inventory(source: &Path, target: &Path) {
             created_at: Utc::now(),
         });
         if let Err(e) = state.save() {
-            log::warn!("Failed to save symlink to state: {}", e);
+            log::warn!("Failed to save symlink to state: {e}");
         }
     } else {
         log::warn!("Failed to load state for symlink tracking");
@@ -615,7 +614,7 @@ fn format_size(bytes: u64) -> String {
     } else if bytes >= KB {
         format!("{:.0}KB", bytes as f64 / KB as f64)
     } else {
-        format!("{}B", bytes)
+        format!("{bytes}B")
     }
 }
 
