@@ -8,78 +8,140 @@ use crate::config;
 use crate::runner;
 use crate::ui;
 
+struct Issue {
+    category: &'static str,
+    summary: String,
+    detail: Option<String>,
+    fix: Option<String>,
+    fix_cmd: Option<String>,
+}
+
 pub fn run(_ctx: &Context) -> Result<()> {
     ui::banner();
     ui::header("System Health Check");
 
-    let mut all_good = true;
+    let mut issues: Vec<Issue> = Vec::new();
 
     // Check 1: Required commands
-    all_good &= check_commands();
+    check_commands(&mut issues);
 
     // Check 2: Configuration files
-    all_good &= check_configs();
+    check_configs(&mut issues);
 
     // Check 3: Directory structure
-    all_good &= check_directories();
+    check_directories(&mut issues);
 
     // Check 4: Git configuration
-    all_good &= check_git();
+    check_git(&mut issues);
 
     // Check 5: T9 drive (if expected)
-    all_good &= check_t9();
+    check_t9(&mut issues);
 
     // Check 6: Homebrew health
-    all_good &= check_brew();
+    check_brew(&mut issues);
 
     // Summary
     println!();
-    if all_good {
+    if issues.is_empty() {
         ui::success("All systems healthy!");
     } else {
-        ui::warn("Some issues detected - see above for details");
+        print_issue_summary(&issues);
     }
 
     Ok(())
 }
 
-fn check_commands() -> bool {
+fn print_issue_summary(issues: &[Issue]) {
+    let count = issues.len();
+    let label = if count == 1 { "Issue" } else { "Issues" };
+    ui::header(&format!("{count} {label} Found"));
+
+    for (i, issue) in issues.iter().enumerate() {
+        let num = i + 1;
+        println!(
+            "  {}  {} {}",
+            format!("{num}.").bold(),
+            issue.summary,
+            format!("[{}]", issue.category).dimmed()
+        );
+        if let Some(detail) = &issue.detail {
+            for line in detail.lines() {
+                println!("      {}", line.dimmed());
+            }
+        }
+        if let Some(fix) = &issue.fix {
+            println!("      {} {}", "Fix:".cyan(), fix);
+        }
+        if let Some(cmd) = &issue.fix_cmd {
+            println!("      {} {}", "$".dimmed(), cmd.bold());
+        }
+        println!();
+    }
+
+    // Collect all fix commands into a quick-fix block
+    let fix_cmds: Vec<&str> = issues.iter().filter_map(|i| i.fix_cmd.as_deref()).collect();
+
+    if !fix_cmds.is_empty() {
+        ui::section("Quick Fixes");
+        println!(
+            "  {}",
+            "Run these commands to resolve the issues above:".dimmed()
+        );
+        println!();
+        for cmd in &fix_cmds {
+            println!("    {}", cmd.bold());
+        }
+    }
+}
+
+fn check_commands(issues: &mut Vec<Issue>) {
     ui::section("Required Commands");
 
     let commands = [
-        ("git", "Version control"),
-        ("brew", "Package manager"),
-        ("stow", "Symlink manager"),
-        ("jq", "JSON processor"),
-        ("gh", "GitHub CLI"),
+        ("git", "Version control", "brew install git"),
+        (
+            "brew",
+            "Package manager",
+            "Visit https://brew.sh for install instructions",
+        ),
+        ("stow", "Symlink manager", "brew install stow"),
+        ("jq", "JSON processor", "brew install jq"),
+        ("gh", "GitHub CLI", "brew install gh"),
     ];
 
-    let mut all_ok = true;
-
-    for (cmd, desc) in commands {
+    for (cmd, desc, install_hint) in commands {
         if runner::command_exists(cmd) {
             println!("  {} {} - {}", "✓".green(), cmd, desc.dimmed());
         } else {
             println!("  {} {} - {} {}", "✗".red(), cmd, desc, "(missing)".red());
-            all_ok = false;
+            issues.push(Issue {
+                category: "Required Commands",
+                summary: format!("{cmd} is not installed"),
+                detail: Some(format!("{desc} — required for bossa to function")),
+                fix: Some(format!("Install {cmd}")),
+                fix_cmd: Some(install_hint.to_string()),
+            });
         }
     }
-
-    all_ok
 }
 
-fn check_configs() -> bool {
+fn check_configs(issues: &mut Vec<Issue>) {
     ui::section("Configuration Files");
 
     let config_dir = match config::config_dir() {
         Ok(d) => d,
-        Err(_) => {
+        Err(e) => {
             ui::error("Could not determine config directory");
-            return false;
+            issues.push(Issue {
+                category: "Configuration Files",
+                summary: "Could not determine config directory".into(),
+                detail: Some(format!("{e}")),
+                fix: Some("Ensure $HOME is set or set BOSSA_CONFIG_DIR".into()),
+                fix_cmd: None,
+            });
+            return;
         }
     };
-
-    let mut all_ok = true;
 
     // Check for unified config file (new format)
     let config_path = config_dir.join("config.toml");
@@ -91,23 +153,36 @@ fn check_configs() -> bool {
         } else {
             "config.json"
         };
-        let valid = config::load_config::<BossaConfig>(&config_dir, "config").is_ok();
+        let result = config::load_config::<BossaConfig>(&config_dir, "config");
 
-        if valid {
-            println!(
-                "  {} {} - {}",
-                "✓".green(),
-                file_name,
-                "Unified bossa config".dimmed()
-            );
-        } else {
-            println!(
-                "  {} {} - Unified bossa config {}",
-                "⚠".yellow(),
-                file_name,
-                "(invalid format)".yellow()
-            );
-            all_ok = false;
+        match result {
+            Ok(_) => {
+                println!(
+                    "  {} {} - {}",
+                    "✓".green(),
+                    file_name,
+                    "Unified bossa config".dimmed()
+                );
+            }
+            Err(e) => {
+                println!(
+                    "  {} {} - Unified bossa config {}",
+                    "⚠".yellow(),
+                    file_name,
+                    "(invalid format)".yellow()
+                );
+                let config_file = config_dir.join(file_name);
+                issues.push(Issue {
+                    category: "Configuration Files",
+                    summary: format!("{file_name} has invalid format"),
+                    detail: Some(format!("{e}")),
+                    fix: Some(format!(
+                        "Edit {} and fix the syntax error",
+                        config_file.display()
+                    )),
+                    fix_cmd: Some(format!("$EDITOR {}", config_file.display())),
+                });
+            }
         }
     } else {
         println!(
@@ -127,6 +202,13 @@ fn check_configs() -> bool {
                 "  {} Legacy configs found - run 'bossa migrate' to upgrade",
                 "ℹ".blue()
             );
+            issues.push(Issue {
+                category: "Configuration Files",
+                summary: "Legacy config files should be migrated".into(),
+                detail: Some(format!("Found in {}", legacy_dir.display())),
+                fix: Some("Migrate legacy configs to the unified format".into()),
+                fix_cmd: Some("bossa migrate".into()),
+            });
         }
     }
 
@@ -143,18 +225,23 @@ fn check_configs() -> bool {
             );
         }
     }
-
-    all_ok
 }
 
-fn check_directories() -> bool {
+fn check_directories(issues: &mut Vec<Issue>) {
     ui::section("Directory Structure");
 
     let home = match dirs::home_dir() {
         Some(h) => h,
         None => {
             ui::error("Could not determine home directory");
-            return false;
+            issues.push(Issue {
+                category: "Directory Structure",
+                summary: "Could not determine home directory".into(),
+                detail: None,
+                fix: Some("Ensure $HOME is set".into()),
+                fix_cmd: None,
+            });
+            return;
         }
     };
 
@@ -164,8 +251,6 @@ fn check_directories() -> bool {
         ("bin", "User scripts"),
         (".config/bossa", "Bossa config"),
     ];
-
-    let mut all_ok = true;
 
     for (dir, desc) in dirs {
         let path = home.join(dir);
@@ -194,17 +279,19 @@ fn check_directories() -> bool {
                 desc,
                 "(missing)".yellow()
             );
-            all_ok = false;
+            issues.push(Issue {
+                category: "Directory Structure",
+                summary: format!("~/{dir} directory is missing"),
+                detail: Some(format!("{desc} — expected at {}", path.display())),
+                fix: Some("Create the directory".into()),
+                fix_cmd: Some(format!("mkdir -p {}", path.display())),
+            });
         }
     }
-
-    all_ok
 }
 
-fn check_git() -> bool {
+fn check_git(issues: &mut Vec<Issue>) {
     ui::section("Git Configuration");
-
-    let mut all_ok = true;
 
     // Check user config
     let user_name = runner::run_capture("git", &["config", "--global", "user.name"]);
@@ -214,7 +301,13 @@ fn check_git() -> bool {
         Ok(name) => println!("  {} user.name: {}", "✓".green(), name),
         Err(_) => {
             println!("  {} user.name: {}", "✗".red(), "(not set)".red());
-            all_ok = false;
+            issues.push(Issue {
+                category: "Git Configuration",
+                summary: "Git user.name is not set".into(),
+                detail: Some("Required for commit attribution".into()),
+                fix: Some("Set your Git display name".into()),
+                fix_cmd: Some("git config --global user.name \"Your Name\"".into()),
+            });
         }
     }
 
@@ -222,7 +315,13 @@ fn check_git() -> bool {
         Ok(email) => println!("  {} user.email: {}", "✓".green(), email),
         Err(_) => {
             println!("  {} user.email: {}", "✗".red(), "(not set)".red());
-            all_ok = false;
+            issues.push(Issue {
+                category: "Git Configuration",
+                summary: "Git user.email is not set".into(),
+                detail: Some("Required for commit attribution".into()),
+                fix: Some("Set your Git email address".into()),
+                fix_cmd: Some("git config --global user.email \"you@example.com\"".into()),
+            });
         }
     }
 
@@ -244,11 +343,9 @@ fn check_git() -> bool {
             "(not configured)".dimmed()
         ),
     }
-
-    all_ok
 }
 
-fn check_t9() -> bool {
+fn check_t9(_issues: &mut Vec<Issue>) {
     ui::section("T9 External Drive");
 
     let t9_path = Path::new("/Volumes/T9");
@@ -274,24 +371,25 @@ fn check_t9() -> bool {
             "ℹ".blue(),
             "Run 'bossa t9 stats' for detailed info".dimmed()
         );
-
-        true
     } else {
         println!(
             "  {} T9 not mounted {}",
             "○".dimmed(),
             "(optional)".dimmed()
         );
-        true // Not a failure - T9 is optional
+        // Not an issue - T9 is optional
     }
+
+    // T9 is optional, no issues to report
 }
 
-fn check_brew() -> bool {
+fn check_brew(issues: &mut Vec<Issue>) {
     ui::section("Homebrew Health");
 
     if !runner::command_exists("brew") {
         println!("  {} Homebrew not installed", "✗".red());
-        return false;
+        // Already reported in check_commands if brew is missing
+        return;
     }
 
     println!("  {} Homebrew installed", "✓".green());
@@ -302,18 +400,37 @@ fn check_brew() -> bool {
         Ok(output) => {
             if output.contains("ready to brew") || output.is_empty() {
                 println!("  {} No issues detected", "✓".green());
-                true
             } else {
-                println!(
-                    "  {} Some issues detected - run 'brew doctor' for details",
-                    "⚠".yellow()
-                );
-                false
+                println!("  {} Some issues detected", "⚠".yellow());
+                issues.push(Issue {
+                    category: "Homebrew Health",
+                    summary: "Homebrew reported issues".into(),
+                    detail: Some(first_lines(&output, 3)),
+                    fix: Some("Run brew doctor for full output and follow its suggestions".into()),
+                    fix_cmd: Some("brew doctor".into()),
+                });
             }
         }
-        Err(_) => {
+        Err(e) => {
             println!("  {} Could not run brew doctor", "⚠".yellow());
-            false
+            issues.push(Issue {
+                category: "Homebrew Health",
+                summary: "Could not run brew doctor".into(),
+                detail: Some(format!("{e}")),
+                fix: Some("Run brew doctor manually to check for issues".into()),
+                fix_cmd: Some("brew doctor".into()),
+            });
         }
+    }
+}
+
+fn first_lines(s: &str, n: usize) -> String {
+    let lines: Vec<&str> = s.lines().take(n).collect();
+    let result = lines.join("\n");
+    let total = s.lines().count();
+    if total > n {
+        format!("{result}\n... and {} more lines", total - n)
+    } else {
+        result
     }
 }
