@@ -4,12 +4,59 @@ use clap::{Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use std::fmt;
 
+const GROUPED_COMMANDS_HELP: &str = "\
+Core:
+  nova          Bootstrap a new machine (bossa nova!)
+  status        Show current state vs desired configuration
+  apply         Apply desired state (clone repos, create symlinks)
+  diff          Preview what apply would change
+
+Resources:
+  add           Add resources to config
+  rm            Remove resources from config
+  list          List configured resources
+  show          Show detailed info for a specific resource
+
+Packages & Tools:
+  brew          Homebrew package management
+  tools         Install and manage development tools
+  stow          Manage dotfile symlinks (native stow replacement)
+  theme         Apply GNOME/GTK theme presets (Linux only)
+  defaults      Manage macOS defaults
+
+Storage & Data:
+  caches        Manage cache symlinks to external drive
+  collections   Manage collections (generic repos)
+  manifest      Hash files and find duplicates across directories
+  icloud        iCloud Drive storage management
+  storage       Unified storage overview (SSD, iCloud, external drives)
+  disk          Disk management (status, backup, repartition)
+
+Configuration:
+  configs       Manage generated configuration files (git, etc.)
+  locations     Manage logical locations for path abstraction
+  relocate      Relocate a directory and update all path references
+  migrate       Migrate old config format to new unified format
+
+System:
+  doctor        Check system health and dependencies
+  completions   Generate shell completions
+";
+
 #[derive(Parser)]
 #[command(name = "bossa")]
 #[command(author = "Alberto Cavalcante")]
 #[command(version)]
 #[command(about = "Unified CLI for managing your dev environment", long_about = None)]
 #[command(propagate_version = true)]
+#[command(help_template = "\
+{before-help}{about-section}
+{usage-heading} {usage}
+
+{options}
+{after-help}")]
+#[command(after_help = GROUPED_COMMANDS_HELP)]
+#[command(after_long_help = GROUPED_COMMANDS_HELP)]
 pub struct Cli {
     /// Verbosity level
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
@@ -26,15 +73,17 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Command {
     /// Bootstrap a new machine (bossa nova!)
+    #[command(after_help = "Run 'bossa nova --list-stages' to see all bootstrap stages")]
     Nova(NovaArgs),
 
-    /// Show current vs desired state
+    /// Show current state vs desired configuration
     Status(StatusArgs),
 
-    /// Apply desired state
+    /// Apply desired state (clone repos, create symlinks)
+    #[command(after_help = "Run 'bossa diff' first to preview changes")]
     Apply(ApplyArgs),
 
-    /// Preview what would change
+    /// Preview what apply would change
     Diff(DiffArgs),
 
     /// Add resources to config
@@ -45,13 +94,13 @@ pub enum Command {
     #[command(subcommand)]
     Rm(RmCommand),
 
-    /// List resources
+    /// List configured resources
     List(ListArgs),
 
-    /// Show detailed resource info
+    /// Show detailed info for a specific resource
     Show(ShowArgs),
 
-    /// System health check
+    /// Check system health and dependencies
     Doctor,
 
     /// Migrate old config format to new unified format
@@ -61,7 +110,7 @@ pub enum Command {
         dry_run: bool,
     },
 
-    /// Manage cache locations on external drive
+    /// Manage cache symlinks to external drive
     #[command(subcommand)]
     Caches(CachesCommand),
 
@@ -69,7 +118,7 @@ pub enum Command {
     #[command(subcommand)]
     Collections(CollectionsCommand),
 
-    /// Content manifest - hash files, find duplicates
+    /// Hash files and find duplicates across directories
     #[command(subcommand)]
     Manifest(ManifestCommand),
 
@@ -90,7 +139,7 @@ pub enum Command {
     Brew(BrewCommand),
 
     /// \[DEPRECATED\] Manage reference repositories (use 'collections' instead)
-    #[command(subcommand)]
+    #[command(subcommand, hide = true)]
     Refs(RefsCommand),
 
     /// Generate shell completions
@@ -112,7 +161,7 @@ pub enum Command {
     #[command(subcommand)]
     Theme(ThemeCommand),
 
-    /// Manage macOS defaults (imperative)
+    /// Manage macOS defaults
     #[command(subcommand)]
     Defaults(DefaultsCommand),
 
@@ -1512,5 +1561,21 @@ mod tests {
         // Fixed: whitespace is now trimmed
         assert_eq!(target.resource_type, "collections");
         assert_eq!(target.name, Some("refs".to_string()));
+    }
+
+    #[test]
+    fn test_grouped_help_contains_all_commands() {
+        use clap::CommandFactory;
+        let cmd = Cli::command();
+        for sub in cmd.get_subcommands() {
+            if sub.is_hide_set() || sub.get_name() == "help" {
+                continue;
+            }
+            assert!(
+                GROUPED_COMMANDS_HELP.contains(sub.get_name()),
+                "Command '{}' missing from GROUPED_COMMANDS_HELP",
+                sub.get_name()
+            );
+        }
     }
 }

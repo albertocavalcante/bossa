@@ -116,6 +116,59 @@ pub struct StorageState {
     pub symlinks: Vec<String>,
 }
 
+#[derive(Debug, Default)]
+struct ApplySummary {
+    collections_checked: usize,
+    workspaces_checked: usize,
+    storage_checked: usize,
+    repos_cloned: usize,
+    repos_failed: usize,
+}
+
+impl ApplySummary {
+    fn total_checked(&self) -> usize {
+        self.collections_checked + self.workspaces_checked + self.storage_checked
+    }
+
+    fn has_changes(&self) -> bool {
+        self.repos_cloned > 0 || self.repos_failed > 0
+    }
+
+    fn checked_line(&self) -> String {
+        let mut parts = Vec::new();
+        if self.collections_checked > 0 {
+            parts.push(format!(
+                "{} collection{}",
+                self.collections_checked,
+                if self.collections_checked == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            ));
+        }
+        if self.workspaces_checked > 0 {
+            parts.push(format!(
+                "{} workspace{}",
+                self.workspaces_checked,
+                if self.workspaces_checked == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            ));
+        }
+        if self.storage_checked > 0 {
+            parts.push(format!("{} storage", self.storage_checked,));
+        }
+        if parts.is_empty() {
+            "No resources configured".to_string()
+        } else {
+            format!("Checked {}", parts.join(", "))
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceType {
     Collections,
@@ -233,6 +286,16 @@ pub fn status(ctx: &Context, target: Option<&str>) -> Result<()> {
     // Show storage
     if resource_filter.is_none() || resource_filter == Some(ResourceType::Storage) {
         show_storage_status(&config, &state, name_filter.as_deref(), ctx)?;
+    }
+
+    // Show hint when nothing is configured
+    if resource_filter.is_none()
+        && config.collections.is_empty()
+        && config.workspaces.is_empty()
+        && config.storage.is_empty()
+    {
+        ui::dim("  No resources configured");
+        ui::info("  Run 'bossa add' to add collections, workspaces, or storage");
     }
 
     Ok(())
@@ -412,6 +475,7 @@ pub fn apply(ctx: &Context, target: Option<&str>, dry_run: bool, jobs: usize) ->
 
     let config = load_config()?;
     let mut state = compute_state(&config)?;
+    let mut summary = ApplySummary::default();
 
     let (resource_filter, name_filter) = target.map_or((None, None), parse_target);
 
@@ -424,17 +488,32 @@ pub fn apply(ctx: &Context, target: Option<&str>, dry_run: bool, jobs: usize) ->
             dry_run,
             jobs,
             ctx,
+            &mut summary,
         )?;
     }
 
     // Apply workspaces
     if resource_filter.is_none() || resource_filter == Some(ResourceType::Workspaces) {
-        apply_workspaces(&config, &mut state, name_filter.as_deref(), dry_run, ctx)?;
+        apply_workspaces(
+            &config,
+            &mut state,
+            name_filter.as_deref(),
+            dry_run,
+            ctx,
+            &mut summary,
+        )?;
     }
 
     // Apply storage
     if resource_filter.is_none() || resource_filter == Some(ResourceType::Storage) {
-        apply_storage(&config, &mut state, name_filter.as_deref(), dry_run, ctx)?;
+        apply_storage(
+            &config,
+            &mut state,
+            name_filter.as_deref(),
+            dry_run,
+            ctx,
+            &mut summary,
+        )?;
     }
 
     if !dry_run {
@@ -442,6 +521,12 @@ pub fn apply(ctx: &Context, target: Option<&str>, dry_run: bool, jobs: usize) ->
     }
 
     println!();
+    if summary.total_checked() == 0 {
+        ui::dim("  No resources configured");
+    } else if !summary.has_changes() {
+        ui::dim(&format!("  {}", summary.checked_line()));
+        ui::dim("  Everything is up to date");
+    }
     ui::success("Apply complete!");
 
     Ok(())
@@ -454,6 +539,7 @@ fn apply_collections(
     dry_run: bool,
     jobs: usize,
     ctx: &Context,
+    summary: &mut ApplySummary,
 ) -> Result<()> {
     let collections: Vec<_> = config
         .collections
@@ -465,9 +551,11 @@ fn apply_collections(
         return Ok(());
     }
 
-    for collection in collections {
-        apply_collection(config, state, collection, dry_run, jobs, ctx)?;
+    for collection in &collections {
+        apply_collection(config, state, collection, dry_run, jobs, ctx, summary)?;
     }
+
+    summary.collections_checked += collections.len();
 
     Ok(())
 }
@@ -479,6 +567,7 @@ fn apply_collection(
     dry_run: bool,
     jobs: usize,
     ctx: &Context,
+    summary: &mut ApplySummary,
 ) -> Result<()> {
     ui::section(&format!("Collection: {}", collection.name));
 
@@ -546,9 +635,11 @@ fn apply_collection(
 
     pb.finish_and_clear();
 
-    // Update state
+    // Update state and summary
     let cloned_count = cloned.load(Ordering::Relaxed);
     let failed_count = failed.load(Ordering::Relaxed);
+    summary.repos_cloned += cloned_count;
+    summary.repos_failed += failed_count;
 
     let mut collection_state = state
         .collections
@@ -601,6 +692,7 @@ fn apply_workspaces(
     name_filter: Option<&str>,
     dry_run: bool,
     ctx: &Context,
+    summary: &mut ApplySummary,
 ) -> Result<()> {
     let workspaces: Vec<_> = config
         .workspaces
@@ -611,6 +703,8 @@ fn apply_workspaces(
     if workspaces.is_empty() {
         return Ok(());
     }
+
+    summary.workspaces_checked += workspaces.len();
 
     for workspace in workspaces {
         apply_workspace(state, workspace, dry_run, ctx)?;
@@ -717,6 +811,7 @@ fn apply_storage(
     name_filter: Option<&str>,
     dry_run: bool,
     ctx: &Context,
+    summary: &mut ApplySummary,
 ) -> Result<()> {
     let storage: Vec<_> = config
         .storage
@@ -727,6 +822,8 @@ fn apply_storage(
     if storage.is_empty() {
         return Ok(());
     }
+
+    summary.storage_checked += storage.len();
 
     for stor in storage {
         apply_storage_item(state, stor, dry_run, ctx)?;
@@ -830,6 +927,35 @@ pub fn diff(ctx: &Context, target: Option<&str>) -> Result<()> {
     }
 
     if !has_changes {
+        let mut checked_parts = Vec::new();
+        if !config.collections.is_empty() {
+            checked_parts.push(format!(
+                "{} collection{}",
+                config.collections.len(),
+                if config.collections.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            ));
+        }
+        if !config.workspaces.is_empty() {
+            checked_parts.push(format!(
+                "{} workspace{}",
+                config.workspaces.len(),
+                if config.workspaces.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            ));
+        }
+        if !config.storage.is_empty() {
+            checked_parts.push(format!("{} storage", config.storage.len(),));
+        }
+        if !checked_parts.is_empty() {
+            ui::dim(&format!("  Checked {}", checked_parts.join(", ")));
+        }
         println!();
         ui::success("No changes - current state matches desired state");
     }
