@@ -3,9 +3,9 @@ use colored::Colorize;
 use std::path::Path;
 
 use crate::Context;
-use crate::commands::declarative::BossaConfig;
 use crate::config;
 use crate::runner;
+use crate::schema::BossaConfig;
 use crate::ui;
 
 struct Issue {
@@ -153,29 +153,52 @@ fn check_configs(issues: &mut Vec<Issue>) {
         } else {
             "config.json"
         };
+        let config_file = config_dir.join(file_name);
         let result = config::load_config::<BossaConfig>(&config_dir, "config");
 
         match result {
-            Ok(_) => {
-                println!(
-                    "  {} {} - {}",
-                    "✓".green(),
-                    file_name,
-                    "Unified bossa config".dimmed()
-                );
+            Ok((cfg, _)) => {
+                // Config parsed — now run semantic validation
+                match cfg.validate() {
+                    Ok(()) => {
+                        println!(
+                            "  {} {} - {}",
+                            "✓".green(),
+                            file_name,
+                            "Unified bossa config".dimmed()
+                        );
+                    }
+                    Err(e) => {
+                        let reason = format!("{e:#}");
+                        println!(
+                            "  {} {} - Unified bossa config {}",
+                            "⚠".yellow(),
+                            file_name,
+                            format!("(validation error: {reason})").yellow()
+                        );
+                        issues.push(Issue {
+                            category: "Configuration Files",
+                            summary: format!("{file_name} has validation error: {reason}"),
+                            detail: Some(format!("{e:#}")),
+                            fix: Some(format!("Edit {} and fix the issue", config_file.display())),
+                            fix_cmd: Some(format!("$EDITOR {}", config_file.display())),
+                        });
+                    }
+                }
             }
             Err(e) => {
+                // Show the full error chain (includes line/column from TOML parser)
+                let root_cause = format!("{:#}", e.root_cause());
                 println!(
                     "  {} {} - Unified bossa config {}",
                     "⚠".yellow(),
                     file_name,
-                    "(invalid format)".yellow()
+                    format!("(parse error: {root_cause})").yellow()
                 );
-                let config_file = config_dir.join(file_name);
                 issues.push(Issue {
                     category: "Configuration Files",
                     summary: format!("{file_name} has invalid format"),
-                    detail: Some(format!("{e}")),
+                    detail: Some(format!("{e:#}")),
                     fix: Some(format!(
                         "Edit {} and fix the syntax error",
                         config_file.display()
@@ -394,34 +417,132 @@ fn check_brew(issues: &mut Vec<Issue>) {
 
     println!("  {} Homebrew installed", "✓".green());
 
-    // Check for issues
+    // brew doctor exits non-zero when there are warnings, so combine stdout+stderr
     let doctor_output = runner::run_capture("brew", &["doctor"]);
-    match doctor_output {
-        Ok(output) => {
-            if output.contains("ready to brew") || output.is_empty() {
-                println!("  {} No issues detected", "✓".green());
-            } else {
-                println!("  {} Some issues detected", "⚠".yellow());
-                issues.push(Issue {
-                    category: "Homebrew Health",
-                    summary: "Homebrew reported issues".into(),
-                    detail: Some(first_lines(&output, 3)),
-                    fix: Some("Run brew doctor for full output and follow its suggestions".into()),
-                    fix_cmd: Some("brew doctor".into()),
-                });
-            }
+    let output = match doctor_output {
+        Ok(o) => o,
+        Err(e) => format!("{e}"),
+    };
+
+    if output.contains("ready to brew") || output.is_empty() {
+        println!("  {} No issues detected", "✓".green());
+        return;
+    }
+
+    // Parse warnings into individual items
+    let warnings = parse_brew_warnings(&output);
+
+    if warnings.is_empty() {
+        // Unparseable output — fall back to generic issue
+        println!("  {} Some issues detected", "⚠".yellow());
+        issues.push(Issue {
+            category: "Homebrew Health",
+            summary: "Homebrew reported issues".into(),
+            detail: Some(first_lines(&output, 5)),
+            fix: Some("Run brew doctor for full output".into()),
+            fix_cmd: Some("brew doctor".into()),
+        });
+        return;
+    }
+
+    for warning in &warnings {
+        println!("  {} {}", "⚠".yellow(), warning.summary);
+    }
+
+    for warning in warnings {
+        issues.push(Issue {
+            category: "Homebrew Health",
+            summary: warning.summary,
+            detail: warning.detail,
+            fix: warning.fix,
+            fix_cmd: warning.fix_cmd,
+        });
+    }
+}
+
+struct BrewWarning {
+    summary: String,
+    detail: Option<String>,
+    fix: Option<String>,
+    fix_cmd: Option<String>,
+}
+
+fn parse_brew_warnings(output: &str) -> Vec<BrewWarning> {
+    let mut warnings = Vec::new();
+
+    // Split on "Warning:" boundaries
+    for chunk in output.split("Warning: ").skip(1) {
+        let chunk = chunk.trim();
+        if chunk.is_empty() {
+            continue;
         }
-        Err(e) => {
-            println!("  {} Could not run brew doctor", "⚠".yellow());
-            issues.push(Issue {
-                category: "Homebrew Health",
-                summary: "Could not run brew doctor".into(),
-                detail: Some(format!("{e}")),
-                fix: Some("Run brew doctor manually to check for issues".into()),
+
+        let first_line = chunk.lines().next().unwrap_or("").trim();
+
+        if first_line.contains("deprecated or disabled") {
+            // Extract formula names
+            let formulae: Vec<&str> = chunk
+                .lines()
+                .filter(|l| l.starts_with("  "))
+                .map(str::trim)
+                .collect();
+            if formulae.is_empty() {
+                continue;
+            }
+            let list = formulae.join(", ");
+            warnings.push(BrewWarning {
+                summary: format!("Deprecated/disabled formulae: {list}"),
+                detail: Some("These formulae are no longer maintained; find replacements".into()),
+                fix: Some(format!("Uninstall or replace: {list}")),
+                fix_cmd: Some(format!("brew uninstall {}", formulae.join(" "))),
+            });
+        } else if first_line.contains("unlinked kegs") {
+            let kegs: Vec<&str> = chunk
+                .lines()
+                .filter(|l| l.starts_with("  "))
+                .map(str::trim)
+                .collect();
+            if kegs.is_empty() {
+                continue;
+            }
+            let list = kegs.join(", ");
+            warnings.push(BrewWarning {
+                summary: format!("Unlinked kegs: {list}"),
+                detail: Some("Unlinked kegs can cause build failures for dependents".into()),
+                fix: Some(format!("Link the kegs: {list}")),
+                fix_cmd: Some(format!("brew link {}", kegs.join(" "))),
+            });
+        } else if first_line.contains("not readable") {
+            let formulae: Vec<&str> = chunk
+                .lines()
+                .filter(|l| l.starts_with("  "))
+                .map(|l| {
+                    // "tap/formula: long error message" → just the formula name
+                    l.trim().split(':').next().unwrap_or(l.trim())
+                })
+                .collect();
+            if formulae.is_empty() {
+                continue;
+            }
+            let list = formulae.join(", ");
+            warnings.push(BrewWarning {
+                summary: format!("Unreadable formulae: {list}"),
+                detail: Some("These formulae have broken Ruby definitions".into()),
+                fix: Some("Untap or reinstall the affected taps".into()),
+                fix_cmd: None,
+            });
+        } else {
+            // Generic warning — keep first line as summary
+            warnings.push(BrewWarning {
+                summary: first_line.to_string(),
+                detail: None,
+                fix: Some("Run brew doctor for details".into()),
                 fix_cmd: Some("brew doctor".into()),
             });
         }
     }
+
+    warnings
 }
 
 fn first_lines(s: &str, n: usize) -> String {
