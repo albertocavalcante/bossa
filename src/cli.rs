@@ -1,30 +1,52 @@
 #![allow(dead_code)]
 
+use clap::builder::styling::{AnsiColor, Color, Style, Styles};
 use clap::{Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use std::fmt;
 
-const GROUPED_COMMANDS_HELP: &str = "\
-Core:
+const STYLES: Styles = Styles::styled()
+    .header(
+        Style::new()
+            .fg_color(Some(Color::Ansi(AnsiColor::Green)))
+            .bold(),
+    )
+    .usage(
+        Style::new()
+            .fg_color(Some(Color::Ansi(AnsiColor::Green)))
+            .bold(),
+    )
+    .literal(
+        Style::new()
+            .fg_color(Some(Color::Ansi(AnsiColor::Cyan)))
+            .bold(),
+    )
+    .placeholder(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan))));
+
+fn grouped_commands_help() -> String {
+    use colored::Colorize;
+    format!(
+        "\
+{}
   nova          Bootstrap a new machine (bossa nova!)
   status        Show current state vs desired configuration
   apply         Apply desired state (clone repos, create symlinks)
   diff          Preview what apply would change
 
-Resources:
+{}
   add           Add resources to config
   rm            Remove resources from config
   list          List configured resources
   show          Show detailed info for a specific resource
 
-Packages & Tools:
+{}
   brew          Homebrew package management
   tools         Install and manage development tools
   stow          Manage dotfile symlinks (native stow replacement)
   theme         Apply GNOME/GTK theme presets (Linux only)
   defaults      Manage macOS defaults
 
-Storage & Data:
+{}
   caches        Manage cache symlinks to external drive
   collections   Manage collections (generic repos)
   manifest      Hash files and find duplicates across directories
@@ -32,16 +54,24 @@ Storage & Data:
   storage       Unified storage overview (SSD, iCloud, external drives)
   disk          Disk management (status, backup, repartition)
 
-Configuration:
+{}
   configs       Manage generated configuration files (git, etc.)
   locations     Manage logical locations for path abstraction
   relocate      Relocate a directory and update all path references
   migrate       Migrate old config format to new unified format
 
-System:
+{}
   doctor        Check system health and dependencies
   completions   Generate shell completions
-";
+",
+        "Core:".green().bold(),
+        "Resources:".green().bold(),
+        "Packages & Tools:".green().bold(),
+        "Storage & Data:".green().bold(),
+        "Configuration:".green().bold(),
+        "System:".green().bold(),
+    )
+}
 
 #[derive(Parser)]
 #[command(name = "bossa")]
@@ -49,14 +79,15 @@ System:
 #[command(version)]
 #[command(about = "Unified CLI for managing your dev environment", long_about = None)]
 #[command(propagate_version = true)]
+#[command(styles = STYLES)]
 #[command(help_template = "\
 {before-help}{about-section}
 {usage-heading} {usage}
 
 {options}
 {after-help}")]
-#[command(after_help = GROUPED_COMMANDS_HELP)]
-#[command(after_long_help = GROUPED_COMMANDS_HELP)]
+#[command(after_help = grouped_commands_help())]
+#[command(after_long_help = grouped_commands_help())]
 pub struct Cli {
     /// Verbosity level
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
@@ -1566,14 +1597,15 @@ mod tests {
     #[test]
     fn test_grouped_help_contains_all_commands() {
         use clap::CommandFactory;
+        let help = grouped_commands_help();
         let cmd = Cli::command();
         for sub in cmd.get_subcommands() {
             if sub.is_hide_set() || sub.get_name() == "help" {
                 continue;
             }
             assert!(
-                GROUPED_COMMANDS_HELP.contains(sub.get_name()),
-                "Command '{}' missing from GROUPED_COMMANDS_HELP",
+                help.contains(sub.get_name()),
+                "Command '{}' missing from grouped_commands_help()",
                 sub.get_name()
             );
         }

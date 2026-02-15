@@ -45,11 +45,19 @@ struct MissingPackage {
     expected_path: PathBuf,
 }
 
+/// A package whose source directory exists but contains no files
+#[derive(Debug, Clone)]
+struct EmptyPackage {
+    name: String,
+    path: PathBuf,
+}
+
 /// Result of collecting symlink operations
 #[derive(Debug, Default)]
 struct CollectResult {
     ops: Vec<SymlinkOp>,
     missing_packages: Vec<MissingPackage>,
+    empty_packages: Vec<EmptyPackage>,
 }
 
 pub fn run(_ctx: &AppContext, cmd: StowCommand) -> Result<()> {
@@ -237,6 +245,7 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
     let CollectResult {
         ops,
         missing_packages,
+        empty_packages,
     } = collect_symlink_ops(&filtered_config)?;
 
     // Count what needs to be done
@@ -262,8 +271,13 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
         }
     }
 
+    // Show hints for empty source directories
+    print_empty_packages(&empty_packages);
+
     if to_create.is_empty() && to_fix.is_empty() && (blocked.is_empty() || !force) {
-        if missing_packages.len() < filtered_config.packages.len() {
+        let has_real_packages =
+            filtered_config.packages.len() > missing_packages.len() + empty_packages.len();
+        if has_real_packages {
             println!("{}", "✓ All symlinks are up to date".green());
         }
         return Ok(());
@@ -540,6 +554,7 @@ fn unlink(packages: &[String], dry_run: bool) -> Result<()> {
     let CollectResult {
         ops,
         missing_packages,
+        ..
     } = collect_symlink_ops(&filtered_config)?;
 
     // Only unlink correct symlinks (not missing or blocked)
@@ -759,6 +774,18 @@ fn create_missing_package_dirs(missing: &[MissingPackage]) -> usize {
     created
 }
 
+/// Print hints for packages whose source directory exists but is empty
+fn print_empty_packages(empty: &[EmptyPackage]) {
+    for pkg in empty {
+        println!(
+            "{} Package '{}' source directory is empty",
+            "⚠".yellow(),
+            pkg.name
+        );
+        println!("    Add dotfiles to {} and re-run sync", pkg.path.display());
+    }
+}
+
 /// Collect all symlink operations for the given config
 fn collect_symlink_ops(config: &SymlinksConfig) -> Result<CollectResult> {
     let source_base = expand_path(&config.source);
@@ -770,7 +797,7 @@ fn collect_symlink_ops(config: &SymlinksConfig) -> Result<CollectResult> {
         let package_source = source_base.join(package);
 
         if !package_source.exists() {
-            log::warn!(
+            log::debug!(
                 "Package directory does not exist: {}",
                 package_source.display()
             );
@@ -781,6 +808,7 @@ fn collect_symlink_ops(config: &SymlinksConfig) -> Result<CollectResult> {
             continue;
         }
 
+        let ops_before = result.ops.len();
         walk_package(
             &package_source,
             &package_source,
@@ -789,6 +817,13 @@ fn collect_symlink_ops(config: &SymlinksConfig) -> Result<CollectResult> {
             &config.ignore,
             &mut result.ops,
         )?;
+
+        if result.ops.len() == ops_before {
+            result.empty_packages.push(EmptyPackage {
+                name: package.clone(),
+                path: package_source,
+            });
+        }
     }
 
     Ok(result)
@@ -1199,5 +1234,65 @@ mod tests {
         let created = create_missing_package_dirs(&missing);
         assert_eq!(created, 1);
         assert!(dir.exists());
+    }
+
+    // ── empty package detection tests ───────────────────────────────
+
+    #[test]
+    fn collect_empty_package_dir() {
+        let tmp = TempDir::new().unwrap();
+        let config = make_config(&tmp, &["emptypkg"], &[]);
+
+        // Create the package dir but put no files in it
+        let pkg_dir = tmp.path().join("source").join("emptypkg");
+        fs::create_dir_all(&pkg_dir).unwrap();
+
+        let result = collect_symlink_ops(&config).unwrap();
+        assert!(result.ops.is_empty());
+        assert!(result.missing_packages.is_empty());
+        assert_eq!(result.empty_packages.len(), 1);
+        assert_eq!(result.empty_packages[0].name, "emptypkg");
+    }
+
+    #[test]
+    fn collect_package_with_only_ignored_files_is_empty() {
+        let tmp = TempDir::new().unwrap();
+        let config = make_config(&tmp, &["pkg"], &[".git", "README.md"]);
+
+        let pkg_dir = tmp.path().join("source").join("pkg");
+        fs::create_dir_all(&pkg_dir).unwrap();
+        // Only ignored files — should count as empty
+        fs::write(pkg_dir.join("README.md"), "ignored").unwrap();
+
+        let result = collect_symlink_ops(&config).unwrap();
+        assert!(result.ops.is_empty());
+        assert!(result.missing_packages.is_empty());
+        assert_eq!(result.empty_packages.len(), 1);
+        assert_eq!(result.empty_packages[0].name, "pkg");
+    }
+
+    #[test]
+    fn collect_mixed_missing_empty_and_present() {
+        let tmp = TempDir::new().unwrap();
+        let config = make_config(&tmp, &["present", "empty", "gone"], &[]);
+
+        // "present" has a file
+        let present_dir = tmp.path().join("source").join("present");
+        fs::create_dir_all(&present_dir).unwrap();
+        fs::write(present_dir.join("file.txt"), "content").unwrap();
+
+        // "empty" exists but has no files
+        let empty_dir = tmp.path().join("source").join("empty");
+        fs::create_dir_all(&empty_dir).unwrap();
+
+        // "gone" doesn't exist at all
+
+        let result = collect_symlink_ops(&config).unwrap();
+        assert_eq!(result.ops.len(), 1);
+        assert_eq!(result.ops[0].package, "present");
+        assert_eq!(result.missing_packages.len(), 1);
+        assert_eq!(result.missing_packages[0].name, "gone");
+        assert_eq!(result.empty_packages.len(), 1);
+        assert_eq!(result.empty_packages[0].name, "empty");
     }
 }
