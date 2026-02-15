@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result, bail};
 use colored::Colorize;
-use dialoguer::{Confirm, Input};
+use dialoguer::{Confirm, Input, MultiSelect};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::IsTerminal;
@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use crate::Context as AppContext;
 use crate::cli::ReconcileStrategy;
 use crate::schema::{BossaConfig, DotfilesReconcileConfig};
+use crate::ui;
 
 // ============================================================================
 // Types
@@ -704,7 +705,7 @@ fn resolve_packages(
         if let Ok(entries) = fs::read_dir(source) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if entry.path().is_dir() && !ignore.contains(&name) {
+                if entry.path().is_dir() && !ignore.contains(&name) && !name.starts_with('.') {
                     packages.insert(name);
                 }
             }
@@ -1004,12 +1005,8 @@ fn setup_reconcile_config(config: &mut BossaConfig) -> Result<DotfilesReconcileC
         );
     }
 
-    println!();
-    println!(
-        "{}",
-        "No [dotfiles_reconcile] config found — let's set it up.".yellow()
-    );
-    println!();
+    ui::header("Dotfiles Reconcile Setup");
+    ui::info("No [dotfiles_reconcile] config found — let's set it up.");
 
     // Pre-fill source_a from [dotfiles].path when available
     let default_a = config
@@ -1018,6 +1015,7 @@ fn setup_reconcile_config(config: &mut BossaConfig) -> Result<DotfilesReconcileC
         .map(|d| d.path.clone())
         .unwrap_or_default();
 
+    println!();
     let source_a: String = Input::new()
         .with_prompt("Source A (primary dotfiles directory)")
         .with_initial_text(&default_a)
@@ -1035,39 +1033,125 @@ fn setup_reconcile_config(config: &mut BossaConfig) -> Result<DotfilesReconcileC
         .interact_text()
         .context("Failed to read target")?;
 
-    // Auto-discover packages from both source directories
+    // Validate that source directories exist
     let path_a = expand_path(&source_a);
     let path_b = expand_path(&source_b);
-    let ignore = default_ignore(&[]);
-    let mut packages = HashSet::new();
+    let a_missing = !path_a.exists();
+    let b_missing = !path_b.exists();
+    if a_missing {
+        ui::warn(&format!("Source A does not exist: {}", path_a.display()));
+    }
+    if b_missing {
+        ui::warn(&format!("Source B does not exist: {}", path_b.display()));
+    }
+    if a_missing || b_missing {
+        let cont = Confirm::new()
+            .with_prompt("Continue anyway?")
+            .default(false)
+            .interact()
+            .context("Failed to read confirmation")?;
+        if !cont {
+            bail!("Setup cancelled");
+        }
+    }
 
-    for source in [&path_a, &path_b] {
-        if let Ok(entries) = fs::read_dir(source) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if entry.path().is_dir() && !ignore.contains(&name) {
-                    packages.insert(name);
-                }
+    // Auto-discover packages from both source directories, tracking provenance
+    let ignore = default_ignore(&[]);
+    let mut pkgs_a = HashSet::new();
+    let mut pkgs_b = HashSet::new();
+
+    if let Ok(entries) = fs::read_dir(&path_a) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if entry.path().is_dir() && !ignore.contains(&name) && !name.starts_with('.') {
+                pkgs_a.insert(name);
+            }
+        }
+    }
+    if let Ok(entries) = fs::read_dir(&path_b) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if entry.path().is_dir() && !ignore.contains(&name) && !name.starts_with('.') {
+                pkgs_b.insert(name);
             }
         }
     }
 
-    let mut sorted_packages: Vec<String> = packages.into_iter().collect();
+    let all_pkgs: HashSet<&String> = pkgs_a.union(&pkgs_b).collect();
+    let mut sorted_packages: Vec<String> = all_pkgs.into_iter().cloned().collect();
     sorted_packages.sort();
 
-    // Summary
-    println!();
-    println!("{}", "Configuration summary:".bold());
-    println!("  source_a = {}", source_a.cyan());
-    println!("  source_b = {}", source_b.cyan());
-    println!("  target   = {}", target.cyan());
-    if sorted_packages.is_empty() {
-        println!(
-            "  packages = {} (will auto-discover at runtime)",
-            "[]".dimmed()
-        );
+    // Interactive package selection with source attribution
+    let save_packages = if sorted_packages.is_empty() {
+        ui::info("No packages discovered (source directories may be empty).");
+        Vec::new()
     } else {
-        println!("  packages = {sorted_packages:?}");
+        // Build labels with provenance
+        let labels: Vec<String> = sorted_packages
+            .iter()
+            .map(|pkg| {
+                let in_a = pkgs_a.contains(pkg);
+                let in_b = pkgs_b.contains(pkg);
+                let tag = match (in_a, in_b) {
+                    (true, true) => "A+B",
+                    (true, false) => "A only",
+                    (false, true) => "B only",
+                    _ => "",
+                };
+                format!("{pkg} ({tag})")
+            })
+            .collect();
+
+        // All pre-selected by default
+        let defaults: Vec<bool> = vec![true; labels.len()];
+
+        ui::section("Package Selection");
+
+        let selected_indices = MultiSelect::new()
+            .with_prompt("Select packages to manage")
+            .items(&labels)
+            .defaults(&defaults)
+            .interact()
+            .context("Failed to read package selection")?;
+
+        if selected_indices.len() == sorted_packages.len() {
+            // All selected -> save empty vec so runtime auto-discovery kicks in
+            Vec::new()
+        } else {
+            selected_indices
+                .iter()
+                .map(|&i| sorted_packages[i].clone())
+                .collect()
+        }
+    };
+
+    // Summary
+    ui::section("Summary");
+    ui::kv("Source A", &source_a);
+    ui::kv("Source B", &source_b);
+    ui::kv("Target", &target);
+    if save_packages.is_empty() {
+        if sorted_packages.is_empty() {
+            ui::kv("Packages", "none (will auto-discover at runtime)");
+        } else {
+            ui::kv(
+                "Packages",
+                &format!(
+                    "{} of {} selected (all → auto-discover)",
+                    sorted_packages.len(),
+                    sorted_packages.len()
+                ),
+            );
+        }
+    } else {
+        ui::kv(
+            "Packages",
+            &format!(
+                "{} of {} selected",
+                save_packages.len(),
+                sorted_packages.len()
+            ),
+        );
     }
     println!();
 
@@ -1085,7 +1169,7 @@ fn setup_reconcile_config(config: &mut BossaConfig) -> Result<DotfilesReconcileC
         source_a,
         source_b,
         target,
-        packages: sorted_packages,
+        packages: save_packages,
         ignore: Vec::new(),
         strategy: "interactive".to_string(),
     };
@@ -1093,11 +1177,7 @@ fn setup_reconcile_config(config: &mut BossaConfig) -> Result<DotfilesReconcileC
     config.dotfiles_reconcile = Some(reconcile.clone());
     let path = config.save()?;
     println!();
-    println!(
-        "{} Saved to {}",
-        "✓".green(),
-        path.display().to_string().dimmed()
-    );
+    ui::success(&format!("Saved to {}", path.display()));
     println!();
 
     Ok(reconcile)
