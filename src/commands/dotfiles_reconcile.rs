@@ -6,8 +6,10 @@
 
 use anyhow::{Context, Result, bail};
 use colored::Colorize;
+use dialoguer::{Confirm, Input};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use crate::Context as AppContext;
@@ -977,19 +979,128 @@ fn show_text_diff(a: &Path, b: &Path) {
 // Helpers
 // ============================================================================
 
-/// Load reconciliation config from main config
+/// Load reconciliation config from main config, launching setup wizard if missing
 fn load_config() -> Result<DotfilesReconcileConfig> {
-    let config = BossaConfig::load()?;
-    config.dotfiles_reconcile.ok_or_else(|| {
-        anyhow::anyhow!(
+    let mut config = BossaConfig::load()?;
+    if let Some(reconcile) = config.dotfiles_reconcile {
+        return Ok(reconcile);
+    }
+    setup_reconcile_config(&mut config)
+}
+
+/// Interactive setup wizard for `[dotfiles_reconcile]` config section.
+///
+/// Falls back to a static error with a TOML example when stdin is not a
+/// terminal (CI, pipes) so the process never hangs waiting for input.
+fn setup_reconcile_config(config: &mut BossaConfig) -> Result<DotfilesReconcileConfig> {
+    if !std::io::stdin().is_terminal() {
+        bail!(
             "No [dotfiles_reconcile] section in config.\n\
-             Example:\n\
+             Add it to your config file, for example:\n\n\
              [dotfiles_reconcile]\n\
              source_a = \"~/.dotfiles\"\n\
              source_b = \"/Volumes/T9/dev/ws/utils/dotfiles\"\n\
              target = \"~\""
-        )
-    })
+        );
+    }
+
+    println!();
+    println!(
+        "{}",
+        "No [dotfiles_reconcile] config found — let's set it up.".yellow()
+    );
+    println!();
+
+    // Pre-fill source_a from [dotfiles].path when available
+    let default_a = config
+        .dotfiles
+        .as_ref()
+        .map(|d| d.path.clone())
+        .unwrap_or_default();
+
+    let source_a: String = Input::new()
+        .with_prompt("Source A (primary dotfiles directory)")
+        .with_initial_text(&default_a)
+        .interact_text()
+        .context("Failed to read source_a")?;
+
+    let source_b: String = Input::new()
+        .with_prompt("Source B (secondary dotfiles directory)")
+        .interact_text()
+        .context("Failed to read source_b")?;
+
+    let target: String = Input::new()
+        .with_prompt("Target (where dotfiles are deployed)")
+        .with_initial_text("~")
+        .interact_text()
+        .context("Failed to read target")?;
+
+    // Auto-discover packages from both source directories
+    let path_a = expand_path(&source_a);
+    let path_b = expand_path(&source_b);
+    let ignore = default_ignore(&[]);
+    let mut packages = HashSet::new();
+
+    for source in [&path_a, &path_b] {
+        if let Ok(entries) = fs::read_dir(source) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if entry.path().is_dir() && !ignore.contains(&name) {
+                    packages.insert(name);
+                }
+            }
+        }
+    }
+
+    let mut sorted_packages: Vec<String> = packages.into_iter().collect();
+    sorted_packages.sort();
+
+    // Summary
+    println!();
+    println!("{}", "Configuration summary:".bold());
+    println!("  source_a = {}", source_a.cyan());
+    println!("  source_b = {}", source_b.cyan());
+    println!("  target   = {}", target.cyan());
+    if sorted_packages.is_empty() {
+        println!(
+            "  packages = {} (will auto-discover at runtime)",
+            "[]".dimmed()
+        );
+    } else {
+        println!("  packages = {sorted_packages:?}");
+    }
+    println!();
+
+    let confirmed = Confirm::new()
+        .with_prompt("Save to config?")
+        .default(true)
+        .interact()
+        .context("Failed to read confirmation")?;
+
+    if !confirmed {
+        bail!("Setup cancelled");
+    }
+
+    let reconcile = DotfilesReconcileConfig {
+        source_a,
+        source_b,
+        target,
+        packages: sorted_packages,
+        ignore: Vec::new(),
+        strategy: "interactive".to_string(),
+    };
+
+    config.dotfiles_reconcile = Some(reconcile.clone());
+    let path = config.save()?;
+    println!();
+    println!(
+        "{} Saved to {}",
+        "✓".green(),
+        path.display().to_string().dimmed()
+    );
+    println!();
+
+    Ok(reconcile)
 }
 
 /// Expand ~ and env vars in a path
