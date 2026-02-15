@@ -253,15 +253,21 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
         .filter(|op| matches!(op.state, SymlinkState::Blocked))
         .collect();
 
+    // Handle missing package directories
+    if !missing_packages.is_empty() {
+        if dry_run {
+            print_missing_packages(&missing_packages);
+        } else {
+            create_missing_package_dirs(&missing_packages);
+        }
+    }
+
     if to_create.is_empty() && to_fix.is_empty() && (blocked.is_empty() || !force) {
-        print_missing_packages(&missing_packages);
         if missing_packages.len() < filtered_config.packages.len() {
             println!("{}", "✓ All symlinks are up to date".green());
         }
         return Ok(());
     }
-
-    print_missing_packages(&missing_packages);
 
     let mode = if dry_run {
         "Would sync".yellow()
@@ -453,11 +459,11 @@ fn add(package: &str) -> Result<()> {
     let package_path = source_base.join(package);
     if !package_path.exists() {
         println!(
-            "{} Package directory does not exist: {}",
+            "{} Source directory does not exist yet: {}",
             "⚠".yellow(),
             package_path.display()
         );
-        println!("  Adding anyway - create the directory to use it.");
+        println!("  It will be created when you run 'bossa stow sync {package}'.");
     }
 
     symlinks.packages.push(package.to_string());
@@ -707,20 +713,50 @@ fn expand_path(path: &str) -> PathBuf {
     crate::paths::expand(path)
 }
 
-/// Print warnings for missing package directories
+/// Print info for missing package directories (read-only context: status, diff)
 fn print_missing_packages(missing: &[MissingPackage]) {
     for pkg in missing {
         println!(
-            "{} Package '{}' has no source directory",
+            "{} Package '{}' source directory does not exist yet",
             "⚠".yellow(),
             pkg.name
         );
         println!("    Expected: {}", pkg.expected_path.display());
         println!(
             "    Run '{}' to create it",
-            format!("mkdir -p {}", pkg.expected_path.display()).cyan()
+            format!("bossa stow sync {}", pkg.name).cyan()
         );
     }
+}
+
+/// Create missing package source directories, printing what was created.
+/// Returns the number of directories created.
+fn create_missing_package_dirs(missing: &[MissingPackage]) -> usize {
+    let mut created = 0;
+    for pkg in missing {
+        match fs::create_dir_all(&pkg.expected_path) {
+            Ok(()) => {
+                println!(
+                    "  {} Created source directory for '{}'",
+                    "+".yellow(),
+                    pkg.name,
+                );
+                println!(
+                    "    Add dotfiles to {} and re-run sync",
+                    pkg.expected_path.display()
+                );
+                created += 1;
+            }
+            Err(e) => {
+                println!(
+                    "{} Failed to create directory for '{}': {e}",
+                    "✗".red(),
+                    pkg.name
+                );
+            }
+        }
+    }
+    created
 }
 
 /// Collect all symlink operations for the given config
@@ -1115,5 +1151,53 @@ mod tests {
             result.ops[0].source.file_name().unwrap().to_str().unwrap(),
             "keep.txt"
         );
+    }
+
+    // ── create_missing_package_dirs tests ───────────────────────────
+
+    #[test]
+    fn create_missing_dirs_creates_directories() {
+        let tmp = TempDir::new().unwrap();
+        let dir1 = tmp.path().join("source").join("pkg1");
+        let dir2 = tmp.path().join("source").join("pkg2");
+
+        let missing = vec![
+            MissingPackage {
+                name: "pkg1".to_string(),
+                expected_path: dir1.clone(),
+            },
+            MissingPackage {
+                name: "pkg2".to_string(),
+                expected_path: dir2.clone(),
+            },
+        ];
+
+        let created = create_missing_package_dirs(&missing);
+        assert_eq!(created, 2);
+        assert!(dir1.exists());
+        assert!(dir2.exists());
+    }
+
+    #[test]
+    fn create_missing_dirs_empty_list() {
+        let created = create_missing_package_dirs(&[]);
+        assert_eq!(created, 0);
+    }
+
+    #[test]
+    fn create_missing_dirs_already_exists() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("source").join("pkg");
+        fs::create_dir_all(&dir).unwrap();
+
+        let missing = vec![MissingPackage {
+            name: "pkg".to_string(),
+            expected_path: dir.clone(),
+        }];
+
+        // create_dir_all succeeds even if directory exists
+        let created = create_missing_package_dirs(&missing);
+        assert_eq!(created, 1);
+        assert!(dir.exists());
     }
 }
