@@ -289,22 +289,18 @@ mod tests {
             let home = std::env::var("HOME").unwrap();
 
             // Should be in iCloud
-            let icloud_path = format!(
-                "{}/Library/Mobile Documents/com~apple~CloudDocs/test.txt",
-                home
-            );
+            let icloud_path =
+                format!("{home}/Library/Mobile Documents/com~apple~CloudDocs/test.txt");
             assert!(backend.is_in_icloud(Path::new(&icloud_path)));
 
             // App-specific container should also be in iCloud
-            let app_path = format!(
-                "{}/Library/Mobile Documents/iCloud~com~example~app/test.txt",
-                home
-            );
+            let app_path =
+                format!("{home}/Library/Mobile Documents/iCloud~com~example~app/test.txt");
             assert!(backend.is_in_icloud(Path::new(&app_path)));
 
             // Should not be in iCloud
             assert!(!backend.is_in_icloud(Path::new("/tmp/test.txt")));
-            assert!(!backend.is_in_icloud(Path::new(&format!("{}/Documents/test.txt", home))));
+            assert!(!backend.is_in_icloud(Path::new(&format!("{home}/Documents/test.txt"))));
         }
     }
 

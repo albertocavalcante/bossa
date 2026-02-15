@@ -292,7 +292,6 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
                 by_package.entry(&op.package).or_default().push(op);
             }
 
-            let target_base = expand_path(&symlinks.target);
             let pkg_count = by_package.len();
 
             println!(
@@ -318,16 +317,8 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
                 );
 
                 // Find max target width for alignment
-                let rel_targets: Vec<_> = pkg_ops
-                    .iter()
-                    .map(|op| {
-                        op.target
-                            .strip_prefix(&target_base)
-                            .unwrap_or(&op.target)
-                            .display()
-                            .to_string()
-                    })
-                    .collect();
+                let rel_targets: Vec<_> =
+                    pkg_ops.iter().map(|op| contract_home(&op.target)).collect();
                 let max_width = rel_targets.iter().map(String::len).max().unwrap_or(0);
 
                 for (op, rel) in pkg_ops.iter().zip(&rel_targets) {
@@ -349,10 +340,8 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
                 "⚠".yellow(),
                 blocked.len()
             );
-            let target_base = expand_path(&symlinks.target);
             for op in &blocked {
-                let rel_target = op.target.strip_prefix(&target_base).unwrap_or(&op.target);
-                println!("  {} {}", "⊘".red(), rel_target.display());
+                println!("  {} {}", "⊘".red(), contract_home(&op.target));
             }
         }
 
@@ -377,14 +366,10 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
 
     // Create missing symlinks
     for op in &to_create {
-        let rel_target = op
-            .target
-            .strip_prefix(expand_path(&symlinks.target))
-            .unwrap_or(&op.target);
         println!(
             "  {} {} → {}",
             if dry_run { "○" } else { "+" }.yellow(),
-            rel_target.display(),
+            contract_home(&op.target),
             contract_home(&op.source)
         );
 
@@ -399,14 +384,10 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
 
     // Fix wrong symlinks
     for op in &to_fix {
-        let rel_target = op
-            .target
-            .strip_prefix(expand_path(&symlinks.target))
-            .unwrap_or(&op.target);
         println!(
             "  {} {} → {}",
             "~".blue(),
-            rel_target.display(),
+            contract_home(&op.target),
             contract_home(&op.source)
         );
 
@@ -429,14 +410,10 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
         println!();
         println!("{}", "Force overwriting blocked files:".red().bold());
         for op in &blocked {
-            let rel_target = op
-                .target
-                .strip_prefix(expand_path(&symlinks.target))
-                .unwrap_or(&op.target);
             println!(
                 "  {} {} → {}",
                 "!".red(),
-                rel_target.display(),
+                contract_home(&op.target),
                 contract_home(&op.source)
             );
 
@@ -1380,5 +1357,20 @@ mod tests {
         assert_eq!(result.missing_packages[0].name, "gone");
         assert_eq!(result.empty_packages.len(), 1);
         assert_eq!(result.empty_packages[0].name, "empty");
+    }
+
+    // ── contract_home tests ───────────────────────────────────────────
+
+    #[test]
+    fn contract_home_replaces_home_prefix() {
+        let home = dirs::home_dir().unwrap();
+        let path = home.join(".config/direnv/direnv.toml");
+        assert_eq!(contract_home(&path), "~/.config/direnv/direnv.toml");
+    }
+
+    #[test]
+    fn contract_home_leaves_non_home_path_unchanged() {
+        let path = Path::new("/tmp/some/file.txt");
+        assert_eq!(contract_home(path), "/tmp/some/file.txt");
     }
 }

@@ -337,7 +337,7 @@ brew "git"
 
     #[test]
     fn test_parse_single_quotes() {
-        let brewfile = parse_string(r#"brew 'git'"#).unwrap();
+        let brewfile = parse_string(r"brew 'git'").unwrap();
         assert_eq!(brewfile.packages.len(), 1);
         assert_eq!(brewfile.packages[0].name, "git");
     }

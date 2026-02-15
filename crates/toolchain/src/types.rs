@@ -502,7 +502,7 @@ mod tests {
     #[test]
     fn test_platform_display() {
         let platform = Platform::new("macos", "aarch64", "aarch64-apple-darwin");
-        assert_eq!(format!("{}", platform), "aarch64-apple-darwin");
+        assert_eq!(format!("{platform}"), "aarch64-apple-darwin");
     }
 
     // =========================================================================
@@ -718,7 +718,7 @@ mod tests {
             was_upgrade: false,
             previous_version: None,
         };
-        let display = format!("{}", result);
+        let display = format!("{result}");
         assert!(display.contains("buck2"));
         assert!(display.contains("2024-01-15"));
         assert!(display.contains("installed"));
@@ -733,7 +733,7 @@ mod tests {
             was_upgrade: true,
             previous_version: Some("2024-01-01".to_string()),
         };
-        let display = format!("{}", result);
+        let display = format!("{result}");
         assert!(display.contains("upgraded"));
         assert!(display.contains("2024-01-01"));
         assert!(display.contains("2024-01-15"));

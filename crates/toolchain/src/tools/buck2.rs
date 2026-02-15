@@ -235,8 +235,7 @@ mod tests {
         let path_str = dir.to_string_lossy();
         assert!(
             path_str.contains(".local/bin") || path_str.contains("local/bin"),
-            "Expected path to contain 'local/bin', got: {}",
-            path_str
+            "Expected path to contain 'local/bin', got: {path_str}",
         );
     }
 

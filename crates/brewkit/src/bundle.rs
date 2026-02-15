@@ -149,13 +149,13 @@ mod tests {
 
     #[test]
     fn test_parse_mixed() {
-        let output = r#"
+        let output = r"
 Tapping homebrew/cask
 Installing git
 Using curl
 Error: foo: not found
 Upgrading wget
-"#;
+";
         let result = parse_verbose_output(output);
         assert_eq!(result.installed, vec!["homebrew/cask", "git"]);
         assert_eq!(result.skipped, vec!["curl"]);

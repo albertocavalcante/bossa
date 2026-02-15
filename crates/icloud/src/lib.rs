@@ -332,7 +332,7 @@ mod tests {
         let home = std::env::var("HOME").unwrap();
 
         let expanded = expand_path(Path::new("~/test.txt"));
-        assert_eq!(expanded, PathBuf::from(format!("{}/test.txt", home)));
+        assert_eq!(expanded, PathBuf::from(format!("{home}/test.txt")));
 
         let absolute = expand_path(Path::new("/tmp/test.txt"));
         assert_eq!(absolute, PathBuf::from("/tmp/test.txt"));

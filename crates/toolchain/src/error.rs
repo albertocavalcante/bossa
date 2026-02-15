@@ -377,7 +377,7 @@ mod tests {
             os: "plan9".to_string(),
             arch: "mips".to_string(),
         };
-        let display = format!("{}", err);
+        let display = format!("{err}");
         assert!(display.contains("plan9"));
         assert!(display.contains("mips"));
     }

@@ -20,8 +20,8 @@ fn main() -> icloud::Result<()> {
         let state = match file.state {
             icloud::DownloadState::Local => "LOCAL ",
             icloud::DownloadState::Cloud => "CLOUD ",
-            icloud::DownloadState::Downloading { percent } => &format!("DL {}%", percent),
-            icloud::DownloadState::Uploading { percent } => &format!("UP {}%", percent),
+            icloud::DownloadState::Downloading { percent } => &format!("DL {percent}%"),
+            icloud::DownloadState::Uploading { percent } => &format!("UP {percent}%"),
             icloud::DownloadState::Unknown => "???   ",
         };
 
@@ -73,6 +73,6 @@ fn format_size(bytes: u64) -> String {
     } else if bytes >= KB {
         format!("{:.1}K", bytes as f64 / KB as f64)
     } else {
-        format!("{}B", bytes)
+        format!("{bytes}B")
     }
 }

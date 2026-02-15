@@ -688,7 +688,7 @@ mod tests {
             Error::PathNotFound(path) => {
                 assert_eq!(path, missing_db);
             }
-            other => panic!("Expected PathNotFound error, got: {:?}", other),
+            other => panic!("Expected PathNotFound error, got: {other:?}"),
         }
     }
 

@@ -53,6 +53,10 @@ pre-commit:
 
 pre-push:
   commands:
+    # Run Clippy linter (catch lint regressions before push)
+    cargo-clippy:
+      run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
     # Run tests before pushing
     cargo-test:
       run: cargo test --quiet
