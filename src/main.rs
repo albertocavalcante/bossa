@@ -95,6 +95,7 @@ fn main() -> Result<()> {
         },
         Command::List(args) => commands::crud::list(&ctx, args.resource_type),
         Command::Show(args) => commands::crud::show(&ctx, &args.target),
+        Command::Dotfiles(cmd) => commands::dotfiles::run(&ctx, cmd),
         Command::Doctor => commands::doctor::run(&ctx),
         Command::Migrate { dry_run } => commands::migrate::run(&ctx, dry_run),
         Command::Caches(cmd) => commands::caches::run(cmd),

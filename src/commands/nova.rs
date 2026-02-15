@@ -104,6 +104,13 @@ fn build_plan(config: &BossaConfig, args: &NovaArgs) -> Result<ExecutionPlan> {
         add_brew_resources(&mut plan, config, &sudo_config)?;
     }
 
+    // Stage: dotfiles (must run before symlinks — stow depends on ~/.dotfiles)
+    if stages.contains(&"dotfiles") {
+        if let Err(e) = super::dotfiles::sync_for_nova(config) {
+            ui::warn(&format!("Dotfiles stage failed: {} — continuing", e));
+        }
+    }
+
     // Stage: symlinks
     if stages.contains(&"symlinks") || stages.contains(&"stow") {
         add_symlink_resources(&mut plan, config)?;
@@ -132,6 +139,7 @@ fn determine_stages(args: &NovaArgs) -> Vec<&'static str> {
     const ALL_STAGES: &[&str] = &[
         "defaults",
         "packages",
+        "dotfiles",
         "symlinks",
         "dock",
         "handlers",
@@ -398,6 +406,7 @@ fn list_stages() {
             "macOS system defaults (Finder, keyboard, screenshots, etc.)",
         ),
         ("packages", "Homebrew packages (formulas, casks, fonts)"),
+        ("dotfiles", "Dotfiles repo clone/pull + submodules"),
         ("symlinks", "Dotfile symlinks (native stow replacement)"),
         ("dock", "Dock configuration (apps, folders, settings)"),
         ("handlers", "File handler associations (duti)"),

@@ -95,6 +95,10 @@ pub struct BossaState {
     #[serde(default)]
     pub symlinks: SymlinkInventory,
 
+    /// State for dotfiles repository
+    #[serde(default)]
+    pub dotfiles: DotfilesState,
+
     /// Last time the state was updated
     pub last_updated: DateTime<Utc>,
 }
@@ -146,6 +150,25 @@ pub struct StorageState {
     /// Whether the volume is currently mounted
     #[serde(default)]
     pub is_mounted: bool,
+}
+
+/// State for the dotfiles repository
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct DotfilesState {
+    /// Whether the repo has been cloned
+    #[serde(default)]
+    pub cloned: bool,
+
+    /// Last time dotfiles were synced
+    pub last_sync: Option<DateTime<Utc>>,
+
+    /// Submodules that have been initialized
+    #[serde(default)]
+    pub initialized_submodules: Vec<String>,
+
+    /// Whether the private submodule has been initialized
+    #[serde(default)]
+    pub private_initialized: bool,
 }
 
 // ============================================================================
@@ -327,6 +350,38 @@ impl BossaState {
         let state = self.get_storage_mut(storage_name);
         state.symlinks_created.retain(|path| path != symlink_path);
     }
+
+    // ========================================================================
+    // Dotfiles State Helpers
+    // ========================================================================
+
+    /// Mark dotfiles repo as cloned
+    pub fn mark_dotfiles_cloned(&mut self) {
+        self.dotfiles.cloned = true;
+    }
+
+    /// Mark dotfiles as synced
+    pub fn mark_dotfiles_synced(&mut self) {
+        self.dotfiles.last_sync = Some(Utc::now());
+    }
+
+    /// Mark a submodule as initialized
+    pub fn mark_submodule_initialized(&mut self, submodule: &str) {
+        if !self
+            .dotfiles
+            .initialized_submodules
+            .contains(&submodule.to_string())
+        {
+            self.dotfiles
+                .initialized_submodules
+                .push(submodule.to_string());
+        }
+    }
+
+    /// Mark private submodule as initialized
+    pub fn mark_private_initialized(&mut self) {
+        self.dotfiles.private_initialized = true;
+    }
 }
 
 impl Default for BossaState {
@@ -336,6 +391,7 @@ impl Default for BossaState {
             workspaces: WorkspacesState::default(),
             storage: HashMap::new(),
             symlinks: SymlinkInventory::default(),
+            dotfiles: DotfilesState::default(),
             last_updated: Utc::now(),
         }
     }

@@ -73,6 +73,10 @@ pub struct BossaConfig {
     /// Generated config files
     #[serde(default)]
     pub configs: ConfigsSection,
+
+    /// Dotfiles repository management
+    #[serde(default)]
+    pub dotfiles: Option<DotfilesConfig>,
 }
 
 impl BossaConfig {
@@ -1822,6 +1826,92 @@ fn default_source() -> String {
 
 fn default_runtime() -> String {
     "podman".to_string()
+}
+
+// ============================================================================
+// Dotfiles - Repository management
+// ============================================================================
+
+/// Dotfiles repository configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DotfilesConfig {
+    /// Git repository URL
+    pub repo: String,
+
+    /// Local clone path (e.g., "~/.dotfiles")
+    pub path: String,
+
+    /// Branch to track
+    #[serde(default = "default_branch")]
+    pub branch: String,
+
+    /// Public submodules to always initialize
+    #[serde(default)]
+    pub public_submodules: Vec<String>,
+
+    /// Private submodule configuration (requires auth)
+    #[serde(default)]
+    pub private: Option<DotfilesPrivateConfig>,
+
+    /// Submodules to skip (e.g., dev-only tools)
+    #[serde(default)]
+    pub skip_submodules: Vec<String>,
+}
+
+impl DotfilesConfig {
+    /// Get the expanded local path
+    pub fn expanded_path(&self) -> Result<PathBuf> {
+        let expanded = shellexpand::tilde(&self.path);
+        Ok(PathBuf::from(expanded.as_ref()))
+    }
+
+    /// Validate the dotfiles config
+    pub fn validate(&self) -> Result<()> {
+        if self.repo.is_empty() {
+            anyhow::bail!("Dotfiles repo URL cannot be empty");
+        }
+        if self.path.is_empty() {
+            anyhow::bail!("Dotfiles path cannot be empty");
+        }
+        if self.branch.is_empty() {
+            anyhow::bail!("Dotfiles branch cannot be empty");
+        }
+        if let Some(ref private) = self.private {
+            private.validate()?;
+        }
+        Ok(())
+    }
+}
+
+/// Private dotfiles submodule configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DotfilesPrivateConfig {
+    /// Relative path within the dotfiles repo
+    pub path: String,
+
+    /// Git URL for the private submodule
+    pub url: String,
+
+    /// Whether GitHub auth is required
+    #[serde(default)]
+    pub requires_auth: bool,
+
+    /// Script to run after initializing (relative to private submodule)
+    #[serde(default)]
+    pub setup_script: Option<String>,
+}
+
+impl DotfilesPrivateConfig {
+    /// Validate the private config
+    pub fn validate(&self) -> Result<()> {
+        if self.path.is_empty() {
+            anyhow::bail!("Private submodule path cannot be empty");
+        }
+        if self.url.is_empty() {
+            anyhow::bail!("Private submodule URL cannot be empty");
+        }
+        Ok(())
+    }
 }
 
 // ============================================================================

@@ -42,6 +42,7 @@ fn grouped_commands_help() -> String {
 {}
   brew          Homebrew package management
   tools         Install and manage development tools
+  dotfiles      Manage dotfiles repository (clone, pull, submodules)
   stow          Manage dotfile symlinks (native stow replacement)
   theme         Apply GNOME/GTK theme presets (Linux only)
   defaults      Manage macOS defaults
@@ -130,6 +131,10 @@ pub enum Command {
 
     /// Show detailed info for a specific resource
     Show(ShowArgs),
+
+    /// Manage dotfiles repository
+    #[command(subcommand)]
+    Dotfiles(DotfilesCommand),
 
     /// Check system health and dependencies
     Doctor,
@@ -822,6 +827,37 @@ pub struct NovaArgs {
     pub jobs: Option<u16>,
 }
 
+// ============================================================================
+// Dotfiles Commands
+// ============================================================================
+
+#[derive(Debug, Subcommand)]
+pub enum DotfilesCommand {
+    /// Show dotfiles health report
+    Status,
+
+    /// Clone/pull + submodules + stow (idempotent)
+    Sync(DotfilesSyncArgs),
+
+    /// Preview what sync would do (alias for sync --dry-run)
+    Diff,
+}
+
+#[derive(Debug, Parser)]
+pub struct DotfilesSyncArgs {
+    /// Preview without making changes
+    #[arg(long, short = 'n')]
+    pub dry_run: bool,
+
+    /// Skip symlink sync step
+    #[arg(long)]
+    pub no_stow: bool,
+
+    /// Skip private submodule
+    #[arg(long)]
+    pub no_private: bool,
+}
+
 /// Nova bootstrap stages
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum NovaStage {
@@ -836,6 +872,7 @@ pub enum NovaStage {
     Dock,
     Ecosystem,
     Handlers,
+    Dotfiles,
     Stow,
     Caches,
     Mcp,
@@ -857,6 +894,7 @@ impl NovaStage {
             Self::Dock,
             Self::Ecosystem,
             Self::Handlers,
+            Self::Dotfiles,
             Self::Stow,
             Self::Caches,
             Self::Mcp,
@@ -878,6 +916,7 @@ impl NovaStage {
             Self::Dock => "dock",
             Self::Ecosystem => "ecosystem",
             Self::Handlers => "handlers",
+            Self::Dotfiles => "dotfiles",
             Self::Stow => "stow",
             Self::Caches => "caches",
             Self::Mcp => "mcp",
@@ -899,6 +938,7 @@ impl NovaStage {
             Self::Dock => "Dock configuration",
             Self::Ecosystem => "Ecosystem extensions",
             Self::Handlers => "File handlers (duti)",
+            Self::Dotfiles => "Dotfiles repo clone/pull + submodules",
             Self::Stow => "Dotfile symlinks (native stow replacement)",
             Self::Caches => "Cache symlinks to external drive",
             Self::Mcp => "MCP server configuration",
@@ -920,6 +960,7 @@ impl NovaStage {
             "dock" => Some(Self::Dock),
             "ecosystem" => Some(Self::Ecosystem),
             "handlers" => Some(Self::Handlers),
+            "dotfiles" => Some(Self::Dotfiles),
             "stow" => Some(Self::Stow),
             "caches" => Some(Self::Caches),
             "mcp" => Some(Self::Mcp),
@@ -1537,9 +1578,9 @@ mod tests {
     #[test]
     fn test_nova_stage_all() {
         let stages = NovaStage::all();
-        assert_eq!(stages.len(), 16);
+        assert_eq!(stages.len(), 17);
         assert_eq!(stages[0], NovaStage::Defaults);
-        assert_eq!(stages[15], NovaStage::Workspaces);
+        assert_eq!(stages[16], NovaStage::Workspaces);
     }
 
     #[test]
