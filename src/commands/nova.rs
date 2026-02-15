@@ -105,10 +105,10 @@ fn build_plan(config: &BossaConfig, args: &NovaArgs) -> Result<ExecutionPlan> {
     }
 
     // Stage: dotfiles (must run before symlinks — stow depends on ~/.dotfiles)
-    if stages.contains(&"dotfiles") {
-        if let Err(e) = super::dotfiles::sync_for_nova(config) {
-            ui::warn(&format!("Dotfiles stage failed: {} — continuing", e));
-        }
+    if stages.contains(&"dotfiles")
+        && let Err(e) = super::dotfiles::sync_for_nova(config)
+    {
+        ui::warn(&format!("Dotfiles stage failed: {e} — continuing"));
     }
 
     // Stage: symlinks

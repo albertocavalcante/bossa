@@ -77,6 +77,10 @@ pub struct BossaConfig {
     /// Dotfiles repository management
     #[serde(default)]
     pub dotfiles: Option<DotfilesConfig>,
+
+    /// Dotfiles reconciliation across multiple sources
+    #[serde(default)]
+    pub dotfiles_reconcile: Option<DotfilesReconcileConfig>,
 }
 
 impl BossaConfig {
@@ -1912,6 +1916,35 @@ impl DotfilesPrivateConfig {
         }
         Ok(())
     }
+}
+
+// ============================================================================
+// Dotfiles Reconciliation Configuration
+// ============================================================================
+
+/// Configuration for reconciling dotfiles across multiple sources
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DotfilesReconcileConfig {
+    /// Primary source (e.g., "~/.dotfiles")
+    pub source_a: String,
+    /// Secondary source (e.g., "/Volumes/T9/dev/ws/utils/dotfiles")
+    pub source_b: String,
+    /// Target directory where files are deployed (e.g., "~")
+    pub target: String,
+    /// Packages/subdirectories to compare (e.g., ["zsh", "git", "tmux"])
+    /// If empty, compares all shared subdirectories
+    #[serde(default)]
+    pub packages: Vec<String>,
+    /// File/directory patterns to ignore during comparison
+    #[serde(default)]
+    pub ignore: Vec<String>,
+    /// Default reconciliation strategy
+    #[serde(default = "default_reconcile_strategy")]
+    pub strategy: String,
+}
+
+fn default_reconcile_strategy() -> String {
+    "interactive".to_string()
 }
 
 // ============================================================================

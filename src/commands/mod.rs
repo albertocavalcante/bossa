@@ -13,6 +13,7 @@ pub mod defaults;
 pub mod disk;
 pub mod doctor;
 pub mod dotfiles;
+pub mod dotfiles_reconcile;
 pub mod icloud;
 pub mod locations;
 pub mod manifest;

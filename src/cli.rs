@@ -42,7 +42,7 @@ fn grouped_commands_help() -> String {
 {}
   brew          Homebrew package management
   tools         Install and manage development tools
-  dotfiles      Manage dotfiles repository (clone, pull, submodules)
+  dotfiles      Manage dotfiles repository and reconcile sources
   stow          Manage dotfile symlinks (native stow replacement)
   theme         Apply GNOME/GTK theme presets (Linux only)
   defaults      Manage macOS defaults
@@ -841,6 +841,59 @@ pub enum DotfilesCommand {
 
     /// Preview what sync would do (alias for sync --dry-run)
     Diff,
+
+    /// Three-way hash comparison across two sources and target
+    ///
+    /// Compares files in source A, source B, and the deployed target
+    /// using blake3 hashes to detect drift, missing files, and conflicts.
+    /// Requires [dotfiles_reconcile] in config.
+    Drift {
+        /// Only compare specific packages
+        #[arg(value_name = "PACKAGE")]
+        packages: Vec<String>,
+    },
+
+    /// Reconcile divergent files across sources
+    ///
+    /// Copies files to align sources and target based on the chosen strategy.
+    /// Requires [dotfiles_reconcile] in config.
+    ///
+    /// Examples:
+    ///   bossa dotfiles reconcile --dry-run             # Preview changes
+    ///   bossa dotfiles reconcile --strategy a-wins     # Source A is canonical
+    ///   bossa dotfiles reconcile --strategy newest-wins # Use newest mtime
+    Reconcile {
+        /// Preview changes without making them
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+
+        /// Reconciliation strategy
+        #[arg(long, value_enum, default_value = "interactive")]
+        strategy: ReconcileStrategy,
+
+        /// Only reconcile specific packages
+        #[arg(value_name = "PACKAGE")]
+        packages: Vec<String>,
+    },
+
+    /// Health check for multi-source reconciliation
+    ///
+    /// Verifies sources are reachable, checks for broken symlinks,
+    /// and reports package availability across sources.
+    /// Requires [dotfiles_reconcile] in config.
+    Check,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ReconcileStrategy {
+    /// Source A is canonical, copy to B and target
+    AWins,
+    /// Source B is canonical, copy to A and target
+    BWins,
+    /// Use the file with the most recent mtime
+    NewestWins,
+    /// Prompt per-conflict (default)
+    Interactive,
 }
 
 #[derive(Debug, Parser)]

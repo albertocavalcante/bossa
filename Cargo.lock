@@ -160,6 +160,7 @@ name = "bossa"
 version = "0.1.2"
 dependencies = [
  "anyhow",
+ "blake3",
  "brewkit",
  "chrono",
  "clap",

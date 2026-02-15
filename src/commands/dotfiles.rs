@@ -61,6 +61,14 @@ pub fn run(ctx: &AppContext, cmd: DotfilesCommand) -> Result<()> {
         DotfilesCommand::Status => status(ctx, dotfiles),
         DotfilesCommand::Sync(args) => sync(ctx, dotfiles, &config, args),
         DotfilesCommand::Diff => diff(ctx, dotfiles, &config),
+        // Reconciliation subcommands delegate to dedicated module
+        DotfilesCommand::Drift { packages } => super::dotfiles_reconcile::drift(ctx, &packages),
+        DotfilesCommand::Reconcile {
+            dry_run,
+            strategy,
+            packages,
+        } => super::dotfiles_reconcile::reconcile(ctx, dry_run, strategy, &packages),
+        DotfilesCommand::Check => super::dotfiles_reconcile::check(ctx),
     }
 }
 
@@ -303,7 +311,7 @@ fn sync(
 ) -> Result<()> {
     let path = config.expanded_path()?;
     let mut state = BossaState::load()?;
-    let total_steps = 4 + if args.no_stow { 0 } else { 1 };
+    let total_steps = 4 + usize::from(!args.no_stow);
     let mut step_num = 0;
 
     if args.dry_run && !ctx.quiet {
@@ -348,16 +356,16 @@ fn sync(
             }
             Ok(PullResult::Updated(n)) => {
                 if !ctx.quiet {
-                    ui::success(&format!("Pulled {} new commit(s)", n));
+                    ui::success(&format!("Pulled {n} new commit(s)"));
                 }
             }
             Ok(PullResult::Skipped(reason)) => {
                 if !ctx.quiet {
-                    ui::warn(&format!("Pull skipped: {}", reason));
+                    ui::warn(&format!("Pull skipped: {reason}"));
                 }
             }
             Err(e) => {
-                ui::warn(&format!("Pull failed: {} — continuing", e));
+                ui::warn(&format!("Pull failed: {e} — continuing"));
             }
         }
     } else if path.exists() && args.dry_run {
@@ -460,14 +468,14 @@ fn sync(
                     }
                     Ok(PrivateResult::Skipped(reason)) => {
                         if !ctx.quiet {
-                            ui::dim(&format!("Private: {}", reason));
+                            ui::dim(&format!("Private: {reason}"));
                         }
                     }
                     Ok(PrivateResult::Failed(reason)) => {
-                        ui::warn(&format!("Private submodule: {}", reason));
+                        ui::warn(&format!("Private submodule: {reason}"));
                     }
                     Err(e) => {
-                        ui::warn(&format!("Private submodule error: {} — continuing", e));
+                        ui::warn(&format!("Private submodule error: {e} — continuing"));
                     }
                 }
             }
@@ -778,7 +786,7 @@ fn git_ahead_behind(path: &Path, branch: &str) -> Option<(usize, usize)> {
             "rev-list",
             "--left-right",
             "--count",
-            &format!("HEAD...origin/{}", branch),
+            &format!("HEAD...origin/{branch}"),
         ])
         .current_dir(path)
         .output()
@@ -841,11 +849,10 @@ fn run_stow_sync(config: &BossaConfig, ctx: &AppContext) -> Result<()> {
     if !ctx.quiet {
         if created > 0 {
             ui::success(&format!(
-                "Created {} new symlink(s), {} already existed",
-                created, existed
+                "Created {created} new symlink(s), {existed} already existed",
             ));
         } else {
-            ui::dim(&format!("All {} symlinks up to date", existed));
+            ui::dim(&format!("All {existed} symlinks up to date"));
         }
     }
 
@@ -880,11 +887,11 @@ fn create_symlinks_recursive(
         if path.is_file() || (path.is_symlink() && !path.is_dir()) {
             if target.is_symlink() {
                 // Check if it points to the right place
-                if let Ok(link_target) = std::fs::read_link(&target) {
-                    if link_target == path {
-                        existed += 1;
-                        continue;
-                    }
+                if let Ok(link_target) = std::fs::read_link(&target)
+                    && link_target == path
+                {
+                    existed += 1;
+                    continue;
                 }
                 // Remove wrong symlink
                 std::fs::remove_file(&target)?;
@@ -1008,21 +1015,21 @@ fn format_time_ago(ts: chrono::DateTime<chrono::Utc>) -> String {
         if days == 1 {
             "1 day ago".to_string()
         } else {
-            format!("{} days ago", days)
+            format!("{days} days ago")
         }
     } else if duration.num_hours() > 0 {
         let hours = duration.num_hours();
         if hours == 1 {
             "1 hour ago".to_string()
         } else {
-            format!("{} hours ago", hours)
+            format!("{hours} hours ago")
         }
     } else if duration.num_minutes() > 0 {
         let mins = duration.num_minutes();
         if mins == 1 {
             "1 minute ago".to_string()
         } else {
-            format!("{} minutes ago", mins)
+            format!("{mins} minutes ago")
         }
     } else {
         "just now".to_string()
