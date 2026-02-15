@@ -275,11 +275,87 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
     print_empty_packages(&empty_packages);
 
     if to_create.is_empty() && to_fix.is_empty() && (blocked.is_empty() || !force) {
+        // Collect correct ops grouped by package
+        let correct: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op.state, SymlinkState::Correct))
+            .collect();
+
         let has_real_packages =
             filtered_config.packages.len() > missing_packages.len() + empty_packages.len();
-        if has_real_packages {
-            println!("{}", "✓ All symlinks are up to date".green());
+
+        if has_real_packages && !correct.is_empty() {
+            // Group by package
+            let mut by_package: std::collections::BTreeMap<&str, Vec<&SymlinkOp>> =
+                std::collections::BTreeMap::new();
+            for op in &correct {
+                by_package.entry(&op.package).or_default().push(op);
+            }
+
+            let target_base = expand_path(&symlinks.target);
+            let pkg_count = by_package.len();
+
+            println!(
+                "{}",
+                format!(
+                    "✓ All symlinks are up to date ({} links across {} packages)",
+                    correct.len(),
+                    pkg_count
+                )
+                .green()
+            );
+            println!();
+
+            for (pkg_name, mut pkg_ops) in by_package {
+                // Sort ops by relative target path for stable output
+                pkg_ops.sort_by(|a, b| a.target.cmp(&b.target));
+
+                println!(
+                    "  {} ({} {})",
+                    pkg_name.bold(),
+                    pkg_ops.len(),
+                    if pkg_ops.len() == 1 { "link" } else { "links" }
+                );
+
+                // Find max target width for alignment
+                let rel_targets: Vec<_> = pkg_ops
+                    .iter()
+                    .map(|op| {
+                        op.target
+                            .strip_prefix(&target_base)
+                            .unwrap_or(&op.target)
+                            .display()
+                            .to_string()
+                    })
+                    .collect();
+                let max_width = rel_targets.iter().map(String::len).max().unwrap_or(0);
+
+                for (op, rel) in pkg_ops.iter().zip(&rel_targets) {
+                    println!(
+                        "    {:<width$} → {}",
+                        rel,
+                        contract_home(&op.source),
+                        width = max_width
+                    );
+                }
+                println!();
+            }
         }
+
+        // Still show blocked files warning if any
+        if !blocked.is_empty() {
+            println!(
+                "{} {} files blocked (use --force to overwrite)",
+                "⚠".yellow(),
+                blocked.len()
+            );
+            let target_base = expand_path(&symlinks.target);
+            for op in &blocked {
+                let rel_target = op.target.strip_prefix(&target_base).unwrap_or(&op.target);
+                println!("  {} {}", "⊘".red(), rel_target.display());
+            }
+        }
+
         return Ok(());
     }
 
@@ -309,7 +385,7 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
             "  {} {} → {}",
             if dry_run { "○" } else { "+" }.yellow(),
             rel_target.display(),
-            op.source.display()
+            contract_home(&op.source)
         );
 
         if !dry_run {
@@ -331,7 +407,7 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
             "  {} {} → {}",
             "~".blue(),
             rel_target.display(),
-            op.source.display()
+            contract_home(&op.source)
         );
 
         if !dry_run {
@@ -361,7 +437,7 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
                 "  {} {} → {}",
                 "!".red(),
                 rel_target.display(),
-                op.source.display()
+                contract_home(&op.source)
             );
 
             if !dry_run {
@@ -726,6 +802,16 @@ fn get_symlinks_config(config: &BossaConfig) -> Result<&SymlinksConfig> {
 
 fn expand_path(path: &str) -> PathBuf {
     crate::paths::expand(path)
+}
+
+/// Contract home directory prefix to `~` for display
+fn contract_home(path: &Path) -> String {
+    if let Some(home) = dirs::home_dir()
+        && let Ok(rest) = path.strip_prefix(&home)
+    {
+        return format!("~/{}", rest.display());
+    }
+    path.display().to_string()
 }
 
 /// Print info for missing package directories (read-only context: status, diff)
