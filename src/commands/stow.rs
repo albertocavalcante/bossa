@@ -38,6 +38,20 @@ struct SymlinkOp {
     package: String,
 }
 
+/// A package whose source directory is missing
+#[derive(Debug, Clone)]
+struct MissingPackage {
+    name: String,
+    expected_path: PathBuf,
+}
+
+/// Result of collecting symlink operations
+#[derive(Debug, Default)]
+struct CollectResult {
+    ops: Vec<SymlinkOp>,
+    missing_packages: Vec<MissingPackage>,
+}
+
 pub fn run(_ctx: &AppContext, cmd: StowCommand) -> Result<()> {
     match cmd {
         StowCommand::Status => status(),
@@ -102,7 +116,7 @@ fn status() -> Result<()> {
     }
 
     // Collect operations and aggregate stats
-    let ops = collect_symlink_ops(symlinks)?;
+    let CollectResult { ops, .. } = collect_symlink_ops(symlinks)?;
     for op in &ops {
         let stats = package_stats.entry(op.package.clone()).or_default();
         match &op.state {
@@ -220,7 +234,10 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
         ignore: symlinks.ignore.clone(),
     };
 
-    let ops = collect_symlink_ops(&filtered_config)?;
+    let CollectResult {
+        ops,
+        missing_packages,
+    } = collect_symlink_ops(&filtered_config)?;
 
     // Count what needs to be done
     let to_create: Vec<_> = ops
@@ -237,9 +254,14 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
         .collect();
 
     if to_create.is_empty() && to_fix.is_empty() && (blocked.is_empty() || !force) {
-        println!("{}", "✓ All symlinks are up to date".green());
+        print_missing_packages(&missing_packages);
+        if missing_packages.len() < filtered_config.packages.len() {
+            println!("{}", "✓ All symlinks are up to date".green());
+        }
         return Ok(());
     }
+
+    print_missing_packages(&missing_packages);
 
     let mode = if dry_run {
         "Would sync".yellow()
@@ -509,7 +531,10 @@ fn unlink(packages: &[String], dry_run: bool) -> Result<()> {
         ignore: symlinks.ignore.clone(),
     };
 
-    let ops = collect_symlink_ops(&filtered_config)?;
+    let CollectResult {
+        ops,
+        missing_packages,
+    } = collect_symlink_ops(&filtered_config)?;
 
     // Only unlink correct symlinks (not missing or blocked)
     let to_unlink: Vec<_> = ops
@@ -518,6 +543,7 @@ fn unlink(packages: &[String], dry_run: bool) -> Result<()> {
         .collect();
 
     if to_unlink.is_empty() {
+        print_missing_packages(&missing_packages);
         println!("{}", "No symlinks to remove".dimmed());
         return Ok(());
     }
@@ -681,12 +707,28 @@ fn expand_path(path: &str) -> PathBuf {
     crate::paths::expand(path)
 }
 
+/// Print warnings for missing package directories
+fn print_missing_packages(missing: &[MissingPackage]) {
+    for pkg in missing {
+        println!(
+            "{} Package '{}' has no source directory",
+            "⚠".yellow(),
+            pkg.name
+        );
+        println!("    Expected: {}", pkg.expected_path.display());
+        println!(
+            "    Run '{}' to create it",
+            format!("mkdir -p {}", pkg.expected_path.display()).cyan()
+        );
+    }
+}
+
 /// Collect all symlink operations for the given config
-fn collect_symlink_ops(config: &SymlinksConfig) -> Result<Vec<SymlinkOp>> {
+fn collect_symlink_ops(config: &SymlinksConfig) -> Result<CollectResult> {
     let source_base = expand_path(&config.source);
     let target_base = expand_path(&config.target);
 
-    let mut ops = Vec::new();
+    let mut result = CollectResult::default();
 
     for package in &config.packages {
         let package_source = source_base.join(package);
@@ -696,6 +738,10 @@ fn collect_symlink_ops(config: &SymlinksConfig) -> Result<Vec<SymlinkOp>> {
                 "Package directory does not exist: {}",
                 package_source.display()
             );
+            result.missing_packages.push(MissingPackage {
+                name: package.clone(),
+                expected_path: package_source,
+            });
             continue;
         }
 
@@ -705,11 +751,11 @@ fn collect_symlink_ops(config: &SymlinksConfig) -> Result<Vec<SymlinkOp>> {
             &target_base,
             package,
             &config.ignore,
-            &mut ops,
+            &mut result.ops,
         )?;
     }
 
-    Ok(ops)
+    Ok(result)
 }
 
 /// Recursively walk a package directory and collect symlink operations
@@ -858,4 +904,216 @@ fn track_symlink(state: &mut BossaState, source: &Path, target: &Path) {
         subsystem: "stow".to_string(),
         created_at: Utc::now(),
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+    use tempfile::TempDir;
+
+    // ── PackageStatus tests ──────────────────────────────────────────
+
+    #[test]
+    fn status_label_empty() {
+        let s = PackageStatus::default();
+        assert_eq!(s.total(), 0);
+        let (label, _) = s.status_label();
+        assert_eq!(label, "empty");
+    }
+
+    #[test]
+    fn status_label_linked() {
+        let s = PackageStatus {
+            linked: 3,
+            ..Default::default()
+        };
+        assert_eq!(s.total(), 3);
+        let (label, color) = s.status_label();
+        assert_eq!(label, "linked");
+        assert_eq!(color, colored::Color::Green);
+    }
+
+    #[test]
+    fn status_label_unlinked() {
+        let s = PackageStatus {
+            unlinked: 2,
+            ..Default::default()
+        };
+        let (label, _) = s.status_label();
+        assert_eq!(label, "unlinked");
+    }
+
+    #[test]
+    fn status_label_partial() {
+        let s = PackageStatus {
+            linked: 1,
+            unlinked: 1,
+            ..Default::default()
+        };
+        let (label, color) = s.status_label();
+        assert_eq!(label, "partial");
+        assert_eq!(color, colored::Color::Yellow);
+    }
+
+    #[test]
+    fn status_label_blocked() {
+        let s = PackageStatus {
+            blocked: 1,
+            ..Default::default()
+        };
+        let (label, _) = s.status_label();
+        // linked == 0, so "unlinked"
+        assert_eq!(label, "unlinked");
+    }
+
+    #[test]
+    fn total_arithmetic() {
+        let s = PackageStatus {
+            linked: 1,
+            unlinked: 2,
+            wrong: 3,
+            blocked: 4,
+        };
+        assert_eq!(s.total(), 10);
+    }
+
+    // ── check_symlink_state tests ────────────────────────────────────
+
+    #[test]
+    fn check_state_missing() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("source_file");
+        fs::write(&source, "hello").unwrap();
+        let target = tmp.path().join("nonexistent_link");
+
+        assert!(matches!(
+            check_symlink_state(&source, &target),
+            SymlinkState::Missing
+        ));
+    }
+
+    #[test]
+    fn check_state_correct() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("source_file");
+        fs::write(&source, "hello").unwrap();
+        let target = tmp.path().join("link");
+        symlink(&source, &target).unwrap();
+
+        assert!(matches!(
+            check_symlink_state(&source, &target),
+            SymlinkState::Correct
+        ));
+    }
+
+    #[test]
+    fn check_state_wrong() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("source_file");
+        fs::write(&source, "hello").unwrap();
+        let other = tmp.path().join("other_file");
+        fs::write(&other, "other").unwrap();
+        let target = tmp.path().join("link");
+        symlink(&other, &target).unwrap();
+
+        assert!(matches!(
+            check_symlink_state(&source, &target),
+            SymlinkState::Wrong { .. }
+        ));
+    }
+
+    #[test]
+    fn check_state_blocked() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("source_file");
+        fs::write(&source, "hello").unwrap();
+        let target = tmp.path().join("regular_file");
+        fs::write(&target, "blocking").unwrap();
+
+        assert!(matches!(
+            check_symlink_state(&source, &target),
+            SymlinkState::Blocked
+        ));
+    }
+
+    // ── collect_symlink_ops tests ────────────────────────────────────
+
+    fn make_config(tmp: &TempDir, packages: &[&str], ignore: &[&str]) -> SymlinksConfig {
+        let source = tmp.path().join("source");
+        let target = tmp.path().join("target");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        SymlinksConfig {
+            source: source.to_string_lossy().to_string(),
+            target: target.to_string_lossy().to_string(),
+            packages: packages.iter().map(ToString::to_string).collect(),
+            ignore: ignore.iter().map(ToString::to_string).collect(),
+        }
+    }
+
+    #[test]
+    fn collect_missing_package_dir() {
+        let tmp = TempDir::new().unwrap();
+        let config = make_config(&tmp, &["nonexistent"], &[]);
+
+        let result = collect_symlink_ops(&config).unwrap();
+        assert!(result.ops.is_empty());
+        assert_eq!(result.missing_packages.len(), 1);
+        assert_eq!(result.missing_packages[0].name, "nonexistent");
+    }
+
+    #[test]
+    fn collect_existing_package() {
+        let tmp = TempDir::new().unwrap();
+        let config = make_config(&tmp, &["mypkg"], &[]);
+
+        // Create package dir with a file
+        let pkg_dir = tmp.path().join("source").join("mypkg");
+        fs::create_dir_all(&pkg_dir).unwrap();
+        fs::write(pkg_dir.join("file.txt"), "content").unwrap();
+
+        let result = collect_symlink_ops(&config).unwrap();
+        assert!(result.missing_packages.is_empty());
+        assert_eq!(result.ops.len(), 1);
+        assert_eq!(result.ops[0].package, "mypkg");
+        assert!(matches!(result.ops[0].state, SymlinkState::Missing));
+    }
+
+    #[test]
+    fn collect_mixed_present_and_missing() {
+        let tmp = TempDir::new().unwrap();
+        let config = make_config(&tmp, &["exists", "gone"], &[]);
+
+        let pkg_dir = tmp.path().join("source").join("exists");
+        fs::create_dir_all(&pkg_dir).unwrap();
+        fs::write(pkg_dir.join("a.txt"), "a").unwrap();
+
+        let result = collect_symlink_ops(&config).unwrap();
+        assert_eq!(result.ops.len(), 1);
+        assert_eq!(result.ops[0].package, "exists");
+        assert_eq!(result.missing_packages.len(), 1);
+        assert_eq!(result.missing_packages[0].name, "gone");
+    }
+
+    #[test]
+    fn collect_ignore_patterns_filter() {
+        let tmp = TempDir::new().unwrap();
+        let config = make_config(&tmp, &["pkg"], &[".git", "README.md"]);
+
+        let pkg_dir = tmp.path().join("source").join("pkg");
+        fs::create_dir_all(&pkg_dir).unwrap();
+        fs::write(pkg_dir.join("keep.txt"), "keep").unwrap();
+        fs::write(pkg_dir.join("README.md"), "ignore me").unwrap();
+        fs::create_dir_all(pkg_dir.join(".git")).unwrap();
+        fs::write(pkg_dir.join(".git").join("config"), "git stuff").unwrap();
+
+        let result = collect_symlink_ops(&config).unwrap();
+        assert!(result.missing_packages.is_empty());
+        assert_eq!(result.ops.len(), 1);
+        assert_eq!(
+            result.ops[0].source.file_name().unwrap().to_str().unwrap(),
+            "keep.txt"
+        );
+    }
 }
