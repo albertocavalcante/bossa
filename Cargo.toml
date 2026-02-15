@@ -68,7 +68,7 @@ zip = "2"
 brewkit = { path = "crates/brewkit" }
 declarative = { path = "crates/declarative" }
 icloud = { path = "crates/icloud" }
-libc = "0.2.180"
+libc = "0.2.182"
 manifest = { path = "crates/manifest" }
 pintui = { git = "https://github.com/albertocavalcante/pintui", rev = "6e412905" }
 toolchain = { path = "crates/toolchain" }
