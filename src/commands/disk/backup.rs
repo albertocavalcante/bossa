@@ -276,12 +276,14 @@ fn check_destination_space(_dest: &Path, _required: u64) -> Result<()> {
 /// Perform the actual backup
 fn perform_backup(entries: &[CopyEntry], source_base: &Path, total_size: u64) -> Result<()> {
     let pb = ProgressBar::new(total_size);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta}) {msg}")
-            .unwrap()
-            .progress_chars("=>-"),
-    );
+    let style = ProgressStyle::default_bar();
+    let style = match style
+        .template("{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta}) {msg}")
+    {
+        Ok(style) => style.progress_chars("=>-"),
+        Err(_) => ProgressStyle::default_bar(),
+    };
+    pb.set_style(style);
 
     let mut copied_count = 0;
     let mut error_count = 0;

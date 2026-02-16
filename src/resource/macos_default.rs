@@ -45,8 +45,7 @@ impl MacOSDefault {
     /// Parse "domain.key" format
     pub fn from_domain_key(domain_key: &str, value: DefaultValue) -> Result<Self> {
         // Handle NSGlobalDomain specially
-        if domain_key.starts_with("NSGlobalDomain.") {
-            let key = domain_key.strip_prefix("NSGlobalDomain.").unwrap();
+        if let Some(key) = domain_key.strip_prefix("NSGlobalDomain.") {
             return Ok(Self::new("NSGlobalDomain", key, value));
         }
 
@@ -190,5 +189,25 @@ impl Resource for MacOSDefault {
                 Ok(ApplyResult::Modified)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DefaultValue, MacOSDefault};
+
+    #[test]
+    fn from_domain_key_supports_ns_global_domain() {
+        let pref = MacOSDefault::from_domain_key("NSGlobalDomain.KeyRepeat", DefaultValue::Int(2))
+            .expect("NSGlobalDomain key should parse");
+
+        assert_eq!(pref.domain, "NSGlobalDomain");
+        assert_eq!(pref.key, "KeyRepeat");
+    }
+
+    #[test]
+    fn from_domain_key_rejects_missing_separator() {
+        let result = MacOSDefault::from_domain_key("invalid", DefaultValue::Bool(true));
+        assert!(result.is_err());
     }
 }

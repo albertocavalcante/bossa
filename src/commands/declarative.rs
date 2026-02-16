@@ -735,13 +735,9 @@ fn apply_workspace(
 
             fs::create_dir_all(&ws_dir)?;
 
+            let bare_path_str = bare_path.to_string_lossy().into_owned();
             let result = std::process::Command::new("git")
-                .args([
-                    "clone",
-                    "--bare",
-                    &workspace.url,
-                    bare_path.to_str().unwrap(),
-                ])
+                .args(["clone", "--bare", &workspace.url, bare_path_str.as_str()])
                 .output()?;
 
             if result.status.success() {
@@ -1243,15 +1239,10 @@ fn get_cloned_repos(root: &Path) -> Result<Vec<String>> {
 
 fn clone_repo(root: &Path, repo: &Repository) -> Result<()> {
     let repo_path = root.join(&repo.name);
+    let repo_path_str = repo_path.to_string_lossy().into_owned();
 
     let output = std::process::Command::new("git")
-        .args([
-            "clone",
-            "--depth",
-            "1",
-            &repo.url,
-            repo_path.to_str().unwrap(),
-        ])
+        .args(["clone", "--depth", "1", &repo.url, repo_path_str.as_str()])
         .output()
         .context("Failed to execute git clone")?;
 
@@ -1264,7 +1255,7 @@ fn clone_repo(root: &Path, repo: &Repository) -> Result<()> {
     let _ = std::process::Command::new("git")
         .args([
             "-C",
-            repo_path.to_str().unwrap(),
+            repo_path_str.as_str(),
             "config",
             "--local",
             "core.fileMode",

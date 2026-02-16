@@ -84,12 +84,14 @@ impl IndicatifProgress {
 impl ProgressCallback for IndicatifProgress {
     fn on_start(&mut self, total_files: u64, _total_size: u64) {
         self.pb = ProgressBar::new(total_files);
-        self.pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} ({percent}%) {msg}")
-                .unwrap()
-                .progress_chars("=>-"),
-        );
+        let style = ProgressStyle::default_bar();
+        let style = match style
+            .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} ({percent}%) {msg}")
+        {
+            Ok(style) => style.progress_chars("=>-"),
+            Err(_) => ProgressStyle::default_bar(),
+        };
+        self.pb.set_style(style);
     }
 
     fn on_file(&mut self, path: &Path, _size: u64) {

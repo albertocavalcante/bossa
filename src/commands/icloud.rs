@@ -576,12 +576,12 @@ where
     F: Fn(&FileStatus) -> icloud::Result<()>,
 {
     let pb = ProgressBar::new(files.len() as u64);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
-            .unwrap()
-            .progress_chars("=>-"),
-    );
+    let style = ProgressStyle::default_bar();
+    let style = match style.template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}") {
+        Ok(style) => style.progress_chars("=>-"),
+        Err(_) => ProgressStyle::default_bar(),
+    };
+    pb.set_style(style);
 
     let mut succeeded = 0;
     let mut failed = 0;

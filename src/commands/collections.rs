@@ -546,7 +546,9 @@ fn audit(_ctx: &Context, collection_name: &str, fix: bool) -> Result<()> {
         println!();
         ui::info("Adding untracked repos to config...");
 
-        let collection_mut = config.find_collection_mut(collection_name).unwrap();
+        let collection_mut = config
+            .find_collection_mut(collection_name)
+            .with_context(|| format!("Collection '{collection_name}' not found"))?;
 
         for (name, path) in &untracked {
             let path_str = path.to_string_lossy().into_owned();
@@ -685,7 +687,9 @@ fn snapshot(_ctx: &Context, collection_name: &str) -> Result<()> {
 
     repositories.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let collection_mut = config.find_collection_mut(collection_name).unwrap();
+    let collection_mut = config
+        .find_collection_mut(collection_name)
+        .with_context(|| format!("Collection '{collection_name}' not found"))?;
     collection_mut.repos = repositories;
 
     let count = collection_mut.repos.len();
@@ -733,7 +737,9 @@ fn add(
 
     // Check if already exists
     {
-        let collection = config.find_collection(collection_name).unwrap();
+        let collection = config
+            .find_collection(collection_name)
+            .with_context(|| format!("Collection '{collection_name}' not found"))?;
         if collection.find_repo(&repo_name).is_some() {
             ui::warn(&format!("Repo '{repo_name}' already exists in collection"));
         }
@@ -741,7 +747,9 @@ fn add(
 
     // Add repo
     {
-        let collection = config.find_collection_mut(collection_name).unwrap();
+        let collection = config
+            .find_collection_mut(collection_name)
+            .with_context(|| format!("Collection '{collection_name}' not found"))?;
         collection.add_repo(CollectionRepo {
             name: repo_name.clone(),
             url: url.to_string(),
@@ -762,11 +770,18 @@ fn add(
         let pb = progress::spinner(&format!("Cloning {repo_name}..."));
 
         // Get collection data for cloning
-        let collection = config.find_collection(collection_name).unwrap();
+        let collection = config
+            .find_collection(collection_name)
+            .with_context(|| format!("Collection '{collection_name}' not found"))?;
         let root = collection.expanded_path()?;
         fs::create_dir_all(&root)?;
 
-        let repo = collection.find_repo(&repo_name).unwrap().clone();
+        let repo = collection
+            .find_repo(&repo_name)
+            .with_context(|| {
+                format!("Repo '{repo_name}' not found in collection '{collection_name}'")
+            })?
+            .clone();
         let clone_settings = collection.clone.clone();
 
         match clone_repo_with_retry(&root, &repo, &clone_settings, 3) {
