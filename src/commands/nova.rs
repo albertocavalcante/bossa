@@ -53,14 +53,14 @@ pub fn run(ctx: &AppContext, args: NovaArgs) -> Result<()> {
     let opts = ExecuteOptions {
         dry_run: args.dry_run,
         jobs: args.jobs.map_or(4, |j| j as usize),
-        yes: false,
+        yes: args.yes,
         verbose: ctx.verbose > 0,
     };
 
     let summary = engine::execute(plan, opts)?;
 
     if !summary.is_success() {
-        std::process::exit(1);
+        anyhow::bail!("{} resource(s) failed to apply", summary.failed);
     }
 
     Ok(())
@@ -100,7 +100,7 @@ fn build_plan(config: &BossaConfig, args: &NovaArgs) -> Result<ExecutionPlan> {
     }
 
     // Stage: packages (brew)
-    if stages.contains(&"packages") || stages.contains(&"brew") {
+    if stages.contains(&"packages") {
         add_brew_resources(&mut plan, config, &sudo_config)?;
     }
 
@@ -112,7 +112,7 @@ fn build_plan(config: &BossaConfig, args: &NovaArgs) -> Result<ExecutionPlan> {
     }
 
     // Stage: symlinks
-    if stages.contains(&"symlinks") || stages.contains(&"stow") {
+    if stages.contains(&"symlinks") {
         add_symlink_resources(&mut plan, config)?;
     }
 
@@ -134,45 +134,38 @@ fn build_plan(config: &BossaConfig, args: &NovaArgs) -> Result<ExecutionPlan> {
     Ok(plan)
 }
 
-fn determine_stages(args: &NovaArgs) -> Vec<&'static str> {
-    // Default stages in order
-    const ALL_STAGES: &[&str] = &[
-        "defaults",
-        "packages",
-        "dotfiles",
-        "symlinks",
-        "dock",
-        "handlers",
-        "ecosystem",
-    ];
+/// Map user-facing stage aliases to internal canonical names.
+fn normalize_stage(name: &str) -> &str {
+    match name {
+        "homebrew" | "essential" | "brew" => "packages",
+        "stow" => "symlinks",
+        "pnpm" => "ecosystem",
+        other => other,
+    }
+}
 
+fn determine_stages(args: &NovaArgs) -> Vec<&'static str> {
     // If --only specified, use only those
     if let Some(ref only) = args.only {
-        let only_set: Vec<&str> = only.split(',').map(str::trim).collect();
-        return ALL_STAGES
+        let only_set: Vec<&str> = only.split(',').map(|s| normalize_stage(s.trim())).collect();
+        return IMPLEMENTED_STAGES
             .iter()
-            .filter(|&&s| {
-                only_set.contains(&s)
-                    || (s == "packages"
-                        && (only_set.contains(&"brew") || only_set.contains(&"packages")))
-                    || (s == "symlinks"
-                        && (only_set.contains(&"stow") || only_set.contains(&"symlinks")))
-            })
+            .filter(|&&s| only_set.contains(&s))
             .copied()
             .collect();
     }
 
     // If --skip specified, remove those
     if let Some(ref skip) = args.skip {
-        let skip_set: Vec<&str> = skip.split(',').map(str::trim).collect();
-        return ALL_STAGES
+        let skip_set: Vec<&str> = skip.split(',').map(|s| normalize_stage(s.trim())).collect();
+        return IMPLEMENTED_STAGES
             .iter()
             .filter(|&&s| !skip_set.contains(&s))
             .copied()
             .collect();
     }
 
-    ALL_STAGES.to_vec()
+    IMPLEMENTED_STAGES.to_vec()
 }
 
 fn add_defaults_resources(
@@ -390,31 +383,44 @@ fn convert_default_value(value: &SchemaDefaultValue) -> ResDefaultValue {
         SchemaDefaultValue::Float(f) => ResDefaultValue::Float(*f),
         SchemaDefaultValue::String(s) => ResDefaultValue::String(s.clone()),
         SchemaDefaultValue::Array(_) => {
-            // For now, convert arrays to string representation
-            ResDefaultValue::String(format!("{value:?}"))
+            // The resource layer has no Array variant; log a warning and skip
+            log::warn!("Skipping array default value (not supported): {value:?}");
+            ResDefaultValue::String(String::new())
         }
     }
 }
 
+/// Implemented stages (subset of NovaStage that have actual logic wired up)
+const IMPLEMENTED_STAGES: &[&str] = &[
+    "defaults",
+    "packages",
+    "dotfiles",
+    "symlinks",
+    "dock",
+    "handlers",
+    "ecosystem",
+];
+
 fn list_stages() {
+    use crate::cli::NovaStage;
+
     ui::header("Available Stages");
     println!();
 
-    let stages = [
-        (
-            "defaults",
-            "macOS system defaults (Finder, keyboard, screenshots, etc.)",
-        ),
-        ("packages", "Homebrew packages (formulas, casks, fonts)"),
-        ("dotfiles", "Dotfiles repo clone/pull + submodules"),
-        ("symlinks", "Dotfile symlinks (native stow replacement)"),
-        ("dock", "Dock configuration (apps, folders, settings)"),
-        ("handlers", "File handler associations (duti)"),
-        ("ecosystem", "Extensions (pnpm, gh, vscode)"),
-    ];
-
-    for (name, desc) in stages {
-        println!("  {:<15} {}", name.bold(), desc.dimmed());
+    for stage in NovaStage::all() {
+        let name = stage.name();
+        let desc = stage.description();
+        let is_implemented = IMPLEMENTED_STAGES.contains(&name);
+        if is_implemented {
+            println!("  {:<15} {}", name.bold(), desc.dimmed());
+        } else {
+            println!(
+                "  {:<15} {} {}",
+                name.bold(),
+                desc.dimmed(),
+                "(planned)".yellow()
+            );
+        }
     }
 
     println!();

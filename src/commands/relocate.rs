@@ -3,7 +3,6 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
 use std::fs;
-use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use crate::Context as AppContext;
@@ -111,11 +110,12 @@ pub fn run(ctx: &AppContext, cmd: RelocateCommand) -> Result<()> {
     // Confirm
     if !cmd.yes && !ctx.quiet {
         println!();
-        print!("Proceed with updates? [y/N] ");
-        io::stdout().flush()?;
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        if !input.trim().eq_ignore_ascii_case("y") {
+        let confirmed = dialoguer::Confirm::new()
+            .with_prompt("Proceed with updates?")
+            .default(false)
+            .interact()
+            .unwrap_or(false);
+        if !confirmed {
             println!("Aborted.");
             return Ok(());
         }
@@ -143,7 +143,7 @@ pub fn run(ctx: &AppContext, cmd: RelocateCommand) -> Result<()> {
     }
 
     println!();
-    println!("{} Relocation complete!", "[ok]".green());
+    println!("{} Relocation complete!", "✓".green());
 
     Ok(())
 }
@@ -172,7 +172,7 @@ fn update_shell_config(
     fs::write(&reference.file, new_content)
         .with_context(|| format!("Failed to write {}", reference.file.display()))?;
 
-    println!("  {} Updated {}", "[ok]".green(), reference.file.display());
+    println!("  {} Updated {}", "✓".green(), reference.file.display());
 
     Ok(())
 }
@@ -187,7 +187,7 @@ fn update_symlink(symlink: &TrackedSymlink, from: &Path, to: &Path, dry_run: boo
     if dry_run {
         println!(
             "  {} Would update {} -> {}",
-            "[--]".yellow(),
+            "→".yellow(),
             target_path.display(),
             new_source.display()
         );
@@ -200,7 +200,7 @@ fn update_symlink(symlink: &TrackedSymlink, from: &Path, to: &Path, dry_run: boo
         std::os::unix::fs::symlink(&new_source, &target_path)?;
         println!(
             "  {} Updated {} -> {}",
-            "[ok]".green(),
+            "✓".green(),
             target_path.display(),
             new_source.display()
         );
@@ -225,7 +225,7 @@ fn create_fallback_symlink(from: &PathBuf, to: &PathBuf) -> Result<()> {
 
     println!(
         "  {} Created fallback symlink: {} -> {}",
-        "[ok]".green(),
+        "✓".green(),
         from.display(),
         to.display()
     );

@@ -9,6 +9,7 @@ use crate::cli::CachesCommand;
 use crate::config::{CachesConfig, ConfigFormat};
 use crate::state::{BossaState, TrackedSymlink};
 use crate::ui;
+use crate::ui::format_size;
 
 /// Get home directory with proper error handling
 fn home_dir() -> Result<std::path::PathBuf> {
@@ -172,7 +173,7 @@ fn apply(dry_run: bool) -> Result<()> {
     let cache_root = config.cache_root();
     if !cache_root.exists() {
         if dry_run {
-            println!("  [DRY] Would create {}", cache_root.display());
+            println!("  {} Would create {}", "→".cyan(), cache_root.display());
         } else {
             fs::create_dir_all(&cache_root)?;
             ui::success(&format!("Created {}", cache_root.display()));
@@ -196,7 +197,8 @@ fn apply(dry_run: bool) -> Result<()> {
             SymlinkStatus::NotCreated => {
                 if dry_run {
                     println!(
-                        "  [DRY] Would create symlink: {} → {}",
+                        "  {} Would create symlink: {} → {}",
+                        "→".cyan(),
                         source.display(),
                         target.display()
                     );
@@ -240,7 +242,11 @@ fn apply(dry_run: bool) -> Result<()> {
             }
             SymlinkStatus::Broken => {
                 if dry_run {
-                    println!("  [DRY] Would fix broken symlink: {}", symlink.name);
+                    println!(
+                        "  {} Would fix broken symlink: {}",
+                        "→".cyan(),
+                        symlink.name
+                    );
                 } else {
                     // Remove broken symlink and recreate
                     fs::remove_file(&source)?;
@@ -256,7 +262,8 @@ fn apply(dry_run: bool) -> Result<()> {
             SymlinkStatus::NotSymlink => {
                 if dry_run {
                     println!(
-                        "  [DRY] Would move and symlink: {} → {}",
+                        "  {} Would move and symlink: {} → {}",
+                        "→".cyan(),
                         source.display(),
                         target.display()
                     );
@@ -305,14 +312,14 @@ fn apply(dry_run: bool) -> Result<()> {
             let output_base_path = Path::new(output_base);
             if !output_base_path.exists() {
                 if dry_run {
-                    println!("  [DRY] Would create {output_base}");
+                    println!("  {} Would create {output_base}", "→".cyan());
                 } else {
                     fs::create_dir_all(output_base_path)?;
                 }
             }
 
             if dry_run {
-                println!("  [DRY] Would write ~/.bazelrc");
+                println!("  {} Would write ~/.bazelrc", "→".cyan());
             } else {
                 // Check if we should update
                 let should_write = if bazelrc_path.exists() {
@@ -366,7 +373,7 @@ fn apply(dry_run: bool) -> Result<()> {
                 );
 
                 if dry_run {
-                    println!("  [DRY] Would write {}", props_path.display());
+                    println!("  {} Would write {}", "→".cyan(), props_path.display());
                 } else {
                     fs::create_dir_all(&props_dir)?;
                     fs::write(&props_path, content)?;
@@ -602,22 +609,6 @@ fn dir_size(path: &Path) -> Result<u64> {
     Ok(size_kb * 1024)
 }
 
-fn format_size(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-
-    if bytes >= GB {
-        format!("{:.1}GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.1}MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.0}KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{bytes}B")
-    }
-}
-
 // ============================================================================
 // Tests
 // ============================================================================
@@ -626,34 +617,6 @@ fn format_size(bytes: u64) -> String {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-
-    #[test]
-    fn test_format_size_bytes() {
-        assert_eq!(format_size(0), "0B");
-        assert_eq!(format_size(512), "512B");
-        assert_eq!(format_size(1023), "1023B");
-    }
-
-    #[test]
-    fn test_format_size_kb() {
-        assert_eq!(format_size(1024), "1KB");
-        assert_eq!(format_size(2048), "2KB");
-        assert_eq!(format_size(1024 * 512), "512KB");
-    }
-
-    #[test]
-    fn test_format_size_mb() {
-        assert_eq!(format_size(1024 * 1024), "1.0MB");
-        assert_eq!(format_size(1024 * 1024 * 5), "5.0MB");
-        assert_eq!(format_size(1024 * 1024 * 512), "512.0MB");
-    }
-
-    #[test]
-    fn test_format_size_gb() {
-        assert_eq!(format_size(1024 * 1024 * 1024), "1.0GB");
-        assert_eq!(format_size(1024 * 1024 * 1024 * 5), "5.0GB");
-        assert_eq!(format_size(1024 * 1024 * 1024 * 100), "100.0GB");
-    }
 
     #[test]
     fn test_check_symlink_status_not_created() {

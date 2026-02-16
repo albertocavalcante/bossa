@@ -892,7 +892,7 @@ fn clean(_ctx: &Context, collection_name: &str, skip_confirm: bool, dry_run: boo
 
     // Calculate total size
     let total_size: u64 = cloned_repos.iter().map(|(_, _, s)| s).sum();
-    let total_size_str = format_size(total_size);
+    let total_size_str = ui::format_size(total_size);
 
     println!();
     ui::kv("Path", &root.display().to_string());
@@ -903,7 +903,12 @@ fn clean(_ctx: &Context, collection_name: &str, skip_confirm: bool, dry_run: boo
     if dry_run {
         ui::info("Dry run - repos that would be deleted:");
         for (name, _, size) in &cloned_repos {
-            println!("  {} {} ({})", "−".red(), name, format_size(*size).dimmed());
+            println!(
+                "  {} {} ({})",
+                "−".red(),
+                name,
+                ui::format_size(*size).dimmed()
+            );
         }
         println!();
         ui::dim(&format!("Would free {total_size_str} of disk space"));
@@ -968,7 +973,7 @@ fn clean(_ctx: &Context, collection_name: &str, skip_confirm: bool, dry_run: boo
     ui::success(&format!(
         "Cleaned {} repositories (freed {})",
         deleted,
-        format_size(freed)
+        ui::format_size(freed)
     ));
     ui::dim(&format!(
         "Config preserved. Run 'bossa collections sync {collection_name}' to re-clone."
@@ -997,23 +1002,6 @@ fn dir_size(path: &PathBuf) -> Result<u64> {
     }
 
     Ok(size)
-}
-
-/// Format bytes as human-readable size
-fn format_size(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-
-    if bytes >= GB {
-        format!("{:.1} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.1} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{bytes} B")
-    }
 }
 
 #[cfg(test)]

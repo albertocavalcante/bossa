@@ -770,7 +770,7 @@ fn display_report(report: &ReconcileReport, config: &DotfilesReconcileConfig) {
     if !report.only_a.is_empty() {
         println!("  {}", "Only in A:".cyan().bold());
         for entry in &report.only_a {
-            let size = format_size(entry.size_a.unwrap_or(0));
+            let size = ui::format_size(entry.size_a.unwrap_or(0));
             println!(
                 "    {} {} ({})",
                 "A".cyan(),
@@ -784,7 +784,7 @@ fn display_report(report: &ReconcileReport, config: &DotfilesReconcileConfig) {
     if !report.only_b.is_empty() {
         println!("  {}", "Only in B:".blue().bold());
         for entry in &report.only_b {
-            let size = format_size(entry.size_b.unwrap_or(0));
+            let size = ui::format_size(entry.size_b.unwrap_or(0));
             println!(
                 "    {} {} ({})",
                 "B".blue(),
@@ -798,7 +798,7 @@ fn display_report(report: &ReconcileReport, config: &DotfilesReconcileConfig) {
     if !report.only_target.is_empty() {
         println!("  {}", "Only in target:".yellow().bold());
         for entry in &report.only_target {
-            let size = format_size(entry.size_target.unwrap_or(0));
+            let size = ui::format_size(entry.size_target.unwrap_or(0));
             println!(
                 "    {} {} ({})",
                 "T".yellow(),
@@ -1205,17 +1205,6 @@ fn default_ignore(user_ignore: &[String]) -> Vec<String> {
     ignore
 }
 
-/// Format a file size in human-readable form
-fn format_size(bytes: u64) -> String {
-    if bytes < 1024 {
-        format!("{bytes}B")
-    } else if bytes < 1024 * 1024 {
-        format!("{:.1}KB", bytes as f64 / 1024.0)
-    } else {
-        format!("{:.1}MB", bytes as f64 / (1024.0 * 1024.0))
-    }
-}
-
 /// Copy a file, creating parent directories as needed
 fn copy_file(src: &Path, dst: &Path) -> Result<()> {
     if let Some(parent) = dst.parent() {
@@ -1452,25 +1441,6 @@ mod tests {
         assert_eq!(report.synced.len(), 1);
         assert_eq!(report.only_a.len(), 1);
         assert_eq!(report.only_b.len(), 1);
-    }
-
-    // ── format_size tests ────────────────────────────────────────────
-
-    #[test]
-    fn format_size_bytes() {
-        assert_eq!(format_size(100), "100B");
-        assert_eq!(format_size(0), "0B");
-    }
-
-    #[test]
-    fn format_size_kb() {
-        assert_eq!(format_size(1024), "1.0KB");
-        assert_eq!(format_size(2048), "2.0KB");
-    }
-
-    #[test]
-    fn format_size_mb() {
-        assert_eq!(format_size(1024 * 1024), "1.0MB");
     }
 
     // ── default_ignore tests ─────────────────────────────────────────

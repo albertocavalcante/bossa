@@ -822,6 +822,10 @@ pub struct NovaArgs {
     #[arg(long)]
     pub dry_run: bool,
 
+    /// Skip confirmation prompts
+    #[arg(long, short = 'y')]
+    pub yes: bool,
+
     /// Number of parallel jobs (max 128)
     #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..=128))]
     pub jobs: Option<u16>,
@@ -1154,6 +1158,14 @@ pub enum ToolsCommand {
     Uninstall {
         /// Tool name
         name: String,
+
+        /// Preview what would be removed without deleting
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+
+        /// Skip confirmation prompt
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 
     /// Check for tool updates

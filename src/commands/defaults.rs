@@ -32,7 +32,7 @@ fn set_default(
 
     if !ctx.quiet {
         println!(
-            "Setting {}.{} = {:?}",
+            "Setting {}.{} = {}",
             domain.bold(),
             key.bold(),
             default_value
@@ -65,10 +65,18 @@ fn set_default(
 
     // Special handling for Finder to make changes take effect immediately
     if domain == "com.apple.finder" {
-        if !ctx.quiet {
-            println!("{}", "  Restarting Finder to apply changes...".dimmed());
+        let should_restart = ctx.quiet
+            || dialoguer::Confirm::new()
+                .with_prompt("Restart Finder to apply changes?")
+                .default(true)
+                .interact()
+                .unwrap_or(false);
+        if should_restart {
+            if !ctx.quiet {
+                println!("{}", "  Restarting Finder to apply changes...".dimmed());
+            }
+            let _ = std::process::Command::new("killall").arg("Finder").output();
         }
-        let _ = std::process::Command::new("killall").arg("Finder").output();
     }
 
     Ok(())

@@ -1,6 +1,7 @@
 //! macOS defaults resource - read/write system preferences
 
 use anyhow::{Context, Result, bail};
+use std::fmt;
 use std::process::Command;
 
 use super::{ApplyContext, ApplyResult, Resource, ResourceState, SudoRequirement};
@@ -25,6 +26,17 @@ pub enum DefaultValue {
     Int(i64),
     Float(f64),
     String(String),
+}
+
+impl fmt::Display for DefaultValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DefaultValue::Bool(b) => write!(f, "{b}"),
+            DefaultValue::Int(i) => write!(f, "{i}"),
+            DefaultValue::Float(v) => write!(f, "{v}"),
+            DefaultValue::String(s) => write!(f, "{s}"),
+        }
+    }
 }
 
 impl MacOSDefault {

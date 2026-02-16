@@ -186,7 +186,7 @@ pub fn run(ctx: &Context, cmd: ToolsCommand) -> Result<()> {
         } => apply(ctx, &tools, dry_run, force),
         ToolsCommand::List { all } => list(ctx, all),
         ToolsCommand::Status { name } => status(ctx, &name),
-        ToolsCommand::Uninstall { name } => uninstall(ctx, &name),
+        ToolsCommand::Uninstall { name, dry_run, yes } => uninstall(ctx, &name, dry_run, yes),
         ToolsCommand::Outdated { tools, json } => outdated(ctx, &tools, json),
     }
 }
@@ -1067,14 +1067,52 @@ fn status(_ctx: &Context, name: &str) -> Result<()> {
 }
 
 /// Uninstall a tool.
-fn uninstall(ctx: &Context, name: &str) -> Result<()> {
+fn uninstall(ctx: &Context, name: &str, dry_run: bool, yes: bool) -> Result<()> {
     let mut config = ToolsConfig::load()?;
 
+    let tool = config
+        .get(name)
+        .context(format!("Tool '{name}' not found"))?;
+
+    let binary_path = PathBuf::from(&tool.install_path);
+
+    // Show what would be removed
+    if !ctx.quiet {
+        ui::header(&format!("Uninstall: {name}"));
+        ui::kv("Binary", &tool.binary);
+        ui::kv("Path", &tool.install_path);
+        ui::kv("Source", &tool.source);
+        println!();
+    }
+
+    if dry_run {
+        if binary_path.exists() {
+            ui::info(&format!("Would remove: {}", binary_path.display()));
+        } else {
+            ui::warn(&format!("Binary not found at: {}", binary_path.display()));
+        }
+        ui::info("Would remove tool from state");
+        return Ok(());
+    }
+
+    // Confirmation prompt
+    if !yes && !ctx.quiet {
+        let confirmed = dialoguer::Confirm::new()
+            .with_prompt(format!("Uninstall '{name}'?"))
+            .default(false)
+            .interact()
+            .unwrap_or(false);
+        if !confirmed {
+            ui::info("Aborted.");
+            return Ok(());
+        }
+    }
+
+    // Actually remove
     let tool = config
         .remove(name)
         .context(format!("Tool '{name}' not found"))?;
 
-    // Remove the binary file
     let binary_path = PathBuf::from(&tool.install_path);
     if binary_path.exists() {
         fs::remove_file(&binary_path)?;

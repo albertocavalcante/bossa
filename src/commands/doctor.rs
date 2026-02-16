@@ -40,6 +40,12 @@ pub fn run(_ctx: &Context) -> Result<()> {
     // Check 6: Homebrew health
     check_brew(&mut issues);
 
+    // Check 7: SSH keys
+    check_ssh(&mut issues);
+
+    // Check 8: Dotfiles repo
+    check_dotfiles(&mut issues);
+
     // Summary
     println!();
     if issues.is_empty() {
@@ -392,7 +398,7 @@ fn check_t9(_issues: &mut Vec<Issue>) {
         println!(
             "  {} {}",
             "ℹ".blue(),
-            "Run 'bossa t9 stats' for detailed info".dimmed()
+            "Run 'bossa disk status' for disk info".dimmed()
         );
     } else {
         println!(
@@ -554,4 +560,68 @@ fn first_lines(s: &str, n: usize) -> String {
     } else {
         result
     }
+}
+
+fn check_ssh(issues: &mut Vec<Issue>) {
+    ui::section("SSH Keys");
+
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return,
+    };
+
+    let ed25519 = home.join(".ssh/id_ed25519");
+    let rsa = home.join(".ssh/id_rsa");
+
+    if ed25519.exists() {
+        println!("  {} SSH key found (ed25519)", "✓".green());
+    } else if rsa.exists() {
+        println!("  {} SSH key found (RSA)", "✓".green());
+    } else {
+        println!("  {} No SSH key found", "✗".red());
+        issues.push(Issue {
+            category: "SSH",
+            summary: "No SSH key found (~/.ssh/id_ed25519 or ~/.ssh/id_rsa)".into(),
+            detail: None,
+            fix: Some("Generate an ed25519 key".into()),
+            fix_cmd: Some("ssh-keygen -t ed25519".into()),
+        });
+    }
+}
+
+fn check_dotfiles(issues: &mut Vec<Issue>) {
+    ui::section("Dotfiles");
+
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return,
+    };
+
+    let dotfiles = home.join("dotfiles");
+
+    if !dotfiles.exists() {
+        println!("  {} ~/dotfiles not found", "✗".red());
+        issues.push(Issue {
+            category: "Dotfiles",
+            summary: "~/dotfiles directory does not exist".into(),
+            detail: None,
+            fix: Some("Clone your dotfiles repository".into()),
+            fix_cmd: None,
+        });
+        return;
+    }
+
+    if !dotfiles.join(".git").exists() {
+        println!("  {} ~/dotfiles exists but is not a git repo", "⚠".yellow());
+        issues.push(Issue {
+            category: "Dotfiles",
+            summary: "~/dotfiles is not a git repository".into(),
+            detail: None,
+            fix: Some("Initialize or clone a dotfiles repository".into()),
+            fix_cmd: Some("cd ~/dotfiles && git init".into()),
+        });
+        return;
+    }
+
+    println!("  {} ~/dotfiles is a git repository", "✓".green());
 }
