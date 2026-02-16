@@ -35,6 +35,24 @@ pub enum ManifestCommand {
     },
 }
 
+impl From<crate::cli::ManifestCommand> for ManifestCommand {
+    fn from(cmd: crate::cli::ManifestCommand) -> Self {
+        match cmd {
+            crate::cli::ManifestCommand::Scan { path, force } => Self::Scan { path, force },
+            crate::cli::ManifestCommand::Stats { path } => Self::Stats { path },
+            crate::cli::ManifestCommand::Duplicates {
+                path,
+                min_size,
+                delete,
+            } => Self::Duplicates {
+                path,
+                min_size,
+                delete,
+            },
+        }
+    }
+}
+
 pub fn run(cmd: ManifestCommand) -> Result<()> {
     match cmd {
         ManifestCommand::Scan { path, force } => scan(&path, force),
@@ -348,4 +366,33 @@ fn count_files(path: &Path) -> (u64, u64) {
     }
 
     (file_count, total_size)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ManifestCommand;
+    use crate::cli::ManifestCommand as CliManifestCommand;
+
+    #[test]
+    fn cli_manifest_duplicates_maps_fields() {
+        let cli_cmd = CliManifestCommand::Duplicates {
+            path: "/tmp/data".to_string(),
+            min_size: 2048,
+            delete: true,
+        };
+
+        let mapped: ManifestCommand = cli_cmd.into();
+        match mapped {
+            ManifestCommand::Duplicates {
+                path,
+                min_size,
+                delete,
+            } => {
+                assert_eq!(path, "/tmp/data");
+                assert_eq!(min_size, 2048);
+                assert!(delete);
+            }
+            _ => panic!("expected duplicates mapping"),
+        }
+    }
 }

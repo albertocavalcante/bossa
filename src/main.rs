@@ -16,10 +16,7 @@ mod ui;
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use cli::{
-    AddCommand, Cli, CollectionsCommand, Command, DiskCommand, ICloudCommand, ManifestCommand,
-    RefsCommand, RmCommand, StorageCommand,
-};
+use cli::{AddCommand, Cli, Command, RmCommand, StorageCommand};
 use std::io;
 
 /// Global context for the application
@@ -99,101 +96,9 @@ fn main() -> Result<()> {
         Command::Doctor => commands::doctor::run(&ctx),
         Command::Migrate { dry_run } => commands::migrate::run(&ctx, dry_run),
         Command::Caches(cmd) => commands::caches::run(cmd),
-        Command::Collections(cmd) => {
-            let collections_cmd = match cmd {
-                CollectionsCommand::List => commands::collections::CollectionsCommand::List,
-                CollectionsCommand::Status { name } => {
-                    commands::collections::CollectionsCommand::Status { name }
-                }
-                CollectionsCommand::Sync {
-                    name,
-                    jobs,
-                    retries,
-                    dry_run,
-                } => commands::collections::CollectionsCommand::Sync {
-                    name,
-                    jobs,
-                    retries,
-                    dry_run,
-                },
-                CollectionsCommand::Audit { name, fix } => {
-                    commands::collections::CollectionsCommand::Audit { name, fix }
-                }
-                CollectionsCommand::Snapshot { name } => {
-                    commands::collections::CollectionsCommand::Snapshot { name }
-                }
-                CollectionsCommand::Add {
-                    collection,
-                    url,
-                    name,
-                    clone,
-                } => commands::collections::CollectionsCommand::Add {
-                    collection,
-                    url,
-                    name,
-                    clone,
-                },
-                CollectionsCommand::Rm {
-                    collection,
-                    repo,
-                    delete,
-                } => commands::collections::CollectionsCommand::Rm {
-                    collection,
-                    repo,
-                    delete,
-                },
-                CollectionsCommand::Clean { name, yes, dry_run } => {
-                    commands::collections::CollectionsCommand::Clean { name, yes, dry_run }
-                }
-            };
-            commands::collections::run(&ctx, collections_cmd)
-        }
-        Command::Manifest(cmd) => {
-            let manifest_cmd = match cmd {
-                ManifestCommand::Scan { path, force } => {
-                    commands::manifest::ManifestCommand::Scan { path, force }
-                }
-                ManifestCommand::Stats { path } => {
-                    commands::manifest::ManifestCommand::Stats { path }
-                }
-                ManifestCommand::Duplicates {
-                    path,
-                    min_size,
-                    delete,
-                } => commands::manifest::ManifestCommand::Duplicates {
-                    path,
-                    min_size,
-                    delete,
-                },
-            };
-            commands::manifest::run(manifest_cmd)
-        }
-        Command::ICloud(cmd) => {
-            let icloud_cmd = match cmd {
-                ICloudCommand::Status { path } => commands::icloud::ICloudCommand::Status { path },
-                ICloudCommand::List { path, local, cloud } => {
-                    commands::icloud::ICloudCommand::List { path, local, cloud }
-                }
-                ICloudCommand::FindEvictable { path, min_size } => {
-                    commands::icloud::ICloudCommand::FindEvictable { path, min_size }
-                }
-                ICloudCommand::Evict {
-                    path,
-                    recursive,
-                    min_size,
-                    dry_run,
-                } => commands::icloud::ICloudCommand::Evict {
-                    path,
-                    recursive,
-                    min_size,
-                    dry_run,
-                },
-                ICloudCommand::Download { path, recursive } => {
-                    commands::icloud::ICloudCommand::Download { path, recursive }
-                }
-            };
-            commands::icloud::run(icloud_cmd)
-        }
+        Command::Collections(cmd) => commands::collections::run(&ctx, cmd.into()),
+        Command::Manifest(cmd) => commands::manifest::run(cmd.into()),
+        Command::ICloud(cmd) => commands::icloud::run(cmd.into()),
         Command::Storage(cmd) => match cmd {
             StorageCommand::Status => commands::storage::status(),
             StorageCommand::Duplicates {
@@ -203,30 +108,7 @@ fn main() -> Result<()> {
                 limit,
             } => commands::storage::duplicates(&manifests, list, min_size, limit),
         },
-        Command::Disk(cmd) => {
-            let disk_cmd = match cmd {
-                DiskCommand::Status => commands::disk::DiskCommand::Status,
-                DiskCommand::Backup {
-                    source,
-                    destination,
-                    dry_run,
-                } => commands::disk::DiskCommand::Backup {
-                    source,
-                    destination,
-                    dry_run,
-                },
-                DiskCommand::Repartition {
-                    disk,
-                    dry_run,
-                    confirm,
-                } => commands::disk::DiskCommand::Repartition {
-                    disk,
-                    dry_run,
-                    confirm,
-                },
-            };
-            commands::disk::run(disk_cmd)
-        }
+        Command::Disk(cmd) => commands::disk::run(cmd.into()),
         Command::Brew(cmd) => commands::brew::run(&ctx, cmd),
         Command::Refs(cmd) => {
             // Show deprecation warning
@@ -235,50 +117,7 @@ fn main() -> Result<()> {
             );
             println!();
 
-            // Forward to collections command with "refs" collection name
-            let collections_cmd = match cmd {
-                RefsCommand::Sync(args) => {
-                    let name = args.name.unwrap_or_else(|| "refs".to_string());
-                    commands::collections::CollectionsCommand::Sync {
-                        name,
-                        jobs: args.jobs,
-                        retries: args.retries,
-                        dry_run: args.dry_run,
-                    }
-                }
-                RefsCommand::List {
-                    filter: _,
-                    missing: _,
-                } => {
-                    // For list, just show status of refs collection
-                    commands::collections::CollectionsCommand::Status {
-                        name: "refs".to_string(),
-                    }
-                }
-                RefsCommand::Snapshot => commands::collections::CollectionsCommand::Snapshot {
-                    name: "refs".to_string(),
-                },
-                RefsCommand::Audit { fix } => commands::collections::CollectionsCommand::Audit {
-                    name: "refs".to_string(),
-                    fix,
-                },
-                RefsCommand::Add { url, name, clone } => {
-                    commands::collections::CollectionsCommand::Add {
-                        collection: "refs".to_string(),
-                        url,
-                        name,
-                        clone,
-                    }
-                }
-                RefsCommand::Remove { name, delete } => {
-                    commands::collections::CollectionsCommand::Rm {
-                        collection: "refs".to_string(),
-                        repo: name,
-                        delete,
-                    }
-                }
-            };
-            commands::collections::run(&ctx, collections_cmd)
+            commands::collections::run(&ctx, cmd.into())
         }
         Command::Completions { shell } => {
             let mut cmd = Cli::command();

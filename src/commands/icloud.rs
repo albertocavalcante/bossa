@@ -41,6 +41,34 @@ pub enum ICloudCommand {
     },
 }
 
+impl From<crate::cli::ICloudCommand> for ICloudCommand {
+    fn from(cmd: crate::cli::ICloudCommand) -> Self {
+        match cmd {
+            crate::cli::ICloudCommand::Status { path } => Self::Status { path },
+            crate::cli::ICloudCommand::List { path, local, cloud } => {
+                Self::List { path, local, cloud }
+            }
+            crate::cli::ICloudCommand::FindEvictable { path, min_size } => {
+                Self::FindEvictable { path, min_size }
+            }
+            crate::cli::ICloudCommand::Evict {
+                path,
+                recursive,
+                min_size,
+                dry_run,
+            } => Self::Evict {
+                path,
+                recursive,
+                min_size,
+                dry_run,
+            },
+            crate::cli::ICloudCommand::Download { path, recursive } => {
+                Self::Download { path, recursive }
+            }
+        }
+    }
+}
+
 /// Run an iCloud command
 pub fn run(cmd: ICloudCommand) -> Result<()> {
     match cmd {
@@ -588,4 +616,36 @@ where
     }
 
     ProcessResult { succeeded, failed }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ICloudCommand;
+    use crate::cli::ICloudCommand as CliICloudCommand;
+
+    #[test]
+    fn cli_icloud_evict_maps_fields() {
+        let cli_cmd = CliICloudCommand::Evict {
+            path: "~/Library/Mobile Documents".to_string(),
+            recursive: true,
+            min_size: Some("500MB".to_string()),
+            dry_run: true,
+        };
+
+        let mapped: ICloudCommand = cli_cmd.into();
+        match mapped {
+            ICloudCommand::Evict {
+                path,
+                recursive,
+                min_size,
+                dry_run,
+            } => {
+                assert_eq!(path, "~/Library/Mobile Documents");
+                assert!(recursive);
+                assert_eq!(min_size.as_deref(), Some("500MB"));
+                assert!(dry_run);
+            }
+            _ => panic!("expected evict mapping"),
+        }
+    }
 }

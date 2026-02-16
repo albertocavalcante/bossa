@@ -56,6 +56,91 @@ pub enum CollectionsCommand {
     },
 }
 
+impl From<crate::cli::CollectionsCommand> for CollectionsCommand {
+    fn from(cmd: crate::cli::CollectionsCommand) -> Self {
+        match cmd {
+            crate::cli::CollectionsCommand::List => Self::List,
+            crate::cli::CollectionsCommand::Status { name } => Self::Status { name },
+            crate::cli::CollectionsCommand::Sync {
+                name,
+                jobs,
+                retries,
+                dry_run,
+            } => Self::Sync {
+                name,
+                jobs,
+                retries,
+                dry_run,
+            },
+            crate::cli::CollectionsCommand::Audit { name, fix } => Self::Audit { name, fix },
+            crate::cli::CollectionsCommand::Snapshot { name } => Self::Snapshot { name },
+            crate::cli::CollectionsCommand::Add {
+                collection,
+                url,
+                name,
+                clone,
+            } => Self::Add {
+                collection,
+                url,
+                name,
+                clone,
+            },
+            crate::cli::CollectionsCommand::Rm {
+                collection,
+                repo,
+                delete,
+            } => Self::Rm {
+                collection,
+                repo,
+                delete,
+            },
+            crate::cli::CollectionsCommand::Clean { name, yes, dry_run } => {
+                Self::Clean { name, yes, dry_run }
+            }
+        }
+    }
+}
+
+impl From<crate::cli::RefsCommand> for CollectionsCommand {
+    fn from(cmd: crate::cli::RefsCommand) -> Self {
+        match cmd {
+            crate::cli::RefsCommand::Sync(args) => {
+                let name = args.name.unwrap_or_else(|| "refs".to_string());
+                Self::Sync {
+                    name,
+                    jobs: args.jobs,
+                    retries: args.retries,
+                    dry_run: args.dry_run,
+                }
+            }
+            crate::cli::RefsCommand::List {
+                filter: _,
+                missing: _,
+            } => Self::Status {
+                name: "refs".to_string(),
+            },
+            crate::cli::RefsCommand::Snapshot => Self::Snapshot {
+                name: "refs".to_string(),
+            },
+            crate::cli::RefsCommand::Audit { fix } => Self::Audit {
+                name: "refs".to_string(),
+                fix,
+            },
+            crate::cli::RefsCommand::Add { url, name, clone } => Self::Add {
+                collection: "refs".to_string(),
+                url,
+                name,
+                clone,
+            },
+            crate::cli::RefsCommand::Remove { name, delete } => Self::Rm {
+                collection: "refs".to_string(),
+                repo: name,
+                delete,
+            },
+        }
+    }
+}
+
 pub fn run(ctx: &Context, cmd: CollectionsCommand) -> Result<()> {
     match cmd {
         CollectionsCommand::List => list(ctx),
@@ -224,7 +309,7 @@ fn sync(
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(jobs)
         .build()
-        .unwrap();
+        .context("Failed to create clone thread pool")?;
 
     let clone_settings = &collection.clone;
 
@@ -239,10 +324,12 @@ fn sync(
                 }
                 Err(e) => {
                     failed.fetch_add(1, Ordering::Relaxed);
-                    failed_repos
-                        .lock()
-                        .unwrap()
-                        .push((repo.name.clone(), e.to_string()));
+                    match failed_repos.lock() {
+                        Ok(mut failures) => failures.push((repo.name.clone(), e.to_string())),
+                        Err(poisoned) => poisoned
+                            .into_inner()
+                            .push((repo.name.clone(), e.to_string())),
+                    }
                     pb.set_message(format!("{} ✗", repo.name));
                 }
             }
@@ -266,7 +353,11 @@ fn sync(
         if !ctx.quiet {
             println!();
             ui::error("Failed repositories:");
-            for (name, error) in failed_repos.lock().unwrap().iter() {
+            let failures = match failed_repos.lock() {
+                Ok(failures) => failures,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            for (name, error) in failures.iter() {
                 println!("  {} {} - {}", "✗".red(), name, error.dimmed());
             }
         }
@@ -336,8 +427,9 @@ fn clone_repo(
     args.extend(clone_settings.options.iter().cloned());
 
     // Add URL and path
+    let repo_path_str = repo_path.to_string_lossy().into_owned();
     args.push(repo.url.clone());
-    args.push(repo_path.to_str().unwrap().to_string());
+    args.push(repo_path_str.clone());
 
     // Run git clone
     let output = std::process::Command::new("git")
@@ -354,7 +446,7 @@ fn clone_repo(
     let _ = std::process::Command::new("git")
         .args([
             "-C",
-            repo_path.to_str().unwrap(),
+            repo_path_str.as_str(),
             "config",
             "--local",
             "core.fileMode",
@@ -457,12 +549,14 @@ fn audit(_ctx: &Context, collection_name: &str, fix: bool) -> Result<()> {
         let collection_mut = config.find_collection_mut(collection_name).unwrap();
 
         for (name, path) in &untracked {
+            let path_str = path.to_string_lossy().into_owned();
+
             // Get remote URL
             let url = runner::run_capture(
                 "git",
                 &[
                     "-C",
-                    path.to_str().unwrap(),
+                    path_str.as_str(),
                     "config",
                     "--get",
                     "remote.origin.url",
@@ -474,7 +568,7 @@ fn audit(_ctx: &Context, collection_name: &str, fix: bool) -> Result<()> {
                 "git",
                 &[
                     "-C",
-                    path.to_str().unwrap(),
+                    path_str.as_str(),
                     "symbolic-ref",
                     "refs/remotes/origin/HEAD",
                 ],
@@ -549,13 +643,14 @@ fn snapshot(_ctx: &Context, collection_name: &str) -> Result<()> {
         }
 
         let name = entry.file_name().to_string_lossy().to_string();
+        let path_str = path.to_string_lossy().into_owned();
 
         // Get remote URL
         let url = match runner::run_capture(
             "git",
             &[
                 "-C",
-                path.to_str().unwrap(),
+                path_str.as_str(),
                 "config",
                 "--get",
                 "remote.origin.url",
@@ -570,7 +665,7 @@ fn snapshot(_ctx: &Context, collection_name: &str) -> Result<()> {
             "git",
             &[
                 "-C",
-                path.to_str().unwrap(),
+                path_str.as_str(),
                 "symbolic-ref",
                 "refs/remotes/origin/HEAD",
             ],
@@ -903,5 +998,83 @@ fn format_size(bytes: u64) -> String {
         format!("{:.1} KB", bytes as f64 / KB as f64)
     } else {
         format!("{bytes} B")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CollectionsCommand;
+    use crate::cli::{
+        CollectionsCommand as CliCollectionsCommand, RefsCommand as CliRefsCommand, RefsSyncArgs,
+    };
+
+    #[test]
+    fn refs_sync_without_name_maps_to_refs_collection() {
+        let cli_cmd = CliRefsCommand::Sync(RefsSyncArgs {
+            name: None,
+            jobs: 8,
+            retries: 5,
+            dry_run: true,
+        });
+
+        let mapped: CollectionsCommand = cli_cmd.into();
+        match mapped {
+            CollectionsCommand::Sync {
+                name,
+                jobs,
+                retries,
+                dry_run,
+            } => {
+                assert_eq!(name, "refs");
+                assert_eq!(jobs, 8);
+                assert_eq!(retries, 5);
+                assert!(dry_run);
+            }
+            _ => panic!("expected sync mapping"),
+        }
+    }
+
+    #[test]
+    fn refs_add_maps_into_refs_collection() {
+        let cli_cmd = CliRefsCommand::Add {
+            url: "https://github.com/example/repo.git".to_string(),
+            name: Some("repo".to_string()),
+            clone: true,
+        };
+
+        let mapped: CollectionsCommand = cli_cmd.into();
+        match mapped {
+            CollectionsCommand::Add {
+                collection,
+                url,
+                name,
+                clone,
+            } => {
+                assert_eq!(collection, "refs");
+                assert_eq!(url, "https://github.com/example/repo.git");
+                assert_eq!(name.as_deref(), Some("repo"));
+                assert!(clone);
+            }
+            _ => panic!("expected add mapping"),
+        }
+    }
+
+    #[test]
+    fn collections_clean_mapping_preserves_fields() {
+        let cli_cmd = CliCollectionsCommand::Clean {
+            name: "my-collection".to_string(),
+            yes: true,
+            dry_run: false,
+        };
+
+        let mapped: CollectionsCommand = cli_cmd.into();
+        match mapped {
+            CollectionsCommand::Clean { name, yes, dry_run } => {
+                assert_eq!(name, "my-collection");
+                assert!(yes);
+                assert!(!dry_run);
+            }
+            _ => panic!("expected clean mapping"),
+        }
     }
 }

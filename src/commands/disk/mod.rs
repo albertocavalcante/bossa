@@ -34,6 +34,32 @@ pub enum DiskCommand {
     },
 }
 
+impl From<crate::cli::DiskCommand> for DiskCommand {
+    fn from(cmd: crate::cli::DiskCommand) -> Self {
+        match cmd {
+            crate::cli::DiskCommand::Status => Self::Status,
+            crate::cli::DiskCommand::Backup {
+                source,
+                destination,
+                dry_run,
+            } => Self::Backup {
+                source,
+                destination,
+                dry_run,
+            },
+            crate::cli::DiskCommand::Repartition {
+                disk,
+                dry_run,
+                confirm,
+            } => Self::Repartition {
+                disk,
+                dry_run,
+                confirm,
+            },
+        }
+    }
+}
+
 /// Run a disk command
 pub fn run(cmd: DiskCommand) -> Result<()> {
     match cmd {
@@ -48,5 +74,34 @@ pub fn run(cmd: DiskCommand) -> Result<()> {
             dry_run,
             confirm,
         } => repartition::run(&disk, dry_run, confirm),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DiskCommand;
+    use crate::cli::DiskCommand as CliDiskCommand;
+
+    #[test]
+    fn cli_disk_backup_maps_fields() {
+        let cli_cmd = CliDiskCommand::Backup {
+            source: "/tmp/source".to_string(),
+            destination: "/tmp/destination".to_string(),
+            dry_run: true,
+        };
+
+        let mapped: DiskCommand = cli_cmd.into();
+        match mapped {
+            DiskCommand::Backup {
+                source,
+                destination,
+                dry_run,
+            } => {
+                assert_eq!(source, "/tmp/source");
+                assert_eq!(destination, "/tmp/destination");
+                assert!(dry_run);
+            }
+            _ => panic!("expected backup mapping"),
+        }
     }
 }
