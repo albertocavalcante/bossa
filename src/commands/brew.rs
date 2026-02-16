@@ -77,11 +77,23 @@ fn print_package_summary(brewfile: &brewkit::Brewfile) {
 }
 
 /// Create a brewkit client, with better error handling.
+///
+/// When Homebrew is not installed, offers to install it interactively
+/// and retries.
 fn create_client() -> Result<brewkit::Client, String> {
     match brewkit::Client::new() {
         Ok(c) => Ok(c),
         Err(brewkit::Error::BrewNotFound) => {
-            Err("Homebrew is not installed.\n\n  Install it with:\n    /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"\n\n  Or visit: https://brew.sh".to_string())
+            // Offer to install Homebrew
+            match super::nova::install_homebrew(false) {
+                Ok(()) => {
+                    // Retry after install
+                    brewkit::Client::new().map_err(|e| {
+                        format!("Failed to initialize Homebrew client after install: {e}")
+                    })
+                }
+                Err(e) => Err(format!("{e:#}")),
+            }
         }
         Err(e) => Err(format!("Failed to initialize Homebrew client: {e}")),
     }

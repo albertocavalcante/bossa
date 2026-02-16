@@ -105,11 +105,7 @@ fn check_commands(issues: &mut Vec<Issue>) {
 
     let commands = [
         ("git", "Version control", "brew install git"),
-        (
-            "brew",
-            "Package manager",
-            "Visit https://brew.sh for install instructions",
-        ),
+        ("brew", "Package manager", "bossa nova --only=homebrew"),
         ("stow", "Symlink manager", "brew install stow"),
         ("jq", "JSON processor", "brew install jq"),
         ("gh", "GitHub CLI", "brew install gh"),

@@ -14,6 +14,7 @@ use crate::resource::{
     BrewPackage, DefaultValue as ResDefaultValue, DockApp, DockFolder, FileHandler, GHExtension,
     MacOSDefault, PnpmPackage, Symlink, VSCodeExtension,
 };
+use crate::runner;
 use crate::schema::{BossaConfig, DefaultValue as SchemaDefaultValue};
 use crate::sudo::SudoConfig;
 use crate::ui;
@@ -66,6 +67,57 @@ pub fn run(ctx: &AppContext, args: NovaArgs) -> Result<()> {
     Ok(())
 }
 
+/// Install Homebrew if it's not already present.
+///
+/// Returns `Ok(())` immediately if brew is already on `$PATH` (idempotent).
+/// Otherwise prompts the user for confirmation (skipped when `yes` is true)
+/// and runs the official Homebrew install script.
+pub(crate) fn install_homebrew(yes: bool) -> Result<()> {
+    if runner::command_exists("brew") {
+        return Ok(());
+    }
+
+    ui::info("Homebrew is not installed.");
+
+    if !yes {
+        let confirmed = dialoguer::Confirm::new()
+            .with_prompt("Install Homebrew now?")
+            .default(true)
+            .interact()
+            .context("Failed to read confirmation")?;
+
+        if !confirmed {
+            anyhow::bail!("Homebrew installation declined — cannot continue without brew");
+        }
+    }
+
+    ui::info("Installing Homebrew...");
+
+    let status = runner::run(
+        "/bin/bash",
+        &[
+            "-c",
+            "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)",
+        ],
+    )
+    .context("Failed to run Homebrew install script")?;
+
+    if !status.success() {
+        anyhow::bail!("Homebrew install script exited with status {status}");
+    }
+
+    // Verify brew is now reachable
+    if !runner::command_exists("brew") {
+        anyhow::bail!(
+            "Homebrew install script succeeded but `brew` is still not found on $PATH.\n\
+             You may need to add Homebrew to your PATH and restart your shell."
+        );
+    }
+
+    ui::success("Homebrew installed successfully!");
+    Ok(())
+}
+
 fn load_config() -> Result<BossaConfig> {
     let config_dir = config::config_dir()?;
 
@@ -93,6 +145,11 @@ fn build_plan(config: &BossaConfig, args: &NovaArgs) -> Result<ExecutionPlan> {
 
     // Determine which stages to run
     let stages = determine_stages(args);
+
+    // Stage: homebrew (eager — must run before any brew resources are built)
+    if stages.contains(&"homebrew") {
+        install_homebrew(args.yes)?;
+    }
 
     // Stage: defaults
     if stages.contains(&"defaults") {
@@ -137,7 +194,7 @@ fn build_plan(config: &BossaConfig, args: &NovaArgs) -> Result<ExecutionPlan> {
 /// Map user-facing stage aliases to internal canonical names.
 fn normalize_stage(name: &str) -> &str {
     match name {
-        "homebrew" | "essential" | "brew" => "packages",
+        "essential" | "brew" => "packages",
         "stow" => "symlinks",
         "pnpm" => "ecosystem",
         other => other,
@@ -393,6 +450,7 @@ fn convert_default_value(value: &SchemaDefaultValue) -> ResDefaultValue {
 /// Implemented stages (subset of NovaStage that have actual logic wired up)
 const IMPLEMENTED_STAGES: &[&str] = &[
     "defaults",
+    "homebrew",
     "packages",
     "dotfiles",
     "symlinks",
