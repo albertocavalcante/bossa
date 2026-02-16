@@ -608,7 +608,7 @@ fn apply_collection(
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(jobs)
         .build()
-        .unwrap();
+        .context("Failed to create clone thread pool")?;
 
     pool.install(|| {
         repos_to_clone.par_iter().for_each(|repo| {
@@ -621,10 +621,7 @@ fn apply_collection(
                 }
                 Err(e) => {
                     failed.fetch_add(1, Ordering::Relaxed);
-                    failed_repos
-                        .lock()
-                        .unwrap()
-                        .push((repo.name.clone(), e.to_string()));
+                    push_failed_repo(&failed_repos, repo.name.clone(), e.to_string());
                     pb.set_message(format!("{} ✗", repo.name));
                 }
             }
@@ -652,19 +649,19 @@ fn apply_collection(
             failed_repos: vec![],
         });
 
+    let failed_repos_snapshot = snapshot_failed_repos(&failed_repos);
+
     collection_state.cloned_repos.extend(
         repos_to_clone
             .iter()
             .filter(|r| {
-                !failed_repos
-                    .lock()
-                    .unwrap()
+                !failed_repos_snapshot
                     .iter()
-                    .any(|(name, _)| name == &r.name)
+                    .any(|(failed_name, _)| failed_name == &r.name)
             })
             .map(|r| r.name.clone()),
     );
-    collection_state.failed_repos = failed_repos.lock().unwrap().clone();
+    collection_state.failed_repos = failed_repos_snapshot.clone();
 
     state.collections.retain(|s| s.name != collection.name);
     state.collections.push(collection_state);
@@ -677,7 +674,7 @@ fn apply_collection(
         ui::warn(&format!("Cloned {cloned_count}, {failed_count} failed"));
 
         if !ctx.quiet {
-            for (name, error) in failed_repos.lock().unwrap().iter() {
+            for (name, error) in &failed_repos_snapshot {
                 println!("  {} {} - {}", "✗".red(), name, error.dimmed());
             }
         }
@@ -1276,4 +1273,69 @@ fn clone_repo(root: &Path, repo: &Repository) -> Result<()> {
         .output();
 
     Ok(())
+}
+
+fn push_failed_repo(
+    failed_repos: &Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    name: String,
+    error: String,
+) {
+    match failed_repos.lock() {
+        Ok(mut locked) => locked.push((name, error)),
+        Err(poisoned) => poisoned.into_inner().push((name, error)),
+    }
+}
+
+fn snapshot_failed_repos(
+    failed_repos: &Arc<std::sync::Mutex<Vec<(String, String)>>>,
+) -> Vec<(String, String)> {
+    match failed_repos.lock() {
+        Ok(locked) => locked.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{push_failed_repo, snapshot_failed_repos};
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn push_failed_repo_handles_poisoned_mutex() {
+        let failed: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+        let poisoned = Arc::clone(&failed);
+
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned
+                .lock()
+                .expect("lock should succeed before poisoning");
+            panic!("intentional poison");
+        })
+        .join();
+
+        push_failed_repo(&failed, "repo-a".to_string(), "network".to_string());
+        let snapshot = snapshot_failed_repos(&failed);
+
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].0, "repo-a");
+    }
+
+    #[test]
+    fn snapshot_failed_repos_recovers_poisoned_mutex() {
+        let failed: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+        let poisoned = Arc::clone(&failed);
+
+        let _ = std::thread::spawn(move || {
+            let mut guard = poisoned
+                .lock()
+                .expect("lock should succeed before poisoning");
+            guard.push(("repo-b".to_string(), "timeout".to_string()));
+            panic!("intentional poison");
+        })
+        .join();
+
+        let snapshot = snapshot_failed_repos(&failed);
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].0, "repo-b");
+    }
 }

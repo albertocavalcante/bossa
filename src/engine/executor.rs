@@ -1,6 +1,6 @@
 //! Execution engine - bossa-specific executor with UI integration
 
-use anyhow::Result;
+use anyhow::{Context as AnyhowContext, Result};
 use colored::Colorize;
 use rayon::prelude::*;
 use std::sync::Arc;
@@ -159,7 +159,7 @@ fn execute_parallel(
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(jobs)
         .build()
-        .unwrap();
+        .context("Failed to create apply thread pool")?;
 
     pool.install(|| {
         resources.par_iter().for_each(|resource| {
@@ -189,13 +189,32 @@ fn execute_parallel(
             pb.set_message(format!("{} {}", symbol, resource.id()));
             pb.inc(1);
 
-            results.lock().unwrap().push(result);
+            push_apply_result(&results, result);
         });
     });
 
     pb.finish_and_clear();
 
-    Ok(Arc::try_unwrap(results).unwrap().into_inner().unwrap())
+    into_apply_results(results)
+}
+
+fn push_apply_result(results: &Arc<std::sync::Mutex<Vec<ApplyResult>>>, result: ApplyResult) {
+    match results.lock() {
+        Ok(mut locked) => locked.push(result),
+        Err(poisoned) => poisoned.into_inner().push(result),
+    }
+}
+
+fn into_apply_results(
+    results: Arc<std::sync::Mutex<Vec<ApplyResult>>>,
+) -> Result<Vec<ApplyResult>> {
+    let mutex = Arc::try_unwrap(results)
+        .map_err(|_| anyhow::anyhow!("Failed to collect apply results: shared result state"))?;
+
+    match mutex.into_inner() {
+        Ok(collected) => Ok(collected),
+        Err(poisoned) => Ok(poisoned.into_inner()),
+    }
 }
 
 /// Merge results into summary
@@ -272,5 +291,52 @@ fn print_summary(summary: &ExecuteSummary) {
     }
     if summary.failed > 0 {
         println!("    • {} {} failed", summary.failed, "resources".red());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{into_apply_results, push_apply_result};
+    use crate::resource::ApplyResult;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn push_apply_result_handles_poisoned_mutex() {
+        let results: Arc<Mutex<Vec<ApplyResult>>> = Arc::new(Mutex::new(Vec::new()));
+        let poisoned = Arc::clone(&results);
+
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned
+                .lock()
+                .expect("lock should succeed before poisoning");
+            panic!("intentional poison");
+        })
+        .join();
+
+        push_apply_result(&results, ApplyResult::NoChange);
+
+        let len = match results.lock() {
+            Ok(locked) => locked.len(),
+            Err(poisoned) => poisoned.into_inner().len(),
+        };
+        assert_eq!(len, 1);
+    }
+
+    #[test]
+    fn into_apply_results_recovers_from_poisoned_mutex() {
+        let results: Arc<Mutex<Vec<ApplyResult>>> = Arc::new(Mutex::new(Vec::new()));
+        let poisoned = Arc::clone(&results);
+
+        let _ = std::thread::spawn(move || {
+            let mut guard = poisoned
+                .lock()
+                .expect("lock should succeed before poisoning");
+            guard.push(ApplyResult::NoChange);
+            panic!("intentional poison");
+        })
+        .join();
+
+        let collected = into_apply_results(results).expect("poisoned mutex should be recovered");
+        assert_eq!(collected.len(), 1);
     }
 }
