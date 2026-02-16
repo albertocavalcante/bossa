@@ -65,7 +65,7 @@ ureq = { version = "3", features = ["json"] }
 # Archive extraction
 flate2 = "1"
 tar = "0.4"
-zip = "2"
+zip = "8"
 
 # Workspace crates
 brewkit = { path = "crates/brewkit" }
