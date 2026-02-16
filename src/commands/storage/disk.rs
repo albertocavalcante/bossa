@@ -4,9 +4,13 @@ use anyhow::{Context, Result};
 
 use super::types::DiskSpace;
 
+#[cfg(unix)]
+fn statvfs_to_u64<T: Into<u64>>(value: T) -> u64 {
+    value.into()
+}
+
 /// Get disk space for a given path
 #[cfg(unix)]
-#[allow(clippy::unnecessary_cast)] // Cast needed on macOS, not on Linux
 #[allow(unsafe_code)] // statvfs requires unsafe FFI
 pub fn get_disk_space(path: &str) -> Result<DiskSpace> {
     use std::ffi::CString;
@@ -27,8 +31,8 @@ pub fn get_disk_space(path: &str) -> Result<DiskSpace> {
         let stat = stat.assume_init();
 
         Ok(DiskSpace {
-            total: u64::from(stat.f_blocks) * stat.f_frsize,
-            available: u64::from(stat.f_bavail) * stat.f_frsize,
+            total: statvfs_to_u64(stat.f_blocks) * statvfs_to_u64(stat.f_frsize),
+            available: statvfs_to_u64(stat.f_bavail) * statvfs_to_u64(stat.f_frsize),
         })
     }
 }

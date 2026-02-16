@@ -12,7 +12,7 @@ pre-commit:
     # Run Clippy linter
     cargo-clippy:
       glob: "**/*.rs"
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      run: cargo clippy --workspace --all-targets -- -D warnings
 
     # Shell script linting
     shellcheck:
@@ -53,9 +53,18 @@ pre-commit:
 
 pre-push:
   commands:
-    # Run Clippy linter (catch lint regressions before push)
+    # Run the same Clippy command used in CI
     cargo-clippy:
-      run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      run: cargo clippy --workspace --all-targets -- -D warnings
+
+    # Optional extra check: catch Linux-specific lints locally when target is installed
+    cargo-clippy-linux:
+      run: |
+        if rustup target list --installed | grep -q '^x86_64-unknown-linux-gnu$'; then
+          cargo clippy --workspace --all-targets --target x86_64-unknown-linux-gnu -- -D warnings
+        else
+          echo "Skipping Linux clippy (target x86_64-unknown-linux-gnu not installed)"
+        fi
 
     # Run tests before pushing
     cargo-test:

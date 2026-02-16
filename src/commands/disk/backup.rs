@@ -241,10 +241,7 @@ fn check_destination_space(dest: &Path, required: u64) -> Result<()> {
 
         let stat = stat.assume_init();
 
-        // Cast needed on macOS, not on Linux
-        #[allow(clippy::unnecessary_cast)]
-        let avail = u64::from(stat.f_bavail) * stat.f_frsize;
-        avail
+        statvfs_to_u64(stat.f_bavail) * statvfs_to_u64(stat.f_frsize)
     };
 
     if available < required {
@@ -265,6 +262,11 @@ fn check_destination_space(dest: &Path, required: u64) -> Result<()> {
     );
 
     Ok(())
+}
+
+#[cfg(unix)]
+fn statvfs_to_u64<T: Into<u64>>(value: T) -> u64 {
+    value.into()
 }
 
 #[cfg(not(unix))]
