@@ -846,7 +846,7 @@ pub enum DotfilesCommand {
     ///
     /// Compares files in source A, source B, and the deployed target
     /// using blake3 hashes to detect drift, missing files, and conflicts.
-    /// Requires [dotfiles_reconcile] in config.
+    /// Requires `[dotfiles_reconcile]` in config.
     Drift {
         /// Only compare specific packages
         #[arg(value_name = "PACKAGE")]
@@ -856,7 +856,7 @@ pub enum DotfilesCommand {
     /// Reconcile divergent files across sources
     ///
     /// Copies files to align sources and target based on the chosen strategy.
-    /// Requires [dotfiles_reconcile] in config.
+    /// Requires `[dotfiles_reconcile]` in config.
     ///
     /// Examples:
     ///   bossa dotfiles reconcile --dry-run             # Preview changes
@@ -880,7 +880,7 @@ pub enum DotfilesCommand {
     ///
     /// Verifies sources are reachable, checks for broken symlinks,
     /// and reports package availability across sources.
-    /// Requires [dotfiles_reconcile] in config.
+    /// Requires `[dotfiles_reconcile]` in config.
     Check,
 }
 

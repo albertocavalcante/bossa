@@ -70,6 +70,10 @@ pre-push:
     cargo-test:
       run: cargo test --quiet
 
+    # Match CI rustdoc checks
+    cargo-doc:
+      run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+
     # Ensure it builds in release mode
     cargo-build:
       run: cargo build --release --quiet
