@@ -275,6 +275,50 @@ mod tests {
     use crate::schema::LocationsConfig;
     use std::collections::HashMap;
     use std::env;
+    use std::sync::{LazyLock, Mutex};
+
+    static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    /// Helper to run a test with temporary env var overrides under a global lock.
+    ///
+    /// # Safety
+    /// This function uses unsafe env::set_var/remove_var. The global lock prevents
+    /// concurrent mutation/reads from other tests in this module.
+    #[allow(unsafe_code)]
+    fn with_env_overrides<F, R>(vars: &[(&str, Option<&str>)], f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let _guard = ENV_LOCK
+            .lock()
+            .expect("paths test env lock should not be poisoned");
+        let originals: Vec<(String, Option<String>)> = vars
+            .iter()
+            .map(|(key, _)| ((*key).to_string(), env::var(key).ok()))
+            .collect();
+
+        for (key, value) in vars {
+            match value {
+                // SAFETY: guarded by ENV_LOCK for this module's tests
+                Some(v) => unsafe { env::set_var(key, v) },
+                // SAFETY: guarded by ENV_LOCK for this module's tests
+                None => unsafe { env::remove_var(key) },
+            }
+        }
+
+        let result = f();
+
+        for (key, value) in originals {
+            match value {
+                // SAFETY: guarded by ENV_LOCK for this module's tests
+                Some(v) => unsafe { env::set_var(key, v) },
+                // SAFETY: guarded by ENV_LOCK for this module's tests
+                None => unsafe { env::remove_var(key) },
+            }
+        }
+
+        result
+    }
 
     /// Helper to run a test with temporary env var
     ///
@@ -287,16 +331,7 @@ mod tests {
     where
         F: FnOnce() -> R,
     {
-        let original = env::var(key).ok();
-        // SAFETY: Tests run in isolation and don't read env vars concurrently
-        unsafe { env::set_var(key, value) };
-        let result = f();
-        match original {
-            // SAFETY: Tests run in isolation
-            Some(v) => unsafe { env::set_var(key, v) },
-            None => unsafe { env::remove_var(key) },
-        }
-        result
+        with_env_overrides(&[(key, Some(value))], f)
     }
 
     /// Helper to run a test with env var removed
@@ -310,15 +345,7 @@ mod tests {
     where
         F: FnOnce() -> R,
     {
-        let original = env::var(key).ok();
-        // SAFETY: Tests run in isolation and don't read env vars concurrently
-        unsafe { env::remove_var(key) };
-        let result = f();
-        if let Some(v) = original {
-            // SAFETY: Tests run in isolation
-            unsafe { env::set_var(key, v) };
-        }
-        result
+        with_env_overrides(&[(key, None)], f)
     }
 
     #[test]
@@ -375,22 +402,40 @@ mod tests {
     #[test]
     fn test_xdg_config_home() {
         // Only test if no override and no existing config
-        without_env_var(ENV_CONFIG_DIR, || {
-            with_env_var("XDG_CONFIG_HOME", "/tmp/xdg-config-test", || {
+        with_env_overrides(
+            &[
+                (ENV_CONFIG_DIR, None),
+                ("XDG_CONFIG_HOME", Some("/tmp/xdg-config-test")),
+            ],
+            || {
                 // This test might not work if ~/.config/bossa exists
                 // Just verify the function doesn't panic
                 let _ = config_dir();
-            });
-        });
+            },
+        );
     }
 
     #[test]
     fn test_xdg_state_home() {
-        without_env_var(ENV_STATE_DIR, || {
-            with_env_var("XDG_STATE_HOME", "/tmp/xdg-state-test", || {
+        with_env_overrides(
+            &[
+                (ENV_STATE_DIR, None),
+                ("XDG_STATE_HOME", Some("/tmp/xdg-state-test")),
+            ],
+            || {
                 let result = state_dir().unwrap();
                 assert_eq!(result, PathBuf::from("/tmp/xdg-state-test/bossa"));
-            });
+            },
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_default_state_dir_unix() {
+        with_env_overrides(&[(ENV_STATE_DIR, None), ("XDG_STATE_HOME", None)], || {
+            let result = state_dir().unwrap();
+            let home = dirs::home_dir().unwrap();
+            assert_eq!(result, home.join(".local").join("state").join("bossa"));
         });
     }
 
@@ -427,18 +472,6 @@ mod tests {
         assert_eq!(ENV_CONFIG_DIR, "BOSSA_CONFIG_DIR");
         assert_eq!(ENV_STATE_DIR, "BOSSA_STATE_DIR");
         assert_eq!(ENV_WORKSPACES_DIR, "BOSSA_WORKSPACES_DIR");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_default_state_dir_unix() {
-        without_env_var(ENV_STATE_DIR, || {
-            without_env_var("XDG_STATE_HOME", || {
-                let result = state_dir().unwrap();
-                let home = dirs::home_dir().unwrap();
-                assert_eq!(result, home.join(".local").join("state").join("bossa"));
-            });
-        });
     }
 
     // ========================================================================
