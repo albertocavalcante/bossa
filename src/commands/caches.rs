@@ -7,6 +7,7 @@ use std::path::Path;
 
 use crate::cli::CachesCommand;
 use crate::config::{CachesConfig, ConfigFormat};
+use crate::runner;
 use crate::state::{BossaState, TrackedSymlink};
 use crate::ui;
 use crate::ui::format_size;
@@ -595,18 +596,7 @@ fn check_symlink_status(source: &Path, target: &Path) -> SymlinkStatus {
 }
 
 fn dir_size(path: &Path) -> Result<u64> {
-    let path_str = path.to_str().context("Path contains invalid UTF-8")?;
-    let output = std::process::Command::new("du")
-        .args(["-sk", path_str])
-        .output()
-        .context("Failed to run du command")?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let size_kb: u64 = stdout
-        .split_whitespace()
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    Ok(size_kb * 1024)
+    runner::dir_size(path)
 }
 
 // ============================================================================

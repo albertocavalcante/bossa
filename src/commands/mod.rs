@@ -7,6 +7,7 @@ pub mod crud;
 // Core commands
 pub mod brew;
 pub mod caches;
+pub mod cellar;
 pub mod collections;
 pub mod configs;
 pub mod defaults;

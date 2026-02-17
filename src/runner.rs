@@ -96,6 +96,25 @@ pub fn run_script(script_name: &str, args: &[&str]) -> Result<ExitStatus> {
     run(script_name, args)
 }
 
+/// Get directory disk usage in bytes via `du -sk`.
+///
+/// Returns the on-disk size (block usage), which matches what Finder/`du` report.
+/// Returns 0 if the path doesn't exist or `du` fails to parse.
+pub fn dir_size(path: &Path) -> Result<u64> {
+    let path_str = path.to_str().context("Path contains invalid UTF-8")?;
+    let output = Command::new("du")
+        .args(["-sk", path_str])
+        .output()
+        .context("Failed to run du command")?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let size_kb: u64 = stdout
+        .split_whitespace()
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    Ok(size_kb * 1024)
+}
+
 #[cfg(test)]
 mod tests {
     use super::command_exists;

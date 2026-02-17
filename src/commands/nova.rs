@@ -34,7 +34,7 @@ pub fn run(ctx: &AppContext, args: NovaArgs) -> Result<()> {
     let config = load_config()?;
 
     // Build execution plan
-    let plan = build_plan(&config, &args)?;
+    let plan = build_plan(ctx, &config, &args)?;
 
     if plan.is_empty() {
         ui::success("Nothing to do - system is already configured!");
@@ -133,7 +133,7 @@ fn load_config() -> Result<BossaConfig> {
     }
 }
 
-fn build_plan(config: &BossaConfig, args: &NovaArgs) -> Result<ExecutionPlan> {
+fn build_plan(ctx: &AppContext, config: &BossaConfig, args: &NovaArgs) -> Result<ExecutionPlan> {
     let mut plan = ExecutionPlan::new();
 
     // Convert schema::SudoConfig to sudo::SudoConfig
@@ -159,6 +159,13 @@ fn build_plan(config: &BossaConfig, args: &NovaArgs) -> Result<ExecutionPlan> {
     // Stage: packages (brew)
     if stages.contains(&"packages") {
         add_brew_resources(&mut plan, config, &sudo_config)?;
+    }
+
+    // Stage: cellar (sync homebrew packages to external SSD)
+    if stages.contains(&"cellar")
+        && let Err(e) = super::cellar::sync_for_nova(ctx)
+    {
+        ui::warn(&format!("Cellar stage failed: {e} — continuing"));
     }
 
     // Stage: dotfiles (must run before symlinks — stow depends on ~/.dotfiles)
@@ -452,6 +459,7 @@ const IMPLEMENTED_STAGES: &[&str] = &[
     "defaults",
     "homebrew",
     "packages",
+    "cellar",
     "dotfiles",
     "symlinks",
     "dock",

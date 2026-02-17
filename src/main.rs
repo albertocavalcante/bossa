@@ -96,6 +96,7 @@ fn main() -> Result<()> {
         Command::Doctor => commands::doctor::run(&ctx),
         Command::Migrate { dry_run } => commands::migrate::run(&ctx, dry_run),
         Command::Caches(cmd) => commands::caches::run(cmd),
+        Command::Cellar(cmd) => commands::cellar::run(&ctx, cmd),
         Command::Collections(cmd) => commands::collections::run(&ctx, cmd.into()),
         Command::Manifest(cmd) => commands::manifest::run(cmd.into()),
         Command::ICloud(cmd) => commands::icloud::run(cmd.into()),

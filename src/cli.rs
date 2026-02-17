@@ -49,6 +49,7 @@ fn grouped_commands_help() -> String {
 
 {}
   caches        Manage cache symlinks to external drive
+  cellar        Warehouse Homebrew packages on external SSD
   collections   Manage collections (generic repos)
   manifest      Hash files and find duplicates across directories
   icloud        iCloud Drive storage management
@@ -149,6 +150,10 @@ pub enum Command {
     /// Manage cache symlinks to external drive
     #[command(subcommand)]
     Caches(CachesCommand),
+
+    /// Warehouse Homebrew packages on external SSD
+    #[command(subcommand)]
+    Cellar(CellarCommand),
 
     /// Manage collections (generic repos)
     #[command(subcommand)]
@@ -389,6 +394,63 @@ pub enum CachesCommand {
         /// Overwrite existing config
         #[arg(short, long)]
         force: bool,
+    },
+}
+
+// ============================================================================
+// Cellar Commands (Homebrew warehouse on external SSD)
+// ============================================================================
+
+#[derive(Debug, Subcommand)]
+pub enum CellarCommand {
+    /// Create cellar directory structure on external drive
+    Init,
+
+    /// Mirror local Homebrew Cellar to external drive (rsync)
+    Stash {
+        /// Preview what would be synced without doing it
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+    },
+
+    /// Remove non-essential packages from local Cellar
+    Trim {
+        /// Preview what would be trimmed without doing it
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+    },
+
+    /// Restore package(s) from external cellar to local
+    Restore {
+        /// Package name to restore (omit for --all)
+        #[arg(conflicts_with = "all")]
+        package: Option<String>,
+
+        /// Restore all packages from external cellar
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// Stash + trim in one command
+    Sync {
+        /// Preview what would be done without doing it
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+    },
+
+    /// Show local/external/both classification with sizes
+    Status,
+
+    /// Add package to local keep-list and restore it
+    Promote {
+        /// Package name to promote
+        package: String,
+    },
+
+    /// Remove package from local keep-list and trim it
+    Demote {
+        /// Package name to demote
+        package: String,
     },
 }
 
@@ -925,6 +987,7 @@ pub enum NovaStage {
     Bash,
     Essential,
     Brew,
+    Cellar,
     Pnpm,
     Dock,
     Ecosystem,
@@ -947,6 +1010,7 @@ impl NovaStage {
             Self::Bash,
             Self::Essential,
             Self::Brew,
+            Self::Cellar,
             Self::Pnpm,
             Self::Dock,
             Self::Ecosystem,
@@ -969,6 +1033,7 @@ impl NovaStage {
             Self::Bash => "bash",
             Self::Essential => "essential",
             Self::Brew => "brew",
+            Self::Cellar => "cellar",
             Self::Pnpm => "pnpm",
             Self::Dock => "dock",
             Self::Ecosystem => "ecosystem",
@@ -991,6 +1056,7 @@ impl NovaStage {
             Self::Bash => "Bash 4+ bootstrap",
             Self::Essential => "Essential packages (stow, jq, gh, etc.)",
             Self::Brew => "Full Brewfile packages",
+            Self::Cellar => "Homebrew cellar sync to external SSD",
             Self::Pnpm => "Node packages via pnpm",
             Self::Dock => "Dock configuration",
             Self::Ecosystem => "Ecosystem extensions",
@@ -1013,6 +1079,7 @@ impl NovaStage {
             "bash" => Some(Self::Bash),
             "essential" => Some(Self::Essential),
             "brew" => Some(Self::Brew),
+            "cellar" => Some(Self::Cellar),
             "pnpm" => Some(Self::Pnpm),
             "dock" => Some(Self::Dock),
             "ecosystem" => Some(Self::Ecosystem),
@@ -1643,9 +1710,9 @@ mod tests {
     #[test]
     fn test_nova_stage_all() {
         let stages = NovaStage::all();
-        assert_eq!(stages.len(), 17);
+        assert_eq!(stages.len(), 18);
         assert_eq!(stages[0], NovaStage::Defaults);
-        assert_eq!(stages[16], NovaStage::Workspaces);
+        assert_eq!(stages[17], NovaStage::Workspaces);
     }
 
     #[test]

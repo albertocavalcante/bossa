@@ -81,6 +81,10 @@ pub struct BossaConfig {
     /// Dotfiles reconciliation across multiple sources
     #[serde(default)]
     pub dotfiles_reconcile: Option<DotfilesReconcileConfig>,
+
+    /// Homebrew cellar warehousing on external SSD
+    #[serde(default)]
+    pub cellar: CellarConfig,
 }
 
 impl BossaConfig {
@@ -1945,6 +1949,20 @@ pub struct DotfilesReconcileConfig {
 
 fn default_reconcile_strategy() -> String {
     "interactive".to_string()
+}
+
+// ============================================================================
+// Cellar Config (Homebrew warehouse on external SSD)
+// ============================================================================
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct CellarConfig {
+    /// Path to external cellar root (e.g., "/Volumes/T9/homebrew")
+    #[serde(default)]
+    pub path: String,
+    /// Packages that must stay installed locally (plus their transitive deps)
+    #[serde(default)]
+    pub local: Vec<String>,
 }
 
 // ============================================================================
