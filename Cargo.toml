@@ -14,8 +14,8 @@ description = "Unified CLI for managing dev environment - workspaces, refs, pack
 
 [dependencies]
 # CLI parsing
-clap = { version = "4.5", features = ["derive", "env", "color"] }
-clap_complete = "4.5"
+clap = { version = "4.6", features = ["derive", "env", "color"] }
+clap_complete = "4.6"
 
 # Terminal UI
 colored = "3"
@@ -71,7 +71,7 @@ zip = "2"
 brewkit = { path = "crates/brewkit" }
 declarative = { path = "crates/declarative" }
 icloud = { path = "crates/icloud" }
-libc = "0.2.180"
+libc = "0.2.183"
 manifest = { path = "crates/manifest" }
 pintui = { git = "https://github.com/albertocavalcante/pintui", rev = "6e412905" }
 toolchain = { path = "crates/toolchain" }
