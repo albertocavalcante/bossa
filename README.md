@@ -1,40 +1,59 @@
+<div align="center">
+
 # bossa
 
-Unified CLI for managing your development environment.
+**Unified CLI for managing your development environment.**
 
-## Features
+Bootstrap a new machine, manage dotfiles, install tools, sync repos — one command.
 
-- **stow** - Native dotfile symlink management (GNU stow replacement)
-- **tools** - Install and manage dev tools from multiple sources (HTTP, container, GitHub releases, cargo, npm)
-- **theme** - GNOME/GTK theme presets (Linux only)
-- **refs** - Manage reference repositories with parallel cloning and retry logic
-- **brew** - Homebrew package management (apply, capture, audit)
-- **workspace** - Workspace management (bare repos + worktrees)
-- **worktree** - Git worktree worker pool model
-- **t9** - External drive management for exFAT repos
-- **doctor** - Health checks for all systems
-- **nova** - Full machine bootstrap (15 stages)
-- **completions** - Shell completions (bash/zsh/fish/powershell)
-- **config** - Manage configuration files (supports JSON and TOML)
+[![CI](https://github.com/albertocavalcante/bossa/actions/workflows/ci.yml/badge.svg)](https://github.com/albertocavalcante/bossa/actions/workflows/ci.yml)
+[![Release](https://github.com/albertocavalcante/bossa/actions/workflows/release.yml/badge.svg)](https://github.com/albertocavalcante/bossa/actions/workflows/release.yml)
+[![Nightly](https://github.com/albertocavalcante/bossa/actions/workflows/nightly.yml/badge.svg)](https://github.com/albertocavalcante/bossa/actions/workflows/nightly.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Rust](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org)
+
+[Installation](#installation) · [Quick Start](#quick-start) · [Commands](#commands) · [Configuration](#configuration) · [Nova Stages](#nova-stages)
+
+</div>
+
+---
+
+## Why Bossa?
+
+Setting up a new dev machine means juggling dozens of tools: Homebrew, dotfile managers, git clones, system preferences, shell configs. Bossa replaces that patchwork with a single declarative CLI.
+
+```bash
+bossa nova        # bootstrap everything — from Homebrew to dotfiles to repos
+bossa doctor      # verify your setup is healthy
+bossa status      # see what's managed at a glance
+```
 
 ## Installation
 
-### Quick Install (Linux/macOS)
+### Homebrew (macOS)
+
+```bash
+brew install albertocavalcante/tap/bossa
+```
+
+> Use the full tap path to avoid conflict with homebrew-core's `bossa` (a flash programmer).
+
+### Quick Install (Linux / macOS)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.sh | bash
 ```
 
-Or with options:
+Options:
 
 ```bash
-# Install nightly version (recommended for latest features)
+# Nightly (latest features)
 curl -fsSL https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.sh | bash -s -- nightly
 
-# Install specific version
+# Specific version
 curl -fsSL https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.sh | bash -s -- v0.1.0
 
-# Install to custom directory
+# Custom directory
 BOSSA_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.sh | bash
 ```
 
@@ -44,27 +63,9 @@ BOSSA_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/albertocav
 irm https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.ps1 | iex
 ```
 
-Or with options:
-
-```powershell
-# Install specific version
-$env:BOSSA_VERSION = "v0.1.0"; irm https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.ps1 | iex
-
-# Install to custom directory
-$env:BOSSA_DIR = "C:\Tools\bossa"; irm https://raw.githubusercontent.com/albertocavalcante/bossa/main/tools/scripts/install.ps1 | iex
-```
-
-### Homebrew (macOS)
-
-```bash
-brew install albertocavalcante/tap/bossa
-```
-
-> **Note:** Use the full tap path to avoid conflict with homebrew-core's `bossa` (a flash programmer).
-
 ### Download Binary
 
-Download the latest release for your platform from [GitHub Releases](https://github.com/albertocavalcante/bossa/releases).
+Grab the latest release for your platform from [GitHub Releases](https://github.com/albertocavalcante/bossa/releases).
 
 | Platform            | Asset                        |
 | ------------------- | ---------------------------- |
@@ -77,82 +78,65 @@ Download the latest release for your platform from [GitHub Releases](https://git
 ### From Source
 
 ```bash
-# Using Cargo
-cargo install --path .
-
-# Using Bazel
-bazel run //:install
-
-# Using just
-just install
+cargo install --path .       # Cargo
+bazel run //:install          # Bazel
+just install                  # just
 ```
 
-## Usage
+## Quick Start
 
 ```bash
-# Show status dashboard
-bossa status
-
-# Sync everything (workspaces + refs)
-bossa sync
-
-# Manage reference repos
-bossa refs sync              # Clone missing repos (parallel)
-bossa refs snapshot          # Capture current state to refs.json
-bossa refs audit             # Detect drift
-
-# Manage brew packages
-bossa brew apply             # Install from Brewfile
-bossa brew capture           # Update Brewfile with current packages
-bossa brew audit             # Detect drift
-
-# Health check
+# 1. Check system health
 bossa doctor
 
-# Bootstrap new machine
-bossa nova                   # Run all stages
-bossa nova --list-stages     # Show available stages
-bossa nova --only=stow,refs  # Run specific stages
-bossa nova --skip=brew       # Skip specific stages
+# 2. See what bossa manages
+bossa status
 
-# Shell completions
-bossa completions bash >> ~/.bashrc
-bossa completions zsh >> ~/.zshrc
-bossa completions fish > ~/.config/fish/completions/bossa.fish
+# 3. Bootstrap a new machine (runs all 16 stages)
+bossa nova
+
+# 4. Or pick specific stages
+bossa nova --only=homebrew,brew,stow
 ```
+
+## Commands
+
+| Command       | Description                                                  |
+| ------------- | ------------------------------------------------------------ |
+| `nova`        | Full machine bootstrap (16 stages)                           |
+| `doctor`      | Health checks for all managed systems                        |
+| `status`      | Dashboard overview                                           |
+| `sync`        | Sync workspaces + reference repos                            |
+| `stow`        | Dotfile symlink management (GNU stow replacement)            |
+| `tools`       | Install/manage dev tools (GitHub releases, cargo, npm, HTTP) |
+| `brew`        | Homebrew package management (apply, capture, audit)          |
+| `refs`        | Reference repository management with parallel cloning        |
+| `workspace`   | Workspace management (bare repos + worktrees)                |
+| `worktree`    | Git worktree worker pool model                               |
+| `theme`       | GNOME/GTK theme presets (Linux)                              |
+| `t9`          | External drive management for exFAT repos                    |
+| `config`      | Manage configuration files (JSON / TOML)                     |
+| `completions` | Shell completions (bash / zsh / fish / powershell)           |
 
 ### Stow (Dotfile Management)
 
-Native replacement for GNU stow, designed for dotfile management:
+Native replacement for GNU stow:
 
 ```bash
-# Show status of all packages
-bossa stow status
-
-# Preview what would be synced
-bossa stow diff
-
-# Create/update symlinks
-bossa stow sync                  # Sync all packages
+bossa stow status                # Show status of all packages
+bossa stow diff                  # Preview what would be synced
+bossa stow sync                  # Create/update all symlinks
 bossa stow sync zsh git          # Sync specific packages
 bossa stow sync --dry-run        # Preview only
 
-# Manage packages
-bossa stow list                  # List configured packages
 bossa stow add nvim              # Add package to config
-bossa stow rm nvim               # Remove package from config
-bossa stow rm nvim --unlink      # Remove and delete symlinks
+bossa stow rm nvim --unlink      # Remove package + delete symlinks
 
-# Remove symlinks
-bossa stow unlink                # Unlink all packages
-bossa stow unlink zsh            # Unlink specific package
-
-# Initialize config from dotfiles directory
 bossa stow init                  # Auto-detect from ~/dotfiles
 bossa stow init --source ~/dots  # Specify source directory
 ```
 
-Configure in `config.toml`:
+Config (`config.toml`):
 
 ```toml
 [symlinks]
@@ -164,30 +148,16 @@ ignore = [".git", ".github", "README.md"]
 
 ### Tools Management
 
-Install and manage development tools from multiple sources:
+Install and manage dev tools from multiple sources:
 
 ```bash
-# Apply tools from config
 bossa tools apply                # Install all configured tools
 bossa tools apply rg fd          # Install specific tools
-bossa tools apply --dry-run      # Preview only
-
-# Check for updates
-bossa tools outdated             # Check all installed tools
-bossa tools outdated rg fd       # Check specific tools
-bossa tools outdated --json      # Output as JSON
-
-# List and inspect
-bossa tools list                 # Show installed tools
-bossa tools list --all           # Include uninstalled from config
-bossa tools status rg            # Show details for a tool
-
-# Imperative installation
-bossa tools install mytool --url https://example.com/tool.tar.gz
-bossa tools uninstall mytool
+bossa tools outdated             # Check for updates
+bossa tools list --all           # Show all (installed + configured)
 ```
 
-Configure in `config.toml`:
+Config (`config.toml`):
 
 ```toml
 [tools]
@@ -203,184 +173,114 @@ asset = "ripgrep-{version}-{arch}-{os}.tar.gz"
 source = "cargo"
 crate = "fd-find"
 
-[tools.delta]
-source = "github-release"
-repo = "dandavison/delta"
-version = "0.18.2"
-
-# npm/pnpm global packages (prefers pnpm, falls back to npm)
 [tools.pnpm]
 source = "npm"
 version = "9.15.0"
 
 [tools.bun]
 source = "npm"
-version = "1.3.5"
-depends = ["pnpm"] # Install pnpm first
-needs_scripts = true # Required for postinstall scripts
+depends = ["pnpm"] # Dependency chain — installed first via topological sort
 ```
 
-### Tool Dependencies
+Supported sources: `github-release` | `cargo` | `npm` | `http` | `container`
 
-Tools can declare dependencies on other tools using the `depends` field. Bossa will automatically install dependencies first using topological sort:
-
-```toml
-# npm → pnpm → bun (dependency chain)
-[tools.pnpm]
-source = "npm"
-
-[tools.bun]
-source = "npm"
-depends = ["pnpm"] # pnpm will be installed before bun
-```
-
-Supported sources:
-
-- `github-release` - Download from GitHub releases
-- `cargo` - Install via cargo (crates.io or git)
-- `npm` - Install via pnpm (preferred) or npm globally
-- `http` - Download from any HTTP URL
-- `container` - Extract from container images
-
-### Theme Management (Linux)
-
-Apply GNOME/GTK theme presets on Linux:
+### Brew Management
 
 ```bash
-# Show current theme status
-bossa theme status
-
-# List available presets
-bossa theme list
-
-# Apply a theme preset
-bossa theme apply whitesur        # Apply WhiteSur dark theme
-bossa theme apply --dry-run       # Preview changes
-
-# Show preset details
-bossa theme show whitesur
+bossa brew apply       # Install from Brewfile
+bossa brew capture     # Update Brewfile with current packages
+bossa brew audit       # Detect drift between Brewfile and system
 ```
-
-Configure theme presets in `config.toml`:
-
-```toml
-[themes.whitesur]
-description = "macOS Big Sur style (dark)"
-gtk = "WhiteSur-Dark"
-shell = "WhiteSur-Dark"
-wm = "WhiteSur-Dark"
-wm_buttons = "close,minimize,maximize:" # macOS-style left buttons
-icons = "WhiteSur-dark"
-cursor = "WhiteSur-cursors"
-terminal = "whitesur"
-requires = ["whitesur-gtk", "whitesur-icons"] # Tools to install first
-
-[themes.whitesur-light]
-description = "macOS Big Sur style (light)"
-gtk = "WhiteSur-Light"
-shell = "WhiteSur-Light"
-wm = "WhiteSur-Light"
-wm_buttons = "close,minimize,maximize:"
-icons = "WhiteSur"
-cursor = "WhiteSur-cursors"
-```
-
-Theme fields:
-
-- `gtk` - GTK theme (apps like Nautilus)
-- `shell` - GNOME Shell theme (panel, overview)
-- `wm` - Window manager theme (title bars)
-- `wm_buttons` - Button layout (`close,minimize,maximize:` = left/macOS style)
-- `icons` - Icon theme
-- `cursor` - Cursor theme
-- `terminal` - Terminal color scheme (informational)
-- `requires` - Tools that must be installed first
 
 ## Configuration
 
-Bossa reads configuration from a platform-specific config directory:
+Bossa reads from a platform-specific config directory:
 
 | Platform    | Default Location   |
 | ----------- | ------------------ |
 | Linux/macOS | `~/.config/bossa/` |
 | Windows     | `%APPDATA%\bossa\` |
 
-Config files:
+Files:
 
-- `config.toml` - Main configuration
-- `tools.toml` - Installed tools tracking
-- `caches.toml` - Cache symlinks configuration
-
-TOML format is preferred when both formats exist. Use `bossa config convert` to switch formats:
+- `config.toml` — main configuration (collections, workspaces, tools, symlinks)
+- `tools.toml` — installed tools tracking
+- `caches.toml` — cache symlinks configuration
 
 ```bash
-# Show current config files
-bossa config show
-
-# Convert to TOML
-bossa config convert all --format toml
-
-# Validate configs
-bossa config validate
+bossa config show                        # Show current config files
+bossa config convert all --format toml   # Convert to TOML
+bossa config validate                    # Validate configs
 ```
 
-## Environment Variables
+### Environment Variables
 
-Bossa supports environment variable overrides for path configuration, making it easy to symlink configs from a dotfiles repository.
+| Variable               | Description               | Default                |
+| ---------------------- | ------------------------- | ---------------------- |
+| `BOSSA_CONFIG_DIR`     | Override config directory | `~/.config/bossa`      |
+| `BOSSA_STATE_DIR`      | Override state directory  | `~/.local/state/bossa` |
+| `BOSSA_WORKSPACES_DIR` | Override workspaces root  | `~/dev/ws`             |
 
-| Variable               | Description                        | Default                             |
-| ---------------------- | ---------------------------------- | ----------------------------------- |
-| `BOSSA_CONFIG_DIR`     | Override config directory          | `~/.config/bossa` (see table above) |
-| `BOSSA_STATE_DIR`      | Override state directory           | `~/.local/state/bossa`              |
-| `BOSSA_WORKSPACES_DIR` | Override workspaces root directory | `~/dev/ws`                          |
+Resolution order: env var > existing `~/.config/bossa/` > `XDG_CONFIG_HOME/bossa` > platform default.
 
-### Path Resolution Priority
-
-For the config directory, bossa checks in order:
-
-1. `BOSSA_CONFIG_DIR` environment variable
-2. Existing `~/.config/bossa/` (backwards compatibility)
-3. `XDG_CONFIG_HOME/bossa` (if XDG_CONFIG_HOME is set)
-4. Platform default (see table above)
-
-### Dotfiles Integration Example
+### Dotfiles Integration
 
 ```bash
-# In your shell profile (~/.bashrc, ~/.zshrc, etc.)
+# In your shell profile
 export BOSSA_CONFIG_DIR="$HOME/dotfiles/bossa"
 
-# Or symlink the config directory
+# Or symlink
 ln -s ~/dotfiles/bossa ~/.config/bossa
-```
-
-## Global Flags
-
-```
--v, --verbose    Increase verbosity (can be repeated: -vv, -vvv)
--q, --quiet      Suppress non-essential output
 ```
 
 ## Nova Stages
 
-The `nova` command bootstraps a new machine with 15 stages:
+`bossa nova` bootstraps a new machine through 16 idempotent stages:
 
-| Stage       | Description                             |
-| ----------- | --------------------------------------- |
-| defaults    | macOS system defaults                   |
-| terminal    | Terminal font setup                     |
-| git-signing | Git signing key setup                   |
-| homebrew    | Homebrew installation                   |
-| bash        | Bash 4+ bootstrap                       |
-| essential   | Essential packages (stow, jq, gh, etc.) |
-| brew        | Full Brewfile packages                  |
-| pnpm        | Node packages via pnpm                  |
-| dock        | Dock configuration                      |
-| ecosystem   | Ecosystem extensions                    |
-| handlers    | File handlers (duti)                    |
-| stow        | Dotfile symlinks via bossa stow         |
-| mcp         | MCP server configuration                |
-| refs        | Reference repositories                  |
-| workspaces  | Developer workspaces                    |
+```bash
+bossa nova                       # Run all stages
+bossa nova --list-stages         # Show available stages
+bossa nova --only=stow,refs      # Run specific stages
+bossa nova --skip=dock           # Skip stages
+bossa nova --dry-run             # Preview
+bossa nova -j 4                  # Parallel execution
+```
+
+| Stage         | Description                               |
+| ------------- | ----------------------------------------- |
+| `defaults`    | macOS system defaults (Finder, Dock, etc) |
+| `terminal`    | Terminal font setup                       |
+| `git-signing` | Git commit signing key                    |
+| `homebrew`    | Homebrew installation                     |
+| `bash`        | Bash 4+ bootstrap                         |
+| `essential`   | Core packages (stow, jq, gh, rg, fd)      |
+| `brew`        | Full Brewfile packages                    |
+| `pnpm`        | Node packages via pnpm                    |
+| `dock`        | Dock configuration                        |
+| `ecosystem`   | Ecosystem extensions (VS Code, etc)       |
+| `handlers`    | File type handlers (duti)                 |
+| `stow`        | Dotfile symlinks                          |
+| `caches`      | Cache symlinks to external drive          |
+| `mcp`         | MCP server configuration                  |
+| `refs`        | Reference repositories                    |
+| `workspaces`  | Developer workspaces                      |
+
+All stages are idempotent — re-running is always safe.
+
+## Global Flags
+
+```
+-v, --verbose    Increase verbosity (-vv, -vvv)
+-q, --quiet      Suppress non-essential output
+```
+
+## Shell Completions
+
+```bash
+bossa completions bash >> ~/.bashrc
+bossa completions zsh >> ~/.zshrc
+bossa completions fish > ~/.config/fish/completions/bossa.fish
+```
 
 ## License
 
