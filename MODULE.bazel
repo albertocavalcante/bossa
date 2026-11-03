@@ -44,8 +44,13 @@ http_archive(
     urls = ["https://github.com/albertocavalcante/pintui/archive/{}.tar.gz".format(PINTUI_COMMIT)],
 )
 
-crate.annotation(
-    crate = "pintui",
-    override_target_lib = "@pintui//:pintui",
+# Replace the git-fetched repository crate_universe would generate for pintui
+# with the archive above. (A crate.annotation lib override is not enough:
+# all_crate_deps() reaches pintui through the hub alias, which still points
+# at the generated repository.)
+override_repo(
+    crate,
+    **{"crates__pintui-0.1.0": "pintui"}
 )
+
 use_repo(crate, "crates")
