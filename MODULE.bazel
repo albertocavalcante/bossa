@@ -26,4 +26,26 @@ crate.from_cargo(
     cargo_lockfile = "//:Cargo.lock",
     manifests = ["//:Cargo.toml"],
 )
+
+# pintui is a Cargo git dependency, which crate_universe would fetch with git,
+# outside Bazel's downloader and repository cache, so it could be neither
+# cached by checksum nor built offline. Bazel builds it instead from a
+# checksummed archive of the same commit; Cargo keeps using the git source.
+# Bump PINTUI_COMMIT and the integrity together with the rev in Cargo.toml.
+PINTUI_COMMIT = "6e412905f82be38857cf205d4623bbbfd5b61c10"
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "pintui",
+    build_file = "//third_party/pintui:pintui.BUILD.bazel",
+    integrity = "sha256-bB7DBYjIkTGKWebvE3s43k3u3X1cbq70l69jI8lcOAA=",
+    strip_prefix = "pintui-{}/rust".format(PINTUI_COMMIT),
+    urls = ["https://github.com/albertocavalcante/pintui/archive/{}.tar.gz".format(PINTUI_COMMIT)],
+)
+
+crate.annotation(
+    crate = "pintui",
+    override_target_lib = "@pintui//:pintui",
+)
 use_repo(crate, "crates")

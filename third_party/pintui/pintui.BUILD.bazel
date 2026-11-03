@@ -1,0 +1,15 @@
+# BUILD file for the pintui crate (rust/ of github.com/albertocavalcante/pintui),
+# fetched as a checksummed archive by MODULE.bazel. Deps mirror its Cargo.toml.
+load("@rules_rust//rust:defs.bzl", "rust_library")
+
+rust_library(
+    name = "pintui",
+    srcs = glob(["src/**/*.rs"]),
+    crate_root = "src/lib.rs",
+    edition = "2024",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@crates//:colored",
+        "@crates//:indicatif",
+    ],
+)
