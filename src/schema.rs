@@ -848,20 +848,20 @@ pub struct SymlinksConfig {
 #[serde(deny_unknown_fields)]
 pub struct DockConfig {
     /// Auto-hide the dock
-    #[serde(default)]
-    pub autohide: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autohide: Option<bool>,
 
     /// Tile size in pixels
-    #[serde(default = "default_tilesize")]
-    pub tilesize: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tilesize: Option<u32>,
 
     /// Minimize effect ("scale" or "genie")
-    #[serde(default = "default_minimize_effect")]
-    pub minimize_effect: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimize_effect: Option<String>,
 
     /// Show recent applications
-    #[serde(default)]
-    pub show_recents: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_recents: Option<bool>,
 
     /// Applications to pin to dock (in order)
     #[serde(default)]
@@ -870,14 +870,6 @@ pub struct DockConfig {
     /// Folders to add to dock
     #[serde(default)]
     pub folders: Vec<DockFolder>,
-}
-
-fn default_tilesize() -> u32 {
-    64
-}
-
-fn default_minimize_effect() -> String {
-    "scale".to_string()
 }
 
 /// Dock folder configuration
@@ -2089,6 +2081,26 @@ pub struct CellarConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_dock_preferences_preserve_omission_and_explicit_false() {
+        let unconfigured = serde_json::to_value(DockConfig::default()).unwrap();
+        for key in ["autohide", "tilesize", "minimize_effect", "show_recents"] {
+            assert!(
+                unconfigured.get(key).is_none(),
+                "Unconfigured {key} must stay omitted for JSON edits and older readers"
+            );
+        }
+        let explicit: DockConfig = serde_json::from_str(
+            r#"{"autohide":false,"tilesize":64,"minimize_effect":"scale","show_recents":false}"#,
+        )
+        .unwrap();
+        let explicit = serde_json::to_value(explicit).unwrap();
+        assert_eq!(explicit["autohide"], false);
+        assert_eq!(explicit["show_recents"], false);
+        assert_eq!(explicit["tilesize"], 64);
+        assert_eq!(explicit["minimize_effect"], "scale");
+    }
 
     #[test]
     fn test_parse_example_config() {

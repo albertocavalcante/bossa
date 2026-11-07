@@ -40,12 +40,14 @@ pub fn install_signal_handler() -> Result<SignalGuard> {
         .name("bossa-signals".into())
         .spawn(move || {
             if let Some(signal) = signals.forever().next() {
+                crate::sudo::begin_privilege_shutdown();
                 if let Err(error) = runner.cancel() {
                     eprintln!("Native job cancellation incomplete: {error}");
                 }
                 if !runner.wait_idle(std::time::Duration::from_secs(2)) {
                     eprintln!("Native job cleanup did not finish before termination");
                 }
+                crate::sudo::invalidate_active_timestamp();
                 std::process::exit(128 + signal);
             }
         })?;
@@ -82,6 +84,96 @@ fn run_native(cmd: &str, args: &[&str], mode: IoMode) -> Result<std::process::Ou
             mode,
         )
         .with_context(|| format!("Failed to execute {cmd}"))
+}
+
+/// Read-only global-tool observation with explicit locale and no auto bootstrap.
+pub fn observe<I, S>(program: &str, args: I) -> Result<Vec<u8>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let runner = global_tool_runner()
+        .with_limits(bossa::ProcessLimits {
+            timeout: std::time::Duration::from_secs(15),
+            max_output_bytes: 8 * 1024 * 1024,
+        })
+        .with_environment_overrides([("COREPACK_ENABLE_NETWORK".into(), "0".into())]);
+    let output = capture_using(&runner, program, args, IoMode::Capture)?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "Observation failed for {program}: {}; no state was assumed",
+            output.status
+        );
+    }
+    Ok(output.stdout)
+}
+
+fn global_tool_runner() -> SystemRunner {
+    native_runner().clone().with_environment_overrides([
+        ("LC_ALL".into(), "C".into()),
+        ("HOMEBREW_NO_AUTO_UPDATE".into(), "1".into()),
+        ("HOMEBREW_NO_ANALYTICS".into(), "1".into()),
+        ("GH_NO_UPDATE_NOTIFIER".into(), "1".into()),
+        ("GH_NO_EXTENSION_UPDATE_NOTIFIER".into(), "1".into()),
+        ("COREPACK_ENABLE_AUTO_PIN".into(), "0".into()),
+        ("COREPACK_ENABLE_PROJECT_SPEC".into(), "0".into()),
+        ("NO_UPDATE_NOTIFIER".into(), "1".into()),
+    ])
+}
+
+pub fn capture<I, S>(program: &str, args: I) -> Result<std::process::Output>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    capture_using(&global_tool_runner(), program, args, IoMode::Capture)
+}
+
+pub fn capture_using<I, S>(
+    runner: &SystemRunner,
+    program: &str,
+    args: I,
+    mode: IoMode,
+) -> Result<std::process::Output>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    runner
+        .run(
+            &CommandRequest {
+                program: program.into(),
+                args: args
+                    .into_iter()
+                    .map(|arg| arg.as_ref().to_os_string())
+                    .collect(),
+                working_dir: crate::paths::environment().home_dir()?.to_path_buf(),
+            },
+            mode,
+        )
+        .with_context(|| format!("Could not execute {program}"))
+}
+
+/// Check if a command exists
+pub fn require_command_at(cmd: &str, working_dir: &Path) -> Result<()> {
+    let path = Path::new(cmd);
+    let available = if path.components().count() > 1 {
+        command_candidate_exists(&working_dir.join(path))
+    } else {
+        crate::paths::environment()
+            .variable("PATH")
+            .is_some_and(|value| {
+                env::split_paths(value).any(|directory| {
+                    command_candidate_exists(&working_dir.join(directory).join(cmd))
+                })
+            })
+    };
+    if !available {
+        anyhow::bail!(
+            "Required command {cmd} is unavailable; selected scope blocked before changes"
+        );
+    }
+    Ok(())
 }
 
 /// Check if a command exists

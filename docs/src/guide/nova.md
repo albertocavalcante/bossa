@@ -18,7 +18,7 @@ bossa nova --only=defaults,symlinks
 | `cellar`    | Configured synchronization is blocked pending preservation and recovery support          |
 | `dotfiles`  | Configured synchronization is blocked pending a safe acquisition and dependency executor |
 | `symlinks`  | Native dotfile links from `[symlinks]`                                                   |
-| `dock`      | Apps and folders from `[dock]`                                                           |
+| `dock`      | Explicit preferences, ordered apps and folder options from `[dock]`                      |
 | `handlers`  | File handlers from `[handlers]`                                                          |
 | `ecosystem` | pnpm globals, GitHub CLI extensions and VS Code extensions                               |
 
@@ -70,6 +70,46 @@ claim for prior effects. Inherited terminal jobs keep foreground behavior and su
 the direct child. Kernel cleanup can delay termination; escaped sessions and credential changes
 are outside this ownership contract.
 
-Native resource adapters are still being migrated: calls that directly use system commands do
-not yet receive these runner guarantees. Their observation/error coverage remains required
-modernization work. Successful preview does not prove complete native adapter coverage.
+Selected Nova adapters use this runner. Each observation command has a 15-second deadline and an 8 MiB
+combined output budget. Nonzero exits and invalid inventories block the selected scope before
+effects. Configured restart/elevation features require `killall`/`sudo` executables before any
+selected effects, even on an unchanged preview. This check does not invoke them or acquire
+privileges. Defaults and Dock use typed XML preferences with byte, depth, event and duplicate-key
+checks. Missing keys are absent only after a successful snapshot; a failed domain export stays
+unavailable, including on systems where exporting a missing domain fails.
+
+Unprivileged global tool observations and effects use the same captured HOME, locale and package-manager
+selection policy. Corepack project selection and auto-pinning, Homebrew automatic updates and
+known update notifiers are disabled in child environments. Observations also disable Corepack
+network acquisition. These controls are not a sandbox for installed third-party tools.
+
+Homebrew reads receipt files and validated opt links locally, including aliases and tap identities.
+It uses only shell-fast installation-path queries during observation. An absent package requires
+existing local formula/cask metadata to resolve its identity; explicitly install or update its
+tap before retrying when that metadata is unavailable. Preview never downloads API metadata or
+evaluates formula definitions. Casks also require a unique latest timestamped installed record;
+Ruby records remain bounded opaque data. Recorded installation verification does not prove
+executable, application or Ruby definition health. Package intent
+must be a canonical lowercase Homebrew token or `owner/tap/token` (without `homebrew-` repository prefixes), a pnpm package name, a GitHub `owner/repository`,
+or a VS Code `publisher.extension`. Unsupported URLs, local package paths and ecosystem version
+pins are rejected before installation. Native handler configuration uses UTIs and bundle IDs.
+
+Dock app order is one verified layout action; unselected tiles are retained. Folder view,
+display and sort options are verified. Ambiguous dockutil selectors are blocked. Preferences
+such as `autohide`, `tilesize`, `minimize_effect` and `show_recents` are managed only when
+explicitly configured. Configured symlink packages must exist; discovery is bounded to 64
+directory levels and 100,000 entries. Conflicting files or links are preserved for explicit
+reconciliation.
+
+Native cask elevation and elevated user-domain defaults are blocked before effects, including
+when selected by a sudo allowlist. Running Homebrew as root is unsupported, and elevated user
+defaults can target root's preference namespace. These need an explicit executor that preserves
+the observed owner and target; custom `sudo.operations` are also unsupported.
+
+The shared executor supports a scoped privilege adapter. Its native lifecycle retains foreground
+job control, uses noninteractive execution after acquisition, bounds output, and attempts timestamp
+invalidation after the batch, failed acquisition and handled termination. Failed invalidation makes
+the invocation incomplete. Lifecycle fixtures use fake privilege commands in isolated child
+environments; they do not qualify a native cask/system-preference executor. This does not prove
+termination of children that change credentials or escape supervision, roll back effects, or
+establish a durable recovery record.

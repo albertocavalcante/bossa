@@ -31,18 +31,31 @@ impl Job {
             // unsignalable members. Confirm the unreaped leader exited; never
             // apply this exception to a running or externally reaped child.
             #[cfg(target_os = "macos")]
-            Err(rustix::io::Errno::PERM)
-                if process::waitid(
-                    WaitId::Pid(self.pid),
-                    WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
-                )
-                .is_ok_and(|status| status.is_some()) =>
-            {
-                Ok(())
-            }
+            Err(rustix::io::Errno::PERM) if owned_exit_visible(self.pid) => Ok(()),
             Err(error) => Err(error.into()),
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn owned_exit_visible(pid: Pid) -> bool {
+    // killpg can observe the last member exiting slightly before waitid exposes
+    // its status. Keep the child unreaped and briefly retry only that proof.
+    // A live child, invalid identity, or genuine permission error is never
+    // accepted as clean shutdown after the finite observation window.
+    for attempt in 0..=20 {
+        match process::waitid(
+            WaitId::Pid(pid),
+            WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+        ) {
+            Ok(Some(_)) => return true,
+            Ok(None) | Err(rustix::io::Errno::INTR) if attempt < 20 => {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            _ => return false,
+        }
+    }
+    false
 }
 
 #[derive(Default)]

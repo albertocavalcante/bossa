@@ -1,5 +1,6 @@
 //! Configuration source selection without migration, writes, or ambient paths.
 
+use crate::confirm_missing_parent;
 use serde::de::DeserializeOwned;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
@@ -98,31 +99,6 @@ impl ConfigSource for FileConfigSource {
             .map(Some)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
     }
-}
-
-pub(crate) fn confirm_missing_parent(path: &Path) -> io::Result<()> {
-    // Missing leaves under inaccessible or dangling directories are unavailable.
-    for ancestor in path.ancestors().skip(1) {
-        let ancestor = if ancestor.as_os_str().is_empty() {
-            Path::new(".")
-        } else {
-            ancestor
-        };
-        match fs::symlink_metadata(ancestor) {
-            Ok(_) => {
-                if !fs::metadata(ancestor)?.is_dir() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::NotADirectory,
-                        "Configuration parent is not a directory",
-                    ));
-                }
-                return Ok(());
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(())
 }
 
 /// Stage complete contents before replacing the selected file. File symlinks
@@ -244,8 +220,7 @@ impl ConfigDocument {
         let result = match self.format {
             ConfigFormat::Toml => toml::from_str(&self.contents)
                 .map_err(|error: toml::de::Error| error.message().to_string()),
-            ConfigFormat::Json => reject_duplicate_json_keys(&self.contents)
-                .and_then(|()| serde_json::from_str(&self.contents))
+            ConfigFormat::Json => crate::decode_unique_json(self.contents.as_bytes())
                 .map_err(|error| error.to_string()),
         };
         result.map_err(|message| ConfigError::Parse {
@@ -253,71 +228,6 @@ impl ConfigDocument {
             message,
         })
     }
-}
-
-fn reject_duplicate_json_keys(contents: &str) -> Result<(), serde_json::Error> {
-    use serde::{Deserialize, Deserializer, de};
-    use std::collections::HashSet;
-    use std::fmt;
-
-    struct UniqueFields;
-    struct Visitor;
-
-    impl<'de> Deserialize<'de> for UniqueFields {
-        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-            deserializer.deserialize_any(Visitor)
-        }
-    }
-
-    impl<'de> de::Visitor<'de> for Visitor {
-        type Value = UniqueFields;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-            formatter.write_str("JSON without duplicate object keys")
-        }
-
-        fn visit_bool<E: de::Error>(self, _: bool) -> Result<Self::Value, E> {
-            Ok(UniqueFields)
-        }
-        fn visit_i64<E: de::Error>(self, _: i64) -> Result<Self::Value, E> {
-            Ok(UniqueFields)
-        }
-        fn visit_u64<E: de::Error>(self, _: u64) -> Result<Self::Value, E> {
-            Ok(UniqueFields)
-        }
-        fn visit_f64<E: de::Error>(self, _: f64) -> Result<Self::Value, E> {
-            Ok(UniqueFields)
-        }
-        fn visit_str<E: de::Error>(self, _: &str) -> Result<Self::Value, E> {
-            Ok(UniqueFields)
-        }
-        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
-            Ok(UniqueFields)
-        }
-
-        fn visit_seq<A: de::SeqAccess<'de>>(
-            self,
-            mut sequence: A,
-        ) -> Result<Self::Value, A::Error> {
-            while sequence.next_element::<UniqueFields>()?.is_some() {}
-            Ok(UniqueFields)
-        }
-
-        fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
-            let mut keys = HashSet::new();
-            while let Some(key) = map.next_key::<String>()? {
-                if !keys.insert(key) {
-                    return Err(de::Error::custom("duplicate object key"));
-                }
-                map.next_value::<UniqueFields>()?;
-            }
-            Ok(UniqueFields)
-        }
-    }
-
-    let mut deserializer = serde_json::Deserializer::from_str(contents);
-    UniqueFields::deserialize(&mut deserializer)?;
-    deserializer.end()
 }
 
 /// Select TOML before JSON. An unreadable or malformed selected document must

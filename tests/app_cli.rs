@@ -101,7 +101,18 @@ impl Fixture {
         }
         let mut child = RunningChild(command.spawn()?);
         let deadline = Instant::now() + Duration::from_secs(10);
-        started(child.0.id())?;
+        if let Err(error) = started(child.0.id()) {
+            let stdout = fs::read(root.join("stdout"))?;
+            let stderr = fs::read(root.join("stderr"))?;
+            return Err(io::Error::new(
+                error.kind(),
+                format!(
+                    "{error}; fixture stdout: {}; fixture stderr: {}",
+                    String::from_utf8_lossy(&stdout),
+                    String::from_utf8_lossy(&stderr)
+                ),
+            ));
+        }
         let status = loop {
             if let Some(status) = child.0.try_wait()? {
                 break status;
@@ -759,7 +770,9 @@ fn termination_signals_cancel_native_followup_jobs_and_preserve_prior_effects() 
                 &["nova", "--only", "defaults", "--yes"],
                 &[("BOSSA_TEST_DEFAULT_STATE", Some(state.to_str().unwrap()))],
                 |pid| {
-                    let deadline = Instant::now() + Duration::from_secs(2);
+                    // Startup includes repeated native observations. Give the
+                    // fixture scheduler headroom; cancellation is checked below.
+                    let deadline = Instant::now() + Duration::from_secs(5);
                     while !fs::read_to_string(&pids)
                         .is_ok_and(|contents| contents.lines().count() == 2)
                     {
@@ -815,4 +828,667 @@ fn termination_signals_cancel_native_followup_jobs_and_preserve_prior_effects() 
             }
         }
     }
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn failed_native_observations_never_become_successful_previews() {
+    let mut hidden = Vec::new();
+    for (name, stage, program, contents) in [
+        (
+            "defaults",
+            "defaults",
+            "defaults",
+            "[defaults]\n'com.example.Value' = true\n",
+        ),
+        (
+            "brew",
+            "packages",
+            "brew",
+            "[packages.brew]\nformulas = ['git']\n",
+        ),
+        (
+            "pnpm",
+            "ecosystem",
+            "pnpm",
+            "[packages.pnpm]\nglobals = ['typescript']\n",
+        ),
+        (
+            "gh",
+            "ecosystem",
+            "gh",
+            "[packages.gh]\nextensions = ['owner/gh-tool']\n",
+        ),
+        (
+            "code",
+            "ecosystem",
+            "code",
+            "[packages.vscode]\nextensions = ['publisher.extension']\n",
+        ),
+        (
+            "handler",
+            "handlers",
+            "duti",
+            "[handlers]\n'com.example.App' = ['public.text']\n",
+        ),
+        ("dock", "dock", "defaults", ""),
+    ] {
+        let fixture = Fixture::new();
+        let root = fixture.root.path();
+        let contents = if name == "dock" {
+            let app = root.join("Apps/Fixture.app");
+            fs::create_dir_all(&app).unwrap();
+            format!("[dock]\napps = ['{}']\n", app.display())
+        } else {
+            contents.into()
+        };
+        fs::write(root.join("config/config.toml"), &contents).unwrap();
+        fixture.executable(program, include_str!("fixtures/failed-command.sh"));
+        if name == "dock" {
+            fixture.executable("killall", include_str!("fixtures/failed-command.sh"));
+        }
+        let trace = root.join("native-trace");
+        let output = fixture
+            .command_with_env(
+                &["nova", "--only", stage, "--dry-run", "--yes"],
+                &[("BOSSA_TEST_TRACE", Some(trace.to_str().unwrap()))],
+            )
+            .unwrap();
+        if output.status.success() {
+            hidden.push(name);
+        }
+        assert!(trace.is_file(), "{name}: observation was not exercised");
+        assert_eq!(
+            fs::read_to_string(root.join("config/config.toml")).unwrap(),
+            contents
+        );
+        for directory in ["home", "state", "workspaces"] {
+            assert_eq!(fs::read_dir(root.join(directory)).unwrap().count(), 0);
+        }
+    }
+    assert_eq!(
+        hidden,
+        Vec::<&str>::new(),
+        "failed observations disappeared"
+    );
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn native_inventory_decode_errors_and_unverified_effects_fail_closed() {
+    for (stage, program, contents, absent, malformed) in [
+        (
+            "defaults",
+            "defaults",
+            "[defaults]\n'com.example.Enabled' = true\n",
+            "<plist><dict/></plist>",
+            "<plist><array/></plist>",
+        ),
+        (
+            "ecosystem",
+            "pnpm",
+            "[packages.pnpm]\nglobals = ['typescript']\n",
+            "[]",
+            "{}",
+        ),
+        (
+            "ecosystem",
+            "gh",
+            "[packages.gh]\nextensions = ['owner/gh-tool']\n",
+            "",
+            "unsupported inventory format",
+        ),
+        (
+            "ecosystem",
+            "code",
+            "[packages.vscode]\nextensions = ['publisher.extension']\n",
+            "",
+            "not an extension",
+        ),
+        (
+            "handlers",
+            "duti",
+            "[handlers]\n'com.example.App' = ['public.text']\n",
+            "com.example.Other\n",
+            "",
+        ),
+    ] {
+        let fixture = Fixture::new();
+        let root = fixture.root.path();
+        fs::write(root.join("config/config.toml"), contents).unwrap();
+        fixture.executable(program, include_str!("fixtures/native-snapshot.sh"));
+        let trace = root.join("trace");
+        let response = root.join("response");
+        let overrides = [
+            ("BOSSA_TEST_TRACE", Some(trace.to_str().unwrap())),
+            ("BOSSA_TEST_RESPONSE", Some(response.to_str().unwrap())),
+        ];
+        fs::write(&response, malformed).unwrap();
+        assert!(
+            !fixture
+                .command_with_env(&["nova", "--only", stage, "--dry-run", "--yes"], &overrides)
+                .unwrap()
+                .status
+                .success(),
+            "{program}: invalid observation accepted"
+        );
+        fs::write(&trace, "").unwrap();
+        fs::write(&response, absent).unwrap();
+        assert!(
+            fixture
+                .command_with_env(&["nova", "--only", stage, "--dry-run", "--yes"], &overrides)
+                .unwrap()
+                .status
+                .success(),
+            "{program}: supported absence rejected"
+        );
+        let preview = fs::read_to_string(&trace).unwrap();
+        let effect = match program {
+            "defaults" => "write ",
+            "brew" => "install ",
+            "pnpm" => "add ",
+            "gh" => "extension install ",
+            "code" => "--install-extension ",
+            "duti" => "-s ",
+            _ => unreachable!(),
+        };
+        assert!(
+            !preview.lines().any(|line| line.starts_with(effect)),
+            "{preview}"
+        );
+        let output = fixture
+            .command_with_env(&["nova", "--only", stage, "--yes"], &overrides)
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "{program}: successful command falsely proved its effect"
+        );
+        let trace = fs::read_to_string(&trace).unwrap();
+        assert!(
+            trace.lines().any(|line| line.starts_with(effect)),
+            "{program}: effect was not exercised: {trace}"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("config/config.toml")).unwrap(),
+            contents
+        );
+        for directory in ["home", "state", "workspaces"] {
+            assert_eq!(fs::read_dir(root.join(directory)).unwrap().count(), 0);
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn symlink_preflight_rejects_missing_packages_and_preserves_conflicts() {
+    use std::os::unix::fs::symlink;
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    let source = root.join("source");
+    let config = format!(
+        "[symlinks]\nsource = '{}'\ntarget = '{}'\npackages = ['shell']\n",
+        source.display(),
+        root.join("home").display()
+    );
+    fs::write(root.join("config/config.toml"), config).unwrap();
+    assert!(
+        !fixture
+            .command(&["nova", "--only", "symlinks", "--dry-run"])
+            .unwrap()
+            .status
+            .success()
+    );
+    fs::create_dir_all(source.join("shell")).unwrap();
+    fs::write(source.join("shell/a-new"), "new").unwrap();
+    fs::write(source.join("shell/z-existing"), "desired").unwrap();
+    let target = root.join("home/z-existing");
+    symlink(root.join("retained-missing-source"), &target).unwrap();
+    assert!(
+        !fixture
+            .command(&["nova", "--only", "symlinks", "--yes"])
+            .unwrap()
+            .status
+            .success()
+    );
+    assert_eq!(
+        fs::read_link(target).unwrap(),
+        root.join("retained-missing-source")
+    );
+    assert!(!root.join("home/a-new").exists());
+    fs::remove_file(root.join("home/z-existing")).unwrap();
+    fs::remove_file(source.join("shell/z-existing")).unwrap();
+    fs::create_dir(source.join("shell/z-parent")).unwrap();
+    fs::write(source.join("shell/z-parent/file"), "nested").unwrap();
+    symlink(root.join("missing-directory"), root.join("home/z-parent")).unwrap();
+    assert!(
+        !fixture
+            .command(&["nova", "--only", "symlinks", "--yes"])
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(!root.join("home/a-new").exists());
+    assert_eq!(
+        fs::read_link(root.join("home/z-parent")).unwrap(),
+        root.join("missing-directory")
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn discovered_symlink_names_remain_literal_native_paths() {
+    #[cfg(target_os = "linux")]
+    use std::os::unix::ffi::OsStringExt;
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    let source = root.join("source");
+    fs::create_dir_all(source.join("shell")).unwrap();
+    let names = vec![std::ffi::OsString::from("literal-$HOME")];
+    #[cfg(target_os = "linux")]
+    let names = {
+        let mut names = names;
+        names.push(std::ffi::OsString::from_vec(vec![b'n', 0xff]));
+        names
+    };
+    for name in &names {
+        fs::write(source.join("shell").join(name), "fixture").unwrap();
+    }
+    fs::write(
+        root.join("config/config.toml"),
+        format!(
+            "[symlinks]\nsource = '{}'\ntarget = '{}'\npackages = ['shell']\n",
+            source.display(),
+            root.join("home").display()
+        ),
+    )
+    .unwrap();
+    for _ in 0..2 {
+        let output = fixture
+            .command(&["nova", "--only", "symlinks", "--yes"])
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        for name in &names {
+            assert_eq!(
+                fs::read_link(root.join("home").join(name)).unwrap(),
+                source.join("shell").join(name)
+            );
+        }
+    }
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn dock_layout_is_one_verified_action_and_reapplication_is_read_only() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    let apps = root.join("Apps");
+    let snapshots = root.join("snapshots");
+    fs::create_dir(&snapshots).unwrap();
+    for name in ["A", "B", "C"] {
+        fs::create_dir_all(apps.join(format!("{name}.app"))).unwrap();
+    }
+    let mut config = String::from("[dock]\napps = [");
+    for name in ["A", "B", "C"] {
+        config.push_str(&format!(
+            "'{}',",
+            apps.join(format!("{name}.app")).display()
+        ));
+    }
+    config.push_str("]\n");
+    fs::write(root.join("config/config.toml"), config).unwrap();
+    for (stage, names) in [
+        (0, ["C", "B", "A"]),
+        (1, ["A", "C", "B"]),
+        (2, ["A", "B", "C"]),
+    ] {
+        let mut xml = String::from(
+            "<plist><dict><key>persistent-others</key><array/><key>persistent-apps</key><array>",
+        );
+        for name in names {
+            xml.push_str(&format!("<dict><key>tile-data</key><dict><key>file-label</key><string>{name}</string><key>file-data</key><dict><key>_CFURLString</key><string>{}</string><key>_CFURLStringType</key><integer>0</integer></dict></dict></dict>", apps.join(format!("{name}.app")).display()));
+        }
+        xml.push_str("</array></dict></plist>");
+        fs::write(snapshots.join(stage.to_string()), xml).unwrap();
+    }
+    for program in ["defaults", "dockutil", "killall"] {
+        fixture.executable(program, include_str!("fixtures/dock-state.sh"));
+    }
+    let trace = root.join("trace");
+    let state = root.join("dock-state");
+    let overrides = [
+        ("BOSSA_TEST_TRACE", Some(trace.to_str().unwrap())),
+        ("BOSSA_TEST_DOCK_STATE", Some(state.to_str().unwrap())),
+        (
+            "BOSSA_TEST_DOCK_SNAPSHOTS",
+            Some(snapshots.to_str().unwrap()),
+        ),
+    ];
+    let output = fixture
+        .command_with_env(&["nova", "--only", "dock", "--yes"], &overrides)
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let first = fs::read_to_string(&trace).unwrap();
+    assert_eq!(
+        first
+            .lines()
+            .filter(|line| line.starts_with("--move"))
+            .count(),
+        2
+    );
+    assert_eq!(first.lines().filter(|line| *line == "Dock").count(), 1);
+    fs::write(&trace, "").unwrap();
+    assert!(
+        fixture
+            .command_with_env(&["nova", "--only", "dock", "--yes"], &overrides)
+            .unwrap()
+            .status
+            .success()
+    );
+    let repeat = fs::read_to_string(trace).unwrap();
+    assert!(
+        repeat.lines().all(|line| line == "export com.apple.dock -"),
+        "{repeat}"
+    );
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn dock_folder_updates_use_the_exact_preflight_label_and_declared_section() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    let folder = root.join("Foo.app");
+    fs::create_dir(&folder).unwrap();
+    fs::write(
+        root.join("config/config.toml"),
+        format!("[[dock.folders]]\npath = '{}'\n", folder.display()),
+    )
+    .unwrap();
+    for program in ["defaults", "dockutil", "killall"] {
+        fixture.executable(program, include_str!("fixtures/native-snapshot.sh"));
+    }
+    let trace = root.join("trace");
+    let response = root.join("response");
+    let overrides = [
+        ("BOSSA_TEST_TRACE", Some(trace.to_str().unwrap())),
+        ("BOSSA_TEST_RESPONSE", Some(response.to_str().unwrap())),
+    ];
+    for (others, label) in [
+        (String::new(), "Foo.app"),
+        (
+            format!(
+                "<dict><key>tile-data</key><dict><key>file-label</key><string>Custom Label</string><key>file-data</key><dict><key>_CFURLString</key><string>{}</string><key>_CFURLStringType</key><integer>0</integer></dict><key>showas</key><integer>3</integer><key>displayas</key><integer>0</integer><key>arrangement</key><integer>2</integer></dict></dict>",
+                folder.display()
+            ),
+            "Custom Label",
+        ),
+    ] {
+        fs::write(&response, format!("<plist><dict><key>persistent-apps</key><array><dict><key>tile-data</key><dict><key>file-label</key><string>Foo</string></dict></dict></array><key>persistent-others</key><array>{others}</array></dict></plist>")).unwrap();
+        fs::write(&trace, "").unwrap();
+        assert!(
+            !fixture
+                .command_with_env(&["nova", "--only", "dock", "--yes"], &overrides)
+                .unwrap()
+                .status
+                .success()
+        ); // fake effect leaves the snapshot unchanged.
+        let trace = fs::read_to_string(&trace).unwrap();
+        let effect = trace
+            .lines()
+            .find(|line| line.starts_with("--add "))
+            .unwrap();
+        assert!(
+            effect.contains("--section others --type directory"),
+            "{effect}"
+        );
+        assert!(
+            effect.contains(&format!("--label {label} --view")),
+            "{effect}"
+        );
+        if label == "Custom Label" {
+            assert!(effect.ends_with("--replacing Custom Label"), "{effect}");
+        }
+    }
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn unsupported_native_elevation_is_blocked_before_any_effect() {
+    for contents in [
+        "[packages.brew]\nfonts = ['fixture-font']\n[sudo]\ncasks = ['fixture-font']\n",
+        "[defaults]\n'com.example.Enabled' = true\n[sudo]\ndefaults = ['com.example.Enabled']\n",
+    ] {
+        let fixture = Fixture::new();
+        let root = fixture.root.path();
+        fs::write(root.join("config/config.toml"), contents).unwrap();
+        for program in ["brew", "defaults", "sudo"] {
+            fixture.executable(program, include_str!("fixtures/failed-command.sh"));
+        }
+        // A version-only prerequisite has no install or privilege effects.
+        fixture.executable("brew", include_str!("fixtures/native-snapshot.sh"));
+        let trace = root.join("trace");
+        let output = fixture
+            .command_with_env(
+                &["nova", "--only", "packages,defaults", "--yes"],
+                &[("BOSSA_TEST_TRACE", Some(trace.to_str().unwrap()))],
+            )
+            .unwrap();
+        assert!(!output.status.success());
+        let trace = fs::read_to_string(trace).unwrap_or_default();
+        assert!(trace.lines().all(|line| line == "--version"), "{trace}");
+        assert_eq!(fs::read_dir(root.join("home")).unwrap().count(), 0);
+    }
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn homebrew_reads_receipts_without_metadata_commands_or_unverified_success() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    let brew = root.join("brew");
+    fs::create_dir_all(brew.join("Cellar")).unwrap();
+    fs::create_dir_all(brew.join("Caskroom")).unwrap();
+    fs::create_dir_all(brew.join("repo/Library/Taps/homebrew/homebrew-core/Formula")).unwrap();
+    fs::write(
+        brew.join("repo/Library/Taps/homebrew/homebrew-core/Formula/git.rb"),
+        "fixture metadata only",
+    )
+    .unwrap();
+    fs::write(
+        root.join("config/config.toml"),
+        "[packages.brew]\nformulas = ['git']\n",
+    )
+    .unwrap();
+    fixture.executable("brew", include_str!("fixtures/brew-state.sh"));
+    let trace = root.join("trace");
+    let overrides = [
+        ("BOSSA_TEST_TRACE", Some(trace.to_str().unwrap())),
+        ("BOSSA_TEST_BREW_ROOT", Some(brew.to_str().unwrap())),
+    ];
+    assert!(
+        fixture
+            .command_with_env(&["nova", "--only", "packages", "--dry-run"], &overrides)
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(
+        fs::read_to_string(&trace)
+            .unwrap()
+            .lines()
+            .all(|line| line.starts_with("--"))
+    );
+    assert!(
+        !fixture
+            .command_with_env(&["nova", "--only", "packages", "--yes"], &overrides)
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(
+        fs::read_to_string(&trace)
+            .unwrap()
+            .contains("install --formula git")
+    );
+    fs::create_dir_all(brew.join("Cellar/git/1")).unwrap();
+    let receipt = brew.join("Cellar/git/1/INSTALL_RECEIPT.json");
+    fs::write(&receipt, r#"{"source":{"tap":"homebrew/core"}}"#).unwrap();
+    fs::write(&trace, "").unwrap();
+    assert!(
+        fixture
+            .command_with_env(&["nova", "--only", "packages", "--yes"], &overrides)
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(
+        fs::read_to_string(&trace)
+            .unwrap()
+            .lines()
+            .all(|line| line.starts_with("--"))
+    );
+    for invalid in [
+        "{}",
+        r#"{"source":{"tap":"homebrew/core","tap":"other/tap"}}"#,
+    ] {
+        fs::write(&receipt, invalid).unwrap();
+        fs::write(&trace, "").unwrap();
+        assert!(
+            !fixture
+                .command_with_env(&["nova", "--only", "packages", "--yes"], &overrides)
+                .unwrap()
+                .status
+                .success()
+        );
+        assert!(!fs::read_to_string(&trace).unwrap().contains("install"));
+    }
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn global_package_observation_and_effect_keep_the_same_manager_selection() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    fs::write(
+        root.join("config/config.toml"),
+        "[packages.pnpm]\nglobals = ['typescript']\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("home/package.json"),
+        r#"{"packageManager":"pnpm@fixture"}"#,
+    )
+    .unwrap();
+    fixture.executable("pnpm", include_str!("fixtures/native-snapshot.sh"));
+    let trace = root.join("trace");
+    let response = root.join("response");
+    let environment = root.join("environment");
+    fs::write(&response, "[]").unwrap();
+    let overrides = [
+        ("BOSSA_TEST_TRACE", Some(trace.to_str().unwrap())),
+        ("BOSSA_TEST_RESPONSE", Some(response.to_str().unwrap())),
+        ("BOSSA_TEST_ENV_TRACE", Some(environment.to_str().unwrap())),
+        ("COREPACK_ENABLE_PROJECT_SPEC", Some("1")),
+        ("COREPACK_ENABLE_AUTO_PIN", Some("1")),
+        ("COREPACK_ENABLE_NETWORK", Some("1")),
+    ];
+    assert!(
+        !fixture
+            .command_with_env(&["nova", "--only", "ecosystem", "--yes"], &overrides)
+            .unwrap()
+            .status
+            .success()
+    );
+    let env = fs::read_to_string(environment).unwrap();
+    assert!(
+        env.lines()
+            .any(|line| line.starts_with("add -g typescript|C|0|0|1|")),
+        "{env}"
+    );
+    assert!(
+        env.lines()
+            .any(|line| line.starts_with("list --global --depth=0 --json|C|0|0|0|")),
+        "{env}"
+    );
+    for line in env.lines() {
+        assert_eq!(
+            std::path::Path::new(line.rsplit('|').next().unwrap())
+                .canonicalize()
+                .unwrap(),
+            root.join("home").canonicalize().unwrap()
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(root.join("home/package.json")).unwrap(),
+        r#"{"packageManager":"pnpm@fixture"}"#
+    );
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn missing_dock_and_restart_capabilities_block_before_other_selected_effects() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    let app = root.join("Apps/Fixture.app");
+    fs::create_dir_all(&app).unwrap();
+    fs::write(
+        root.join("config/config.toml"),
+        format!(
+            "[defaults]\n'com.example.Enabled' = true\n[dock]\napps = ['{}']\n",
+            app.display()
+        ),
+    )
+    .unwrap();
+    fixture.executable("defaults", include_str!("fixtures/native-snapshot.sh"));
+    let trace = root.join("trace");
+    let response = root.join("response");
+    let overrides = [
+        ("BOSSA_TEST_TRACE", Some(trace.to_str().unwrap())),
+        ("BOSSA_TEST_RESPONSE", Some(response.to_str().unwrap())),
+    ];
+    fs::write(&response, "<plist><dict><key>Enabled</key><false/><key>persistent-apps</key><array/><key>persistent-others</key><array/></dict></plist>").unwrap();
+    fixture.executable("killall", include_str!("fixtures/native-snapshot.sh"));
+    for capability in ["dockutil", "killall"] {
+        let output = fixture
+            .command_with_env(&["nova", "--only", "defaults,dock", "--yes"], &overrides)
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains(capability));
+        assert!(
+            fs::read_to_string(&trace)
+                .unwrap()
+                .lines()
+                .all(|line| line.starts_with("export "))
+        );
+        if capability == "dockutil" {
+            fixture.executable("dockutil", include_str!("fixtures/native-snapshot.sh"));
+            fs::remove_file(root.join("bin/killall")).unwrap();
+        }
+    }
+    fs::remove_file(root.join("bin/dockutil")).unwrap();
+    fs::write(&response, format!("<plist><dict><key>Enabled</key><true/><key>persistent-apps</key><array><dict><key>tile-data</key><dict><key>file-label</key><string>Fixture</string><key>file-data</key><dict><key>_CFURLString</key><string>{}</string><key>_CFURLStringType</key><integer>0</integer></dict></dict></dict></array><key>persistent-others</key><array/></dict></plist>", app.display())).unwrap();
+    // Configured follow-ups require their executable even when currently
+    // unchanged; this cannot race a second snapshot that needs an effect.
+    assert!(
+        !fixture
+            .command_with_env(&["nova", "--only", "defaults,dock", "--yes"], &overrides)
+            .unwrap()
+            .status
+            .success()
+    );
+    fixture.executable("killall", include_str!("fixtures/native-snapshot.sh"));
+    assert!(
+        fixture
+            .command_with_env(&["nova", "--only", "defaults,dock", "--yes"], &overrides)
+            .unwrap()
+            .status
+            .success()
+    );
 }

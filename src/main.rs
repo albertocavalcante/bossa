@@ -54,7 +54,7 @@ fn main() -> Result<()> {
         quiet: cli.quiet,
     };
 
-    match cli.command {
+    let result = match cli.command {
         Command::Nova(args) => commands::nova::run(&ctx, args),
         Command::Status(args) => commands::declarative::status(&ctx, args.target.as_deref()),
         Command::Apply(args) => commands::declarative::apply(
@@ -136,5 +136,7 @@ fn main() -> Result<()> {
         Command::Locations(cmd) => commands::locations::run(&ctx, cmd),
         Command::Configs(cmd) => commands::configs::run(&ctx, cmd),
         Command::Relocate(cmd) => commands::relocate::run(&ctx, cmd),
-    }
+    };
+    sudo::check_timestamp_cleanup()?;
+    result
 }

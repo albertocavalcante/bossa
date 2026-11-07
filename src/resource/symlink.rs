@@ -23,34 +23,51 @@ impl Symlink {
         }
     }
 
-    /// Expand ~ and environment variables in paths
-    pub fn expand_paths(&self) -> Result<(PathBuf, PathBuf)> {
-        let source = crate::paths::expand(&self.source.to_string_lossy());
-        let target = crate::paths::expand(&self.target.to_string_lossy());
+    /// Paths are already resolved by the configuration boundary. Filesystem
+    /// names, including literal dollar signs and non-UTF-8 bytes, stay literal.
+    pub fn paths(&self) -> Result<(PathBuf, PathBuf)> {
+        let source = self.source.clone();
+        let target = self.target.clone();
+        if !source.is_absolute() || !target.is_absolute() {
+            bail!("Symlink paths must be absolute after expansion");
+        }
         Ok((source, target))
     }
 
     /// Check current symlink state
     fn check_current(&self) -> Result<SymlinkState> {
-        let (source, target) = self.expand_paths()?;
+        let (source, target) = self.paths()?;
 
-        if !target.exists() && !target.is_symlink() {
-            return Ok(SymlinkState::Missing);
-        }
+        let expected = source
+            .canonicalize()
+            .with_context(|| format!("Symlink source is unavailable: {}", source.display()))?;
+        let metadata = match fs::symlink_metadata(&target) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                bossa::confirm_missing_parent(&target)?;
+                return Ok(SymlinkState::Missing);
+            }
+            Err(error) => return Err(error).context("Could not observe symlink destination"),
+        };
 
-        if target.is_symlink() {
+        if metadata.file_type().is_symlink() {
             let link_target = fs::read_link(&target).context("Failed to read symlink")?;
 
             // Canonicalize for comparison
-            let expected = source.canonicalize().unwrap_or(source.clone());
-            let actual = if link_target.is_absolute() {
-                link_target.canonicalize().unwrap_or(link_target)
+            let resolved = if link_target.is_absolute() {
+                link_target
             } else {
                 target
                     .parent()
-                    .map(|p| p.join(&link_target))
-                    .and_then(|p| p.canonicalize().ok())
-                    .unwrap_or(link_target)
+                    .context("Symlink destination has no parent")?
+                    .join(link_target)
+            };
+            let actual = match resolved.canonicalize() {
+                Ok(path) => path,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => resolved,
+                Err(error) => {
+                    return Err(error).context("Could not observe existing symlink source");
+                }
             };
 
             if expected == actual {
@@ -65,24 +82,16 @@ impl Symlink {
 
     /// Create the symlink
     fn create_symlink(&self) -> Result<()> {
-        let (source, target) = self.expand_paths()?;
+        let (source, target) = self.paths()?;
 
         // Ensure source exists
-        if !source.exists() {
-            bail!("Source does not exist: {}", source.display());
-        }
+        fs::metadata(&source)
+            .with_context(|| format!("Source is unavailable: {}", source.display()))?;
 
         // Ensure parent directory exists
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).with_context(|| {
                 format!("Failed to create parent directory: {}", parent.display())
-            })?;
-        }
-
-        // Remove existing symlink if wrong target
-        if target.is_symlink() {
-            fs::remove_file(&target).with_context(|| {
-                format!("Failed to remove existing symlink: {}", target.display())
             })?;
         }
 
@@ -169,14 +178,15 @@ impl Resource for Symlink {
             SymlinkState::Correct => Ok(ResourceState::Present {
                 details: Some(format!("-> {}", self.source.display())),
             }),
-            SymlinkState::WrongTarget(actual) => Ok(ResourceState::Modified {
-                from: actual.to_string_lossy().to_string(),
-                to: self.source.to_string_lossy().to_string(),
-            }),
-            SymlinkState::FileExists => Ok(ResourceState::Modified {
-                from: "regular file".to_string(),
-                to: format!("symlink -> {}", self.source.display()),
-            }),
+            SymlinkState::WrongTarget(actual) => bail!(
+                "Existing symlink at {} points to {}; preserved for explicit reconciliation",
+                self.target.display(),
+                actual.display()
+            ),
+            SymlinkState::FileExists => bail!(
+                "Existing file/directory at {}; preserved for explicit reconciliation",
+                self.target.display()
+            ),
         }
     }
 
@@ -199,15 +209,15 @@ impl Resource for Symlink {
                 self.create_symlink()?;
                 Ok(ApplyResult::Created)
             }
-            SymlinkState::WrongTarget(_) => {
-                self.create_symlink()?;
-                Ok(ApplyResult::Modified)
-            }
+            SymlinkState::WrongTarget(_) => bail!(
+                "Existing symlink has a different source: {}; preserved for explicit reconciliation",
+                self.target.display()
+            ),
             SymlinkState::FileExists => {
-                // Don't overwrite existing files automatically
-                Ok(ApplyResult::Skipped {
-                    reason: format!("File exists at {}", self.target.display()),
-                })
+                bail!(
+                    "Existing file/directory at {}; preserved for explicit reconciliation",
+                    self.target.display()
+                )
             }
         }
     }

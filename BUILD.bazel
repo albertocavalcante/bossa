@@ -8,6 +8,8 @@ APP_SRCS = [
     "src/app.rs",
     "src/application.rs",
     "src/configuration.rs",
+    "src/filesystem.rs",
+    "src/json.rs",
     "src/lib.rs",
     "src/process.rs",
     "src/process/unix.rs",
@@ -69,6 +71,7 @@ rust_binary(
 # Unit tests
 rust_test(
     name = "bossa_test",
+    compile_data = ["tests/fixtures/sudo-state.sh"],
     crate = ":bossa",
     deps = all_crate_deps(normal_dev = True),
 )
@@ -99,8 +102,13 @@ rust_test(
     name = "app_cli_test",
     srcs = ["tests/app_cli.rs"],
     compile_data = [
+        "tests/fixtures/brew-state.sh",
         "tests/fixtures/defaults-state.sh",
+        "tests/fixtures/dock-state.sh",
+        "tests/fixtures/failed-command.sh",
+        "tests/fixtures/native-snapshot.sh",
         "tests/fixtures/process-tree.sh",
+        "tests/fixtures/sudo-state.sh",
     ],
     crate_root = "tests/app_cli.rs",
     data = [":bossa"],

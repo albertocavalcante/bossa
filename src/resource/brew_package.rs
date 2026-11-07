@@ -1,8 +1,6 @@
 //! Homebrew package resource
 
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
-use std::process::Command;
 
 use super::{ApplyContext, ApplyResult, Resource, ResourceState, SudoRequirement};
 
@@ -20,16 +18,6 @@ pub struct BrewPackage {
     pub name: String,
     pub package_type: BrewPackageType,
     pub requires_sudo: bool,
-}
-
-#[derive(Deserialize)]
-struct BrewInfo {
-    installed: Vec<BrewInstalled>,
-}
-
-#[derive(Deserialize)]
-struct BrewInstalled {
-    version: String,
 }
 
 impl BrewPackage {
@@ -64,78 +52,56 @@ impl BrewPackage {
 
     /// Check if package is installed
     fn is_installed(&self) -> Result<bool> {
-        match self.package_type {
-            BrewPackageType::Tap => {
-                let output = Command::new("brew")
-                    .args(["tap"])
-                    .output()
-                    .context("Failed to run brew tap")?;
-                let taps = String::from_utf8_lossy(&output.stdout);
-                Ok(taps.lines().any(|t| t.trim() == self.name))
-            }
-            BrewPackageType::Formula | BrewPackageType::Cask => {
-                let type_flag = match self.package_type {
-                    BrewPackageType::Cask => "--cask",
-                    _ => "--formula",
-                };
-
-                let output = Command::new("brew")
-                    .args(["info", "--json=v2", type_flag, &self.name])
-                    .output()
-                    .context("Failed to run brew info")?;
-
-                if !output.status.success() {
-                    return Ok(false);
-                }
-
-                // Parse JSON to check if installed
-                let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-
-                let installed = match self.package_type {
-                    BrewPackageType::Cask => json["casks"]
-                        .as_array()
-                        .and_then(|arr| arr.first())
-                        .and_then(|c| c["installed"].as_str())
-                        .is_some(),
-                    _ => json["formulae"]
-                        .as_array()
-                        .and_then(|arr| arr.first())
-                        .and_then(|f| f["installed"].as_array())
-                        .is_some_and(|arr| !arr.is_empty()),
-                };
-
-                Ok(installed)
-            }
+        if self.requires_sudo {
+            bail!(
+                "Privileged Homebrew installs are blocked until a scoped Homebrew-owner executor exists; brew must not run as root"
+            );
         }
+        super::native::package_name(&self.name, "Homebrew package")?;
+        let pieces: Vec<_> = self.name.split('/').collect();
+        if self.name != self.name.to_ascii_lowercase()
+            || (pieces.len() >= 2
+                && (pieces[1].starts_with("homebrew-") || pieces[1].starts_with("linuxbrew-")))
+        {
+            bail!(
+                "Use canonical lowercase Homebrew tokens and owner/tap names without repository prefixes"
+            );
+        }
+        let valid_count = if self.package_type == BrewPackageType::Tap {
+            pieces.len() == 2
+        } else {
+            matches!(pieces.len(), 1 | 3)
+        };
+        if !valid_count
+            || pieces.iter().any(|piece| {
+                !piece.starts_with(|value: char| value.is_ascii_alphanumeric())
+                    || piece
+                        .chars()
+                        .any(|value| !value.is_ascii_alphanumeric() && !"@+._-".contains(value))
+            })
+        {
+            bail!("Unsupported Homebrew package specification");
+        }
+        super::brew_inventory::BrewPaths::native()?.installed(self.package_type, &self.name)
     }
 
     /// Install the package
-    fn install(&self, ctx: &ApplyContext) -> Result<()> {
+    fn install(&self, _ctx: &ApplyContext) -> Result<()> {
+        if self.requires_sudo {
+            bail!("Privileged Homebrew installs are unsupported; no command was executed");
+        }
         let args: Vec<&str> = match self.package_type {
             BrewPackageType::Tap => vec!["tap", &self.name],
             BrewPackageType::Formula => vec!["install", "--formula", &self.name],
             BrewPackageType::Cask => vec!["install", "--cask", &self.name],
         };
 
-        let (success, stderr) = if self.requires_sudo {
-            let output = ctx
-                .sudo
-                .ok_or_else(|| anyhow::anyhow!("Sudo required but not available"))?
-                .run("brew", &args)?;
-            (output.success, output.stderr_str())
-        } else {
-            let output = Command::new("brew")
-                .args(&args)
-                .output()
-                .context("Failed to run brew install")?;
-            (
-                output.status.success(),
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            )
-        };
-
-        if !success {
-            bail!("brew install failed: {}", stderr.trim());
+        let output = crate::runner::capture("brew", &args).context("Failed to run brew install")?;
+        if !output.status.success() {
+            bail!(
+                "brew install failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
         }
 
         Ok(())
@@ -199,5 +165,24 @@ impl Resource for BrewPackage {
 
         self.install(ctx)?;
         Ok(ApplyResult::Created)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn unsupported_source_specs_fail_before_query_or_install() {
+        for name in [
+            "/tmp/formula.rb",
+            "./formula.rb",
+            "../formula.rb",
+            "owner//token",
+            "Node",
+            "owner/homebrew-repo/token",
+            "--option",
+        ] {
+            assert!(BrewPackage::formula(name).is_installed().is_err());
+        }
     }
 }
