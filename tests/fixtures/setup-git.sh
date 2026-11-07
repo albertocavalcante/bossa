@@ -36,4 +36,4 @@ worktree:worktree:dev)
 	;;
 esac
 
-exec /usr/bin/git "$@"
+exec "${BOSSA_TEST_REAL_GIT:?test must supply Git}" "$@"

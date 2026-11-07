@@ -751,15 +751,26 @@ mod tests {
 
     #[test]
     fn launch_failure_reports_retained_location_and_possible_partial_effects() {
+        struct VersionOnly;
+        impl ProcessRunner for VersionOnly {
+            fn run(
+                &self,
+                request: &crate::CommandRequest,
+                _: crate::IoMode,
+            ) -> std::io::Result<std::process::Output> {
+                use std::os::unix::process::ExitStatusExt as _;
+                assert!(request.args.contains(&"--no-lazy-fetch".into()));
+                assert_eq!(request.args.last().unwrap(), "--version");
+                Ok(std::process::Output {
+                    status: std::process::ExitStatus::from_raw(0),
+                    stdout: b"git version fixture\n".to_vec(),
+                    stderr: vec![],
+                })
+            }
+        }
         let temp = tempfile::TempDir::new().unwrap();
         let root = temp.path().canonicalize().unwrap();
         let destination = root.join("checkout");
-        let native = git_runner(SystemRunner::new(std::collections::BTreeMap::from([
-            ("PATH".into(), "/usr/bin:/bin".into()),
-            ("HOME".into(), root.clone().into_os_string()),
-            ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
-            ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
-        ])));
         let plan = plan(
             vec![NamedSetup {
                 name: "repo".into(),
@@ -772,7 +783,7 @@ mod tests {
                     options: vec![],
                 }),
             }],
-            Arc::new(native),
+            Arc::new(VersionOnly),
             Arc::new(Unavailable),
             root.clone(),
         )
@@ -800,6 +811,13 @@ mod tests {
                 .contains(destination.to_str().unwrap())
         );
         assert!(destination.is_dir());
+        assert!(
+            report.outcomes[0]
+                .diagnostic
+                .as_ref()
+                .unwrap()
+                .contains("injected launch failure")
+        );
     }
 
     #[test]

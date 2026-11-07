@@ -16,9 +16,28 @@ fn fixture_process_capacity() -> std::sync::MutexGuard<'static, ()> {
 }
 
 #[cfg(unix)]
+fn fixture_git() -> PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+    static GIT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    GIT.get_or_init(|| {
+        let path = std::env::var_os("PATH").expect("Git fixtures need an explicit tool PATH");
+        std::env::split_paths(&path)
+            .map(|dir| dir.join("git"))
+            .find(|path| {
+                path.metadata()
+                    .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            })
+            .expect("Git fixtures require Git on the test runner PATH")
+            .canonicalize()
+            .unwrap()
+    })
+    .clone()
+}
+
+#[cfg(unix)]
 impl Fixture {
     fn real_git(&self) {
-        std::os::unix::fs::symlink("/usr/bin/git", self.root.path().join("bin/git")).unwrap();
+        std::os::unix::fs::symlink(fixture_git(), self.root.path().join("bin/git")).unwrap();
     }
 
     fn git(&self, args: &[&str]) -> Output {
@@ -58,7 +77,7 @@ impl Fixture {
             })
             .run(
                 &bossa::CommandRequest {
-                    program: "/usr/bin/git".into(),
+                    program: fixture_git().into_os_string(),
                     args: all,
                     working_dir: root.into(),
                 },
@@ -655,6 +674,8 @@ impl Fixture {
             .stdin(Stdio::null())
             .stdout(stdout)
             .stderr(stderr);
+        #[cfg(unix)]
+        command.env("BOSSA_TEST_REAL_GIT", fixture_git());
         for (key, value) in overrides {
             if let Some(value) = value {
                 command.env(key, value);
