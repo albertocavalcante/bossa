@@ -1,6 +1,7 @@
 # Homebrew Management
 
 Bossa provides declarative Homebrew package management with drift detection.
+Homebrew must already be installed; creating a client never downloads or runs an installer.
 
 ## Commands
 

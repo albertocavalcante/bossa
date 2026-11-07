@@ -869,11 +869,11 @@ pub struct RefsSyncArgs {
 #[derive(Parser)]
 pub struct NovaArgs {
     /// Skip specific stages (comma-separated)
-    #[arg(long)]
+    #[arg(long, conflicts_with = "only")]
     pub skip: Option<String>,
 
     /// Only run specific stages (comma-separated)
-    #[arg(long)]
+    #[arg(long, conflicts_with = "skip")]
     pub only: Option<String>,
 
     /// List all available stages

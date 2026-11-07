@@ -248,15 +248,6 @@ fn sync(ctx: &AppContext, dry_run: bool) -> Result<()> {
     trim(ctx, dry_run)
 }
 
-/// Public entry point for non-interactive sync (used by nova).
-pub fn sync_for_nova(ctx: &AppContext) -> Result<()> {
-    let config = BossaConfig::load()?.cellar;
-    if config.path.is_empty() {
-        return Ok(());
-    }
-    sync(ctx, false)
-}
-
 fn status(_ctx: &AppContext) -> Result<()> {
     ui::header("Cellar Status");
 

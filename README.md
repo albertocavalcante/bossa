@@ -23,7 +23,7 @@ Bootstrap a new machine, manage dotfiles, install tools, sync repos — one comm
 Setting up a new dev machine means juggling dozens of tools: Homebrew, dotfile managers, git clones, system preferences, shell configs. Bossa replaces that patchwork with a single declarative CLI.
 
 ```bash
-bossa nova        # bootstrap everything — from Homebrew to dotfiles to repos
+bossa nova --only=defaults,symlinks --dry-run  # preview selected configuration
 bossa doctor      # verify your setup is healthy
 bossa status      # see what's managed at a glance
 ```
@@ -113,18 +113,18 @@ bossa doctor
 # 2. See what bossa manages
 bossa status
 
-# 3. Bootstrap a new machine (runs all 16 stages)
-bossa nova
+# 3. Preview selected machine configuration
+bossa nova --only=defaults,symlinks --dry-run
 
-# 4. Or pick specific stages
-bossa nova --only=homebrew,brew,stow
+# 4. Apply those stages after reviewing the preview
+bossa nova --only=defaults,symlinks
 ```
 
 ## Commands
 
 | Command       | Description                                                  |
 | ------------- | ------------------------------------------------------------ |
-| `nova`        | Full machine bootstrap (16 stages)                           |
+| `nova`        | Selected machine configuration                               |
 | `doctor`      | Health checks for all managed systems                        |
 | `status`      | Dashboard overview                                           |
 | `sync`        | Sync workspaces + reference repos                            |
@@ -259,37 +259,19 @@ ln -s ~/dotfiles/bossa ~/.config/bossa
 
 ## Nova Stages
 
-`bossa nova` bootstraps a new machine through 16 idempotent stages:
+Nova supports defaults, Homebrew prerequisites, packages, cellar, dotfiles, symlinks, Dock,
+handlers and ecosystem configuration. Configured cellar/dotfiles synchronization and missing
+Homebrew block the selected scope until their prerequisites are satisfied; Nova never installs
+Homebrew implicitly. Unknown or unsupported stage names are errors.
 
 ```bash
-bossa nova                       # Run all stages
-bossa nova --list-stages         # Show available stages
-bossa nova --only=stow,refs      # Run specific stages
-bossa nova --skip=dock           # Skip stages
-bossa nova --dry-run             # Preview
-bossa nova -j 4                  # Parallel execution
+bossa nova --list-stages
+bossa nova --only=defaults,symlinks --dry-run
+bossa nova --only=defaults,symlinks
 ```
 
-| Stage         | Description                               |
-| ------------- | ----------------------------------------- |
-| `defaults`    | macOS system defaults (Finder, Dock, etc) |
-| `terminal`    | Terminal font setup                       |
-| `git-signing` | Git commit signing key                    |
-| `homebrew`    | Homebrew installation                     |
-| `bash`        | Bash 4+ bootstrap                         |
-| `essential`   | Core packages (stow, jq, gh, rg, fd)      |
-| `brew`        | Full Brewfile packages                    |
-| `pnpm`        | Node packages via pnpm                    |
-| `dock`        | Dock configuration                        |
-| `ecosystem`   | Ecosystem extensions (VS Code, etc)       |
-| `handlers`    | File type handlers (duti)                 |
-| `stow`        | Dotfile symlinks                          |
-| `caches`      | Cache symlinks to external drive          |
-| `mcp`         | MCP server configuration                  |
-| `refs`        | Reference repositories                    |
-| `workspaces`  | Developer workspaces                      |
-
-All stages are idempotent — re-running is always safe.
+See the [Nova guide](docs/src/guide/nova.md) for stage aliases, prerequisite limits and preview
+semantics. Execution verification and completion reporting remain active modernization work.
 
 ## Global Flags
 
