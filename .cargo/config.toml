@@ -1,5 +1,2 @@
-[build]
-rustflags = ["-Dwarnings"]
-
 [target.'cfg(all())']
 rustflags = ["-Dwarnings"]

@@ -888,18 +888,18 @@ fn display_diff(report: &ReconcileReport, config: &DotfilesReconcileConfig) {
 
         match &entry.state {
             FileState::DriftedTargetMatchesA { a, b } => {
-                println!("    A: {} (target matches)", &a[..8.min(a.len())].green());
-                println!("    B: {}", &b[..8.min(b.len())].red());
+                println!("    A: {} (target matches)", a[..8.min(a.len())].green());
+                println!("    B: {}", b[..8.min(b.len())].red());
             }
             FileState::DriftedTargetMatchesB { a, b } => {
-                println!("    A: {}", &a[..8.min(a.len())].red());
-                println!("    B: {} (target matches)", &b[..8.min(b.len())].green());
+                println!("    A: {}", a[..8.min(a.len())].red());
+                println!("    B: {} (target matches)", b[..8.min(b.len())].green());
             }
             FileState::DriftedAllDiffer { a, b, t } => {
-                println!("    A: {}", &a[..8.min(a.len())].yellow());
-                println!("    B: {}", &b[..8.min(b.len())].yellow());
+                println!("    A: {}", a[..8.min(a.len())].yellow());
+                println!("    B: {}", b[..8.min(b.len())].yellow());
                 if !t.is_empty() {
-                    println!("    T: {}", &t[..8.min(t.len())].yellow());
+                    println!("    T: {}", t[..8.min(t.len())].yellow());
                 }
             }
             _ => {}
@@ -1285,7 +1285,7 @@ mod tests {
         assert_eq!(tree.len(), 1);
         assert!(tree.contains_key("hello.txt"));
         let (hash, size) = &tree["hello.txt"];
-        assert!(!hash.is_empty());
+        assert_ne!(hash, "");
         assert_eq!(*size, 11);
     }
 

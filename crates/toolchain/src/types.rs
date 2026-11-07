@@ -428,7 +428,7 @@ mod tests {
     #[test]
     fn test_tool_all() {
         let all = Tool::all();
-        assert!(!all.is_empty());
+        assert_ne!(all.len(), 0);
         assert!(all.contains(&Tool::Buck2));
     }
 

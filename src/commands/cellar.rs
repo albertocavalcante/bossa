@@ -577,14 +577,14 @@ mod tests {
     #[test]
     fn test_list_kegs_nonexistent_path() {
         let kegs = list_kegs(Path::new("/nonexistent/cellar/path"));
-        assert!(kegs.is_empty());
+        assert_eq!(kegs.len(), 0);
     }
 
     #[test]
     fn test_list_kegs_empty_dir() {
         let tmp = tempfile::TempDir::new().unwrap();
         let kegs = list_kegs(tmp.path());
-        assert!(kegs.is_empty());
+        assert_eq!(kegs.len(), 0);
     }
 
     #[test]
@@ -688,15 +688,15 @@ mod tests {
     #[test]
     fn test_cellar_config_default() {
         let config = CellarConfig::default();
-        assert!(config.path.is_empty());
-        assert!(config.local.is_empty());
+        assert_eq!(config.path, "");
+        assert_eq!(config.local.len(), 0);
     }
 
     #[test]
     fn test_cellar_config_deserialize_empty_toml() {
         let config: CellarConfig = toml::from_str("").unwrap();
-        assert!(config.path.is_empty());
-        assert!(config.local.is_empty());
+        assert_eq!(config.path, "");
+        assert_eq!(config.local.len(), 0);
     }
 
     #[test]

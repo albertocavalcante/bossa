@@ -202,7 +202,7 @@ fn find_evictable(path: Option<String>, min_size_str: &str) -> Result<()> {
     }
 
     let mut sorted = evictable;
-    sorted.sort_by(|a, b| b.size.cmp(&a.size));
+    sorted.sort_by_key(|file| std::cmp::Reverse(file.size));
 
     let total_size: u64 = sorted.iter().filter_map(|f| f.size).sum();
 

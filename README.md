@@ -83,6 +83,27 @@ bazel run //:install          # Bazel
 just install                  # just
 ```
 
+## Development
+
+The project pins Rust 1.99.1 in `rust-toolchain.toml`. Rustup selects it automatically, including
+rustfmt and Clippy. The declared minimum supported Rust version remains 1.90.0 and has a separate
+CI check.
+
+Use just 1.59.0 for the canonical checks:
+
+```bash
+just ci             # Workspace formatting, Clippy, tests, and API documentation
+just msrv           # Requires the Rust 1.90.0 toolchain
+just release        # Locked release build
+just bazel-build    # Bazel build with the CI configuration
+just workflow-test  # Action validator failure cases
+just workflow-check # Requires authenticated gh, ghalint 1.6.0, and pinact 5.0.2
+```
+
+CI and Git hooks use these same checks. Workflow validation verifies tagged action pins and checks
+upstream ancestry for the two explicitly documented untagged commits. Their pinact exceptions match
+only those repositories and full commit SHAs.
+
 ## Quick Start
 
 ```bash

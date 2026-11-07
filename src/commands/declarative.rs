@@ -159,7 +159,7 @@ impl ApplySummary {
             ));
         }
         if self.storage_checked > 0 {
-            parts.push(format!("{} storage", self.storage_checked,));
+            parts.push(format!("{} storage", self.storage_checked));
         }
         if parts.is_empty() {
             "No resources configured".to_string()
@@ -944,7 +944,7 @@ pub fn diff(ctx: &Context, target: Option<&str>) -> Result<()> {
             ));
         }
         if !config.storage.is_empty() {
-            checked_parts.push(format!("{} storage", config.storage.len(),));
+            checked_parts.push(format!("{} storage", config.storage.len()));
         }
         if !checked_parts.is_empty() {
             ui::dim(&format!("  Checked {}", checked_parts.join(", ")));

@@ -417,7 +417,7 @@ mod tests {
     fn test_default_state() {
         let state = BossaState::default();
         assert!(state.collections.is_empty());
-        assert!(state.workspaces.repos_setup.is_empty());
+        assert_eq!(state.workspaces.repos_setup.len(), 0);
         assert!(state.storage.is_empty());
     }
 
@@ -458,14 +458,7 @@ mod tests {
                 .repos_cloned
                 .contains(&"rust".to_string())
         );
-        assert!(
-            state
-                .collections
-                .get("refs")
-                .unwrap()
-                .repos_failed
-                .is_empty()
-        );
+        assert_eq!(state.collections.get("refs").unwrap().repos_failed.len(), 0);
     }
 
     #[test]
@@ -742,7 +735,7 @@ repos_cloned = 123  # Should be array
 
         // Serialize should work even with empty maps
         let toml_str = toml::to_string_pretty(&state).unwrap();
-        assert!(!toml_str.is_empty());
+        assert_ne!(toml_str, "");
     }
 
     #[test]
@@ -753,7 +746,7 @@ repos_cloned = 123  # Should be array
         state.mark_repo_cloned("refs", "rust");
         let collection = state.collections.get("refs").unwrap();
         assert!(collection.repos_cloned.contains(&"rust".to_string()));
-        assert!(collection.repos_failed.is_empty());
+        assert_eq!(collection.repos_failed.len(), 0);
 
         // Mark as failed (should remove from cloned)
         state.mark_repo_failed("refs", "rust", "network error");
@@ -765,7 +758,7 @@ repos_cloned = 123  # Should be array
         state.mark_repo_cloned("refs", "rust");
         let collection = state.collections.get("refs").unwrap();
         assert!(collection.repos_cloned.contains(&"rust".to_string()));
-        assert!(collection.repos_failed.is_empty());
+        assert_eq!(collection.repos_failed.len(), 0);
     }
 
     #[test]

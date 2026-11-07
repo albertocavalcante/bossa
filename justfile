@@ -4,11 +4,11 @@ default:
 
 # Development build
 build:
-    cargo build
+    cargo build --locked
 
 # Release build (optimized)
 release:
-    cargo build --release
+    cargo build --release --locked
 
 # Install to ~/bin (assumes it's in PATH)
 install: release
@@ -28,27 +28,49 @@ clean:
 
 # Run tests
 test:
-    cargo test
+    cargo test --workspace --locked
+
+# Lint every workspace target
+lint:
+    cargo clippy --workspace --all-targets --locked -- -D warnings
+
+# Check formatting across the workspace
+fmt-check:
+    cargo fmt --all -- --check
 
 # Check for issues
-check:
-    cargo clippy
-    cargo fmt --check
+check: fmt-check lint
+
+# Build API documentation with warnings treated as errors
+doc-check:
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
+
+# Verify the declared minimum supported Rust version
+msrv:
+    cargo +1.90.0 check --workspace --all-targets --locked
+
+# Verify tagged action pins and upstream history for documented untagged pins
+workflow-check:
+    sh tools/scripts/check-actions.sh
+
+# Test action verification failures without GitHub access
+workflow-test:
+    bash tools/scripts/check-actions-test.sh
 
 # Format code
 fmt:
-    cargo fmt
+    cargo fmt --all
 
 # Build with Bazel
 bazel-build:
-    bazel build //:bossa
+    bazel build //:bossa --config=ci
 
 # Test with Bazel
 bazel-test:
     bazel test //...
 
 # Run all checks (CI-style)
-ci: check test
+ci: check test doc-check
 
 # Serve mdBook docs locally
 docs-serve:

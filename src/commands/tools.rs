@@ -2451,7 +2451,7 @@ mod tests {
     fn test_detect_npm_package_manager() {
         // Just test that the function runs without panicking
         let (cmd, name) = detect_npm_package_manager();
-        assert!(!cmd.is_empty());
-        assert!(!name.is_empty());
+        assert_ne!(cmd, "");
+        assert_ne!(name, "");
     }
 }
