@@ -52,11 +52,11 @@ pub fn execute(
     options: ExecuteOptions,
     quiet: bool,
 ) -> Result<ExecuteSummary> {
-    let runner = bossa::SystemRunner::new(crate::paths::environment().variables().clone());
+    let runner = crate::runner::native_runner();
     let summary = bossa::apply_resources(
         plan,
         options,
-        &runner,
+        runner,
         &std::env::current_dir()?,
         || SudoContext::acquire("Apply selected privileged configuration"),
         &mut TerminalProgress { quiet },

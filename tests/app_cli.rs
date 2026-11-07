@@ -59,9 +59,18 @@ impl Fixture {
         args: &[&str],
         overrides: &[(&str, Option<&str>)],
     ) -> io::Result<Output> {
+        self.command_after_spawn(args, overrides, |_| Ok(()))
+    }
+
+    fn command_after_spawn(
+        &self,
+        args: &[&str],
+        overrides: &[(&str, Option<&str>)],
+        started: impl FnOnce(u32) -> io::Result<()>,
+    ) -> io::Result<Output> {
         let root = self.root.path();
         // File-backed output avoids pipe deadlock while the parent enforces a
-        // deadline. No selected fixture path spawns background child processes.
+        // deadline. Process-supervision cases use finite, owned child fixtures.
         let stdout = fs::File::create(root.join("stdout"))?;
         let stderr = fs::File::create(root.join("stderr"))?;
         let mut command = Command::new(binary());
@@ -92,6 +101,7 @@ impl Fixture {
         }
         let mut child = RunningChild(command.spawn()?);
         let deadline = Instant::now() + Duration::from_secs(10);
+        started(child.0.id())?;
         let status = loop {
             if let Some(status) = child.0.try_wait()? {
                 break status;
@@ -728,5 +738,81 @@ fn quiet_nova_needs_consent_and_verified_fixture_apply_is_idempotent() {
         assert_eq!(fs::read_link(&target).unwrap(), source.join(".fixture-rc"));
         assert_eq!(fs::read_to_string(&target).unwrap(), "preserved content");
         assert_eq!(fs::read_dir(root.join("state")).unwrap().count(), 0);
+    }
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn termination_signals_cancel_native_followup_jobs_and_preserve_prior_effects() {
+    for (signal, status) in [("-INT", 130), ("-TERM", 143)] {
+        let fixture = Fixture::new();
+        let root = fixture.root.path();
+        fixture.executable("defaults", include_str!("fixtures/defaults-state.sh"));
+        fixture.executable("killall", include_str!("fixtures/process-tree.sh"));
+        let contents =
+            "[defaults]\n'com.example.Enabled' = true\n[defaults.restart]\nservices = ['pids']\n";
+        fs::write(root.join("config/config.toml"), contents).unwrap();
+        let state = root.join("observed-default");
+        let pids = root.join("pids");
+        let output = fixture
+            .command_after_spawn(
+                &["nova", "--only", "defaults", "--yes"],
+                &[("BOSSA_TEST_DEFAULT_STATE", Some(state.to_str().unwrap()))],
+                |pid| {
+                    let deadline = Instant::now() + Duration::from_secs(2);
+                    while !fs::read_to_string(&pids)
+                        .is_ok_and(|contents| contents.lines().count() == 2)
+                    {
+                        if Instant::now() >= deadline {
+                            return Err(io::Error::new(
+                                io::ErrorKind::TimedOut,
+                                "fixture follow-up did not start",
+                            ));
+                        }
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    // This ID comes directly from our unreaped child handle.
+                    let result = Command::new("/bin/kill")
+                        .args([signal, &pid.to_string()])
+                        .status()?;
+                    assert!(result.success());
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert_eq!(output.status.code(), Some(status));
+        assert!(state.is_file(), "the earlier verified effect was lost");
+        assert_eq!(
+            fs::read_to_string(root.join("config/config.toml")).unwrap(),
+            contents
+        );
+        assert_eq!(fs::read_dir(root.join("state")).unwrap().count(), 0);
+        assert!(
+            !String::from_utf8_lossy(&output.stdout).contains("Selected postconditions verified")
+        );
+        for pid in fs::read_to_string(&pids).unwrap().lines() {
+            let deadline = Instant::now() + Duration::from_secs(1);
+            loop {
+                let observed = Command::new("/bin/ps")
+                    .env_clear()
+                    .args(["-o", "stat=", "-p", pid])
+                    .output()
+                    .unwrap();
+                let state = String::from_utf8(observed.stdout).unwrap();
+                if (observed.status.code() == Some(1)
+                    && state.is_empty()
+                    && observed.stderr.is_empty())
+                    || (observed.status.success() && state.trim_start().starts_with('Z'))
+                {
+                    break;
+                }
+                assert!(observed.status.success(), "process observation failed");
+                assert!(
+                    Instant::now() < deadline,
+                    "fixture child remained live: {pid}: {state}"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
     }
 }

@@ -8,6 +8,53 @@ use std::process::{Command, ExitStatus};
 
 use bossa::{CommandRequest, IoMode, ProcessRunner, SystemRunner};
 
+/// One captured native environment and cancellation domain per CLI invocation.
+pub fn native_runner() -> &'static SystemRunner {
+    static RUNNER: std::sync::OnceLock<SystemRunner> = std::sync::OnceLock::new();
+    RUNNER.get_or_init(|| SystemRunner::new(crate::paths::environment().variables().clone()))
+}
+
+#[cfg(unix)]
+pub struct SignalGuard {
+    handle: signal_hook::iterator::Handle,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(unix)]
+impl Drop for SignalGuard {
+    fn drop(&mut self) {
+        self.handle.close();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+#[cfg(unix)]
+pub fn install_signal_handler() -> Result<SignalGuard> {
+    use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM};
+    let mut signals = signal_hook::iterator::Signals::new([SIGINT, SIGTERM, SIGHUP])?;
+    let handle = signals.handle();
+    let runner = native_runner().clone();
+    let thread = std::thread::Builder::new()
+        .name("bossa-signals".into())
+        .spawn(move || {
+            if let Some(signal) = signals.forever().next() {
+                if let Err(error) = runner.cancel() {
+                    eprintln!("Native job cancellation incomplete: {error}");
+                }
+                if !runner.wait_idle(std::time::Duration::from_secs(2)) {
+                    eprintln!("Native job cleanup did not finish before termination");
+                }
+                std::process::exit(128 + signal);
+            }
+        })?;
+    Ok(SignalGuard {
+        handle,
+        thread: Some(thread),
+    })
+}
+
 /// Run a command and inherit stdio (shows output in real-time)
 pub fn run(cmd: &str, args: &[&str]) -> Result<ExitStatus> {
     Ok(run_native(cmd, args, IoMode::Inherit)?.status)
@@ -25,8 +72,7 @@ pub fn run_capture(cmd: &str, args: &[&str]) -> Result<String> {
 }
 
 fn run_native(cmd: &str, args: &[&str], mode: IoMode) -> Result<std::process::Output> {
-    let runner = SystemRunner::new(crate::paths::environment().variables().clone());
-    runner
+    native_runner()
         .run(
             &CommandRequest {
                 program: cmd.into(),
