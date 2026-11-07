@@ -2,6 +2,24 @@
 //!
 //! This module re-exports pintui functions and adds bossa-specific utilities.
 
+/// Terminal input is an adapter; presentation flags never provide consent.
+pub struct TerminalConfirm;
+
+impl declarative::ConfirmCallback for TerminalConfirm {
+    fn confirm(&mut self, prompt: &str) -> anyhow::Result<bool> {
+        use std::io::IsTerminal;
+        if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+            anyhow::bail!(
+                "Interactive confirmation is unavailable; pass --yes to explicitly authorize apply"
+            );
+        }
+        Ok(dialoguer::Confirm::new()
+            .with_prompt(prompt)
+            .default(false)
+            .interact()?)
+    }
+}
+
 // Re-export all pintui functionality
 #[allow(unused_imports)]
 pub use pintui::format::human_size as format_size;

@@ -62,6 +62,7 @@ fn main() -> Result<()> {
             args.target.as_deref(),
             args.dry_run,
             args.jobs as usize,
+            args.yes,
         ),
         Command::Diff(args) => commands::declarative::diff(&ctx, args.target.as_deref()),
         Command::Add(cmd) => match cmd {

@@ -90,6 +90,7 @@ Options:
 
 ```
 --dry-run           Show what would be done
+-y, --yes           Explicitly authorize changes without interactive input
 -j, --jobs <N>       Number of parallel jobs (max 128)
 ```
 
@@ -99,7 +100,13 @@ Examples:
 bossa apply
 bossa apply collections.refs
 bossa apply --dry-run
+bossa apply collections.refs --yes
 ```
+
+Apply requests confirmation before selected mutations. In a noninteractive session, pass
+`--yes` explicitly. `--quiet` changes presentation and does not authorize changes. A declined
+or unavailable confirmation returns an unsuccessful result before changes. `--dry-run`
+never prompts or applies, including when combined with `--yes`.
 
 ---
 

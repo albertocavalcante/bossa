@@ -13,6 +13,14 @@ use crate::state::{BossaState, TrackedSymlink};
 use crate::ui;
 
 pub fn run(ctx: &AppContext, cmd: RelocateCommand) -> Result<()> {
+    run_with_confirmation(ctx, cmd, &mut ui::TerminalConfirm)
+}
+
+fn run_with_confirmation(
+    _ctx: &AppContext,
+    cmd: RelocateCommand,
+    confirm: &mut dyn declarative::ConfirmCallback,
+) -> Result<()> {
     let from_path = paths::expand(&cmd.from);
     let to_path = paths::expand(&cmd.to);
 
@@ -108,17 +116,10 @@ pub fn run(ctx: &AppContext, cmd: RelocateCommand) -> Result<()> {
     }
 
     // Confirm
-    if !cmd.yes && !ctx.quiet {
-        println!();
-        let confirmed = dialoguer::Confirm::new()
-            .with_prompt("Proceed with updates?")
-            .default(false)
-            .interact()
-            .unwrap_or(false);
-        if !confirmed {
-            println!("Aborted.");
-            return Ok(());
-        }
+    if !bossa::confirm_apply(cmd.yes, "Proceed with updates?", confirm)
+        .context("Confirmation unavailable; no changes attempted")?
+    {
+        anyhow::bail!("Relocation cancelled; no changes attempted");
     }
 
     // Apply changes

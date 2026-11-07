@@ -62,6 +62,11 @@ bossa diff
 bossa apply
 ```
 
+For noninteractive apply, explicitly pass `--yes`. Quiet mode does not provide consent.
+Preview with `--dry-run` never prompts or mutates, even with `--yes`. Closed input or a
+declined confirmation makes apply unsuccessful before selected changes. Relocation uses
+the same consent rule; its `--scan-only` and `--dry-run` modes remain read-only.
+
 ### Idempotency
 
 All operations are idempotent - running them multiple times produces the same result:
