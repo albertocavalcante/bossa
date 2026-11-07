@@ -1,16 +1,45 @@
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rust_doc", "rust_test")
-load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@crates//:defs.bzl", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rust_doc", "rust_library", "rust_test")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 package(default_visibility = ["//visibility:public"])
+
+APP_SRCS = [
+    "src/app.rs",
+    "src/lib.rs",
+    "src/process.rs",
+]
+
+rust_library(
+    name = "bossa_app",
+    srcs = APP_SRCS,
+    crate_name = "bossa",
+    crate_root = "src/lib.rs",
+    edition = "2024",
+    deps = [
+        "@crates//:anyhow",
+        "@crates//:dirs",
+        "@crates//:shellexpand",
+    ],
+)
+
+rust_test(
+    name = "bossa_app_test",
+    crate = ":bossa_app",
+    deps = ["@crates//:tempfile"],
+)
 
 # Main binary
 rust_binary(
     name = "bossa",
-    srcs = glob(["src/**/*.rs"]),
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = APP_SRCS,
+    ),
     crate_root = "src/main.rs",
     edition = "2024",
     deps = all_crate_deps(normal = True) + [
+        ":bossa_app",
         "//crates/brewkit",
         "//crates/declarative",
         "//crates/icloud",
@@ -36,6 +65,26 @@ rust_clippy(
 rust_doc(
     name = "bossa_doc",
     crate = ":bossa",
+)
+
+rust_clippy(
+    name = "bossa_app_clippy",
+    deps = [":bossa_app"],
+)
+
+rust_doc(
+    name = "bossa_app_doc",
+    crate = ":bossa_app",
+)
+
+rust_test(
+    name = "app_cli_test",
+    srcs = ["tests/app_cli.rs"],
+    crate_root = "tests/app_cli.rs",
+    data = [":bossa"],
+    edition = "2024",
+    env = {"BOSSA_TEST_BINARY": "$(rootpath :bossa)"},
+    deps = ["@crates//:tempfile"],
 )
 
 # ==============================================================================

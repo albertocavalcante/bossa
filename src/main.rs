@@ -27,6 +27,7 @@ pub struct Context {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let _ = paths::environment();
 
     // Initialize logging based on verbosity
     let log_level = match cli.verbose {
