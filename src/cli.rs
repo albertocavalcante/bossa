@@ -237,6 +237,10 @@ pub struct ApplyArgs {
     #[arg(short, long)]
     pub dry_run: bool,
 
+    /// Explicitly authorize changes without interactive confirmation
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+
     /// Number of parallel jobs (max 128)
     #[arg(short, long, default_value = "4", value_parser = clap::value_parser!(u16).range(1..=128))]
     pub jobs: u16,

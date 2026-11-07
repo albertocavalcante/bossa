@@ -33,11 +33,24 @@ struct Consent<'a, C> {
 
 impl<C: ConfirmCallback> ConfirmCallback for Consent<'_, C> {
     fn confirm(&mut self, prompt: &str) -> Result<bool> {
-        if self.yes {
-            Ok(true)
-        } else {
-            self.callback.confirm(prompt)
-        }
+        confirm_apply(self.yes, prompt, self.callback)
+    }
+}
+
+/// Request an explicit apply decision.
+///
+/// Yes bypasses the callback; a declined
+/// decision stays false and unavailable input stays an error. Preview callers
+/// must skip this boundary before requesting any mutation.
+pub fn confirm_apply<C: ConfirmCallback + ?Sized>(
+    yes: bool,
+    prompt: &str,
+    callback: &mut C,
+) -> Result<bool> {
+    if yes {
+        Ok(true)
+    } else {
+        callback.confirm(prompt)
     }
 }
 
@@ -111,6 +124,19 @@ mod tests {
         NoProgress, Resource, ResourceKey, ResourceState,
     };
     use std::cell::RefCell;
+
+    #[test]
+    fn consent_preserves_decline_and_unavailable_input_without_implicit_approval() {
+        struct Unavailable;
+        impl ConfirmCallback for Unavailable {
+            fn confirm(&mut self, _: &str) -> Result<bool> {
+                bail!("fixture input is unavailable");
+            }
+        }
+        assert!(!confirm_apply(false, "fixture", &mut AutoDecline).unwrap());
+        assert!(confirm_apply(false, "fixture", &mut Unavailable).is_err());
+        assert!(confirm_apply(true, "fixture", &mut Unavailable).unwrap());
+    }
     use std::io;
     use std::os::unix::process::ExitStatusExt;
     use std::process::{ExitStatus, Output};

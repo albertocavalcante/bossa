@@ -68,6 +68,12 @@ impl Fixture {
         overrides: &[(&str, Option<&str>)],
         started: impl FnOnce(u32) -> io::Result<()>,
     ) -> io::Result<Output> {
+        // Bound real-CLI process pressure so timing assertions have stable
+        // scheduler capacity. Supervisor concurrency has dedicated library tests.
+        static CLI_CAPACITY: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _capacity = CLI_CAPACITY
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let root = self.root.path();
         // File-backed output avoids pipe deadlock while the parent enforces a
         // deadline. Process-supervision cases use finite, owned child fixtures.
@@ -502,7 +508,7 @@ fn relative_workspace_roots_execute_at_the_same_absolute_destination_as_prefligh
         // then launch must fail; no clone, network, or default-home write occurs.
         let result = fixture
             .command_with_env(
-                &["apply", "workspaces"],
+                &["apply", "workspaces", "--yes"],
                 &[("BOSSA_WORKSPACES_DIR", override_value)],
             )
             .unwrap();
@@ -526,7 +532,7 @@ fn storage_mount_expansion_and_placeholders_match_canonical_intent() {
         fs::write(root.join("config/config.toml"), format!("[storage.disk]\nmount='{selected}'\ntype='external'\n[[storage.disk.symlinks]]\nfrom='~/link'\nto='{{mount}}/content'\n")).unwrap();
         let result = fixture
             .command_with_env(
-                &["apply", "storage"],
+                &["apply", "storage", "--yes"],
                 &[("EXTERNAL", Some(mount.to_str().unwrap()))],
             )
             .unwrap();
@@ -1285,6 +1291,119 @@ fn unsupported_native_elevation_is_blocked_before_any_effect() {
         assert!(trace.lines().all(|line| line == "--version"), "{trace}");
         assert_eq!(fs::read_dir(root.join("home")).unwrap().count(), 0);
     }
+}
+
+#[test]
+#[cfg(unix)]
+fn legacy_apply_and_relocation_never_infer_consent_from_quiet_or_closed_input() {
+    let mut unsafe_cases = Vec::new();
+    for quiet in [false, true] {
+        let fixture = Fixture::new();
+        let root = fixture.root.path();
+        let collection = root.join("collection");
+        let trace = root.join("trace");
+        fs::write(root.join("config/config.toml"), format!("[collections.fixture]\npath='{}'\n[[collections.fixture.repos]]\nname='repo'\nurl='fixture-source'\n", collection.display())).unwrap();
+        fixture.executable("git", include_str!("fixtures/failed-command.sh"));
+        let mut args = vec!["apply", "collections"];
+        if quiet {
+            args.insert(0, "--quiet");
+        }
+        let result = fixture
+            .command_with_env(
+                &args,
+                &[("BOSSA_TEST_TRACE", Some(trace.to_str().unwrap()))],
+            )
+            .unwrap();
+        if result.status.success() || collection.exists() || trace.exists() {
+            unsafe_cases.push(format!("apply quiet={quiet}"));
+        }
+
+        let fixture = Fixture::new();
+        let root = fixture.root.path();
+        fs::create_dir(root.join("home/new")).unwrap();
+        let shell = root.join("home/.zshrc");
+        let original = "export PATH=\"$HOME/old/bin:$PATH\"\n";
+        // An absolute fixture reference makes scanner behavior independent of
+        // shell expansion and checks only the confirmation boundary.
+        let original = original.replace("$HOME/old", root.join("home/old").to_str().unwrap());
+        fs::write(&shell, &original).unwrap();
+        let mut args = vec!["relocate", "~/old", "~/new"];
+        if quiet {
+            args.insert(0, "--quiet");
+        }
+        let result = fixture.command(&args).unwrap();
+        if result.status.success()
+            || fs::read_to_string(&shell).unwrap() != original
+            || root.join("home/.zshrc.bak").exists()
+        {
+            unsafe_cases.push(format!("relocate quiet={quiet}"));
+        }
+    }
+    assert!(
+        unsafe_cases.is_empty(),
+        "Missing consent accepted or cancellation reported success: {unsafe_cases:?}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn legacy_previews_stay_read_only_with_yes_and_relocation_needs_explicit_authorization() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    let collection = root.join("collection");
+    let trace = root.join("trace");
+    fs::write(root.join("config/config.toml"), format!("[collections.fixture]\npath='{}'\n[[collections.fixture.repos]]\nname='repo'\nurl='fixture-source'\n", collection.display())).unwrap();
+    fixture.executable("git", include_str!("fixtures/failed-command.sh"));
+    let preview = fixture
+        .command_with_env(
+            &["apply", "collections", "--dry-run", "--yes"],
+            &[("BOSSA_TEST_TRACE", Some(trace.to_str().unwrap()))],
+        )
+        .unwrap();
+    assert!(preview.status.success());
+    assert!(!collection.exists());
+    assert!(!trace.exists());
+    assert!(!String::from_utf8_lossy(&preview.stdout).contains("Apply complete!"));
+    assert!(!String::from_utf8_lossy(&preview.stdout).contains("Everything is up to date"));
+
+    fs::create_dir(root.join("home/new")).unwrap();
+    let shell = root.join("home/.zshrc");
+    let old = root.join("home/old");
+    let new = root.join("home/new");
+    let original = format!("export PATH=\"{}/bin:$PATH\"\n", old.display());
+    fs::write(&shell, &original).unwrap();
+    for flag in ["--dry-run", "--scan-only"] {
+        assert!(
+            fixture
+                .command(&["relocate", "~/old", "~/new", flag, "--yes"])
+                .unwrap()
+                .status
+                .success()
+        );
+        assert_eq!(fs::read_to_string(&shell).unwrap(), original);
+        assert!(!root.join("home/.zshrc.bak").exists());
+    }
+    let blocked = fixture
+        .command(&["--quiet", "relocate", "~/old", "~/new", "--force"])
+        .unwrap();
+    assert!(!blocked.status.success());
+    assert_eq!(fs::read_to_string(&shell).unwrap(), original);
+    let applied = fixture
+        .command(&["--quiet", "relocate", "~/old", "~/new", "--yes"])
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&shell).unwrap(),
+        format!("export PATH=\"{}/bin:$PATH\"\n", new.display())
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("home/.zshrc.bak")).unwrap(),
+        original
+    );
 }
 
 #[test]

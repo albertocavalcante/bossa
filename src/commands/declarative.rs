@@ -518,7 +518,24 @@ fn show_storage_status(
 // Apply Command
 // ============================================================================
 
-pub fn apply(ctx: &Context, target: Option<&str>, dry_run: bool, jobs: usize) -> Result<()> {
+pub fn apply(
+    ctx: &Context,
+    target: Option<&str>,
+    dry_run: bool,
+    jobs: usize,
+    yes: bool,
+) -> Result<()> {
+    apply_with_confirmation(ctx, target, dry_run, jobs, yes, &mut ui::TerminalConfirm)
+}
+
+fn apply_with_confirmation(
+    ctx: &Context,
+    target: Option<&str>,
+    dry_run: bool,
+    jobs: usize,
+    yes: bool,
+    confirm: &mut dyn declarative::ConfirmCallback,
+) -> Result<()> {
     ui::header("Applying Configuration");
 
     if dry_run {
@@ -562,6 +579,31 @@ pub fn apply(ctx: &Context, target: Option<&str>, dry_run: bool, jobs: usize) ->
                     ensure_workspace_scope(&root, &worktree.path)?;
                 }
             }
+        }
+    }
+
+    if !dry_run {
+        let selected = config.collections.iter().any(|resource| {
+            (resource_filter.is_none() || resource_filter == Some(ResourceType::Collections))
+                && name_filter
+                    .as_deref()
+                    .is_none_or(|name| name == resource.name)
+        }) || config.workspaces.iter().any(|resource| {
+            (resource_filter.is_none() || resource_filter == Some(ResourceType::Workspaces))
+                && name_filter
+                    .as_deref()
+                    .is_none_or(|name| name == resource.name)
+        }) || config.storage.iter().any(|resource| {
+            (resource_filter.is_none() || resource_filter == Some(ResourceType::Storage))
+                && name_filter
+                    .as_deref()
+                    .is_none_or(|name| name == resource.name)
+        });
+        if selected
+            && !bossa::confirm_apply(yes, "Apply the selected configuration?", confirm)
+                .context("Confirmation unavailable; no changes attempted")?
+        {
+            anyhow::bail!("Apply cancelled; no changes attempted");
         }
     }
 
@@ -609,11 +651,15 @@ pub fn apply(ctx: &Context, target: Option<&str>, dry_run: bool, jobs: usize) ->
     println!();
     if summary.total_checked() == 0 {
         ui::dim("  No resources configured");
-    } else if !summary.has_changes() {
+    } else if !dry_run && !summary.has_changes() {
         ui::dim(&format!("  {}", summary.checked_line()));
         ui::dim("  Everything is up to date");
     }
-    ui::success("Apply complete!");
+    if dry_run {
+        ui::info("Preview complete: no changes attempted");
+    } else {
+        ui::success("Apply complete!");
+    }
 
     Ok(())
 }

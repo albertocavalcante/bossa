@@ -2,23 +2,13 @@
 
 use anyhow::Result;
 use colored::Colorize;
-use declarative::{ApplyResult, ConfirmCallback, ExecuteSummary, ProgressCallback, ResourceDiff};
+use declarative::{ApplyResult, ExecuteSummary, ProgressCallback, ResourceDiff};
 
 use super::ExecutionPlan;
 use super::differ::{display_diff, display_sudo_boundary};
 use crate::sudo::SudoContext;
 
 pub use bossa::ResourceApplyOptions as ExecuteOptions;
-
-struct TerminalConfirm;
-impl ConfirmCallback for TerminalConfirm {
-    fn confirm(&mut self, prompt: &str) -> Result<bool> {
-        Ok(dialoguer::Confirm::new()
-            .with_prompt(prompt)
-            .default(false)
-            .interact()?)
-    }
-}
 
 struct TerminalProgress {
     quiet: bool,
@@ -68,7 +58,7 @@ pub fn execute(
         &std::env::current_dir()?,
         || SudoContext::acquire("Apply selected privileged configuration"),
         &mut TerminalProgress { quiet },
-        &mut TerminalConfirm,
+        &mut crate::ui::TerminalConfirm,
     )?;
     for row in &summary.outcomes {
         if let Some(diagnostic) = &row.diagnostic
