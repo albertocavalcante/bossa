@@ -92,6 +92,18 @@ impl SystemRunner {
         self
     }
 
+    /// Remove inherited child-only variables without changing the cancellation domain.
+    pub fn without_environment_variables(
+        mut self,
+        names: impl IntoIterator<Item = OsString>,
+    ) -> Self {
+        let environment = Arc::make_mut(&mut self.environment);
+        for name in names {
+            environment.remove(&name);
+        }
+        self
+    }
+
     /// Cancel all current jobs shared by clones, and reject subsequent jobs.
     pub fn cancel(&self) -> io::Result<()> {
         #[cfg(any(target_os = "linux", target_os = "macos"))]

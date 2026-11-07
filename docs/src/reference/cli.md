@@ -91,7 +91,7 @@ Options:
 ```
 --dry-run           Show what would be done
 -y, --yes           Explicitly authorize changes without interactive input
--j, --jobs <N>       Number of parallel jobs (max 128)
+-j, --jobs <N>       Job budget (max 128); setup currently executes serially
 ```
 
 Examples:
@@ -107,6 +107,31 @@ Apply requests confirmation before selected mutations. In a noninteractive sessi
 `--yes` explicitly. `--quiet` changes presentation and does not authorize changes. A declined
 or unavailable confirmation returns an unsuccessful result before changes. `--dry-run`
 never prompts or applies, including when combined with `--yes`.
+
+All selected setup resources are observed before changes. Unknown or ambiguous targets
+fail; use `collections.NAME`, `workspaces.NAME`, or `storage.NAME` to disambiguate.
+Status, diff, and preview retain observation errors instead of assuming absence.
+
+Workspace apply creates a bare repository and linked worktrees for existing branches.
+It verifies repository identity, origin, branch, and registration. It never guesses a
+new branch base, resets dirty files, forces a worktree, or repairs stale registrations.
+Collections require a standalone checkout with the configured origin and branch.
+Depth, single-branch selection, and supported additional clone flags apply at creation;
+they do not rewrite an existing checkout. Supported additional flags are `--no-checkout`,
+`--no-tags`, `--tags`, and `--no-hardlinks`; other flags fail before changes.
+
+Storage requires an available directory and existing link sources. External/network
+roots must be observed filesystem mount boundaries; same-device bind mounts and nested
+directories are not supported as external roots. This does not authenticate a device.
+Wrong files, wrong links, dangling links, and unavailable mounts are preserved and fail.
+No mount or automatic replacement is performed.
+
+Git must support `--no-lazy-fetch` (Git 2.45 or newer). Observations do not fetch;
+authorized creation may use owner-configured transport and filter helpers. A successful
+report verifies selected setup metadata, not remote authenticity or application health.
+Failures retain partial destinations and report their locations. Even an empty reserved
+destination needs inspection before retrying. Reports are ephemeral; no durable finish
+receipt, automatic rollback, or cleanup authorization is created.
 
 ---
 

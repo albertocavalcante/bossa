@@ -241,7 +241,7 @@ pub struct ApplyArgs {
     #[arg(short = 'y', long)]
     pub yes: bool,
 
-    /// Number of parallel jobs (max 128)
+    /// Job budget (max 128); selected setup currently executes serially
     #[arg(short, long, default_value = "4", value_parser = clap::value_parser!(u16).range(1..=128))]
     pub jobs: u16,
 }

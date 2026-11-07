@@ -8,6 +8,150 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
+fn fixture_process_capacity() -> std::sync::MutexGuard<'static, ()> {
+    static CAPACITY: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    CAPACITY
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[cfg(unix)]
+impl Fixture {
+    fn real_git(&self) {
+        std::os::unix::fs::symlink("/usr/bin/git", self.root.path().join("bin/git")).unwrap();
+    }
+
+    fn git(&self, args: &[&str]) -> Output {
+        use bossa::ProcessRunner as _;
+        let _capacity = fixture_process_capacity();
+        let root = self.root.path();
+        let environment = std::collections::BTreeMap::from([
+            ("PATH".into(), "/usr/bin:/bin".into()),
+            ("HOME".into(), root.join("home").into_os_string()),
+            ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+            (
+                "GIT_CONFIG_GLOBAL".into(),
+                root.join("home/unused-gitconfig").into_os_string(),
+            ),
+            ("GIT_AUTHOR_NAME".into(), "Fixture".into()),
+            ("GIT_COMMITTER_NAME".into(), "Fixture".into()),
+            ("GIT_AUTHOR_EMAIL".into(), "fixture@example.invalid".into()),
+            (
+                "GIT_COMMITTER_EMAIL".into(),
+                "fixture@example.invalid".into(),
+            ),
+        ]);
+        let mut all: Vec<std::ffi::OsString> = [
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "core.fsmonitor=false",
+        ]
+        .into_iter()
+        .map(Into::into)
+        .collect();
+        all.extend(args.iter().map(|arg| (*arg).into()));
+        let output = bossa::SystemRunner::new(environment)
+            .with_limits(bossa::ProcessLimits {
+                timeout: Duration::from_secs(10),
+                max_output_bytes: 64 * 1024,
+            })
+            .run(
+                &bossa::CommandRequest {
+                    program: "/usr/bin/git".into(),
+                    args: all,
+                    working_dir: root.into(),
+                },
+                bossa::IoMode::Capture,
+            )
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
+
+    fn seed_repository(&self) -> PathBuf {
+        self.real_git();
+        let source = self.root.path().join("source with spaces");
+        self.git(&[
+            "init",
+            "--initial-branch=main",
+            "--template=",
+            source.to_str().unwrap(),
+        ]);
+        fs::write(source.join("content"), "committed\n").unwrap();
+        self.git(&["-C", source.to_str().unwrap(), "add", "content"]);
+        self.git(&["-C", source.to_str().unwrap(), "commit", "-m", "fixture"]);
+        self.git(&["-C", source.to_str().unwrap(), "branch", "dev"]);
+        source
+    }
+
+    fn workspace_config(&self, source: &std::path::Path, branches: &str) {
+        fs::write(self.root.path().join("config/config.toml"), format!("[workspaces]\n[[workspaces.repos]]\nname='repo'\ncategory='work'\nurl='{}'\nworktrees=[{branches}]\n", source.display())).unwrap();
+    }
+
+    fn assert_command(&self, args: &[&str], success: bool) -> Output {
+        let output = self.command(args).unwrap();
+        assert_eq!(
+            output.status.success(),
+            success,
+            "{args:?}\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn verified_setup_normalizes_local_locators_and_requires_read_only_git_capability() {
+    for locator in [
+        "./source with spaces/",
+        "./home/../source with spaces",
+        "./source:local",
+    ] {
+        let fixture = Fixture::new();
+        let mut source = fixture.seed_repository();
+        if locator == "./source:local" {
+            let renamed = fixture.root.path().join("source:local");
+            fs::rename(&source, &renamed).unwrap();
+            source = renamed;
+        }
+        fixture.workspace_config(std::path::Path::new(locator), "'main'");
+        fixture.assert_command(&["apply", "workspaces", "--yes"], true);
+        let bare = fixture.root.path().join("workspaces/work/repo.git");
+        let spelled_origin = format!("{}/./", source.display());
+        fixture.git(&[
+            "-C",
+            bare.to_str().unwrap(),
+            "config",
+            "remote.origin.url",
+            &spelled_origin,
+        ]);
+        fixture.assert_command(&["apply", "workspaces", "--yes"], true);
+    }
+    let fixture = Fixture::new();
+    fixture.executable("git", include_str!("fixtures/setup-git.sh"));
+    fixture.workspace_config(&fixture.root.path().join("absent-source"), "'main'");
+    for args in [
+        vec!["apply", "workspaces", "--dry-run"],
+        vec!["apply", "workspaces", "--yes"],
+    ] {
+        let output = fixture
+            .command_with_env(
+                &args,
+                &[("BOSSA_TEST_GIT_FAILURE", Some("unsupported-observation"))],
+            )
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(!fixture.root.path().join("workspaces/work").exists());
+    }
+}
+
 fn binary() -> PathBuf {
     // Cargo supplies an absolute path; rules_rust also defines this variable,
     // but relative to the test's runfiles workspace. Resolve either before cwd
@@ -25,6 +169,422 @@ fn binary() -> PathBuf {
     } else {
         std::env::current_dir().unwrap().join(binary)
     }
+}
+
+#[test]
+#[cfg(unix)]
+fn verified_workspace_preview_creation_and_dirty_rerun_use_real_git() {
+    let fixture = Fixture::new();
+    let source = fixture.seed_repository();
+    fixture.workspace_config(&source, "'main','dev'");
+    let root = fixture.root.path();
+    fixture.assert_command(&["apply", "workspaces", "--dry-run", "--yes"], true);
+    fixture.assert_command(&["diff", "workspaces"], true);
+    assert!(!root.join("workspaces/work").exists());
+    fixture.assert_command(&["apply", "workspaces", "--yes"], true);
+    let bare = root.join("workspaces/work/repo.git");
+    for branch in ["main", "dev"] {
+        let tree = root.join("workspaces/work/repo").join(branch);
+        assert!(tree.join(".git").is_file());
+        assert_eq!(
+            fs::read_to_string(tree.join("content")).unwrap(),
+            "committed\n"
+        );
+        let common = fixture.git(&[
+            "-C",
+            tree.to_str().unwrap(),
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ]);
+        assert_eq!(
+            PathBuf::from(String::from_utf8(common.stdout).unwrap().trim())
+                .canonicalize()
+                .unwrap(),
+            bare.canonicalize().unwrap()
+        );
+        fs::write(tree.join("content"), "dirty kept\n").unwrap();
+        fs::write(tree.join("untracked"), "untracked kept\n").unwrap();
+    }
+    fixture.assert_command(&["apply", "workspaces.repo", "--yes"], true);
+    fixture.assert_command(&["status", "workspaces.repo"], true);
+    fixture.assert_command(&["diff", "workspaces.repo"], true);
+    for branch in ["main", "dev"] {
+        let tree = root.join("workspaces/work/repo").join(branch);
+        assert_eq!(
+            fs::read_to_string(tree.join("content")).unwrap(),
+            "dirty kept\n"
+        );
+        assert_eq!(
+            fs::read_to_string(tree.join("untracked")).unwrap(),
+            "untracked kept\n"
+        );
+    }
+    assert_eq!(fs::read_dir(root.join("state")).unwrap().count(), 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn verified_workspace_conflicts_are_preserved_and_block_the_entire_selection() {
+    for conflict in [
+        "ordinary-directory",
+        "wrong-origin",
+        "wrong-branch",
+        "unregistered",
+        "branch-elsewhere",
+        "missing-branch",
+        "locked",
+    ] {
+        let fixture = Fixture::new();
+        let source = fixture.seed_repository();
+        fixture.workspace_config(
+            &source,
+            if conflict == "missing-branch" {
+                "'main','absent'"
+            } else {
+                "'main','dev'"
+            },
+        );
+        let root = fixture.root.path();
+        let bare = root.join("workspaces/work/repo.git");
+        let tree = root.join("workspaces/work/repo/main");
+        if conflict == "ordinary-directory" {
+            fs::create_dir_all(&tree).unwrap();
+            fs::write(tree.join("keep"), "owner data").unwrap();
+        } else if conflict != "missing-branch" {
+            fs::create_dir_all(bare.parent().unwrap()).unwrap();
+            fixture.git(&[
+                "clone",
+                "--bare",
+                "--template=",
+                source.to_str().unwrap(),
+                bare.to_str().unwrap(),
+            ]);
+            match conflict {
+                "wrong-origin" => {
+                    fixture.git(&[
+                        "-C",
+                        bare.to_str().unwrap(),
+                        "config",
+                        "remote.origin.url",
+                        "wrong-source",
+                    ]);
+                }
+                "wrong-branch" | "locked" => {
+                    fixture.git(&[
+                        "-C",
+                        bare.to_str().unwrap(),
+                        "worktree",
+                        "add",
+                        tree.to_str().unwrap(),
+                        if conflict == "wrong-branch" {
+                            "dev"
+                        } else {
+                            "main"
+                        },
+                    ]);
+                    if conflict == "locked" {
+                        fixture.git(&[
+                            "-C",
+                            bare.to_str().unwrap(),
+                            "worktree",
+                            "lock",
+                            tree.to_str().unwrap(),
+                        ]);
+                    }
+                }
+                "unregistered" => {
+                    fixture.git(&[
+                        "clone",
+                        "--template=",
+                        source.to_str().unwrap(),
+                        tree.to_str().unwrap(),
+                    ]);
+                }
+                "branch-elsewhere" => {
+                    fixture.git(&[
+                        "-C",
+                        bare.to_str().unwrap(),
+                        "worktree",
+                        "add",
+                        root.join("elsewhere").to_str().unwrap(),
+                        "main",
+                    ]);
+                }
+                _ => unreachable!(),
+            }
+        }
+        // An earlier collection would clone unless every selected observation
+        // is completed before effects.
+        let config = root.join("config/config.toml");
+        let mut text = fs::read_to_string(&config).unwrap();
+        text.push_str(&format!(
+            "\n[collections.first]\npath='{}'\n[[collections.first.repos]]\nname='new'\nurl='{}'\n",
+            root.join("collection").display(),
+            source.display()
+        ));
+        fs::write(config, text).unwrap();
+        fixture.assert_command(&["apply", "--yes"], false);
+        assert!(!root.join("collection").exists(), "{conflict}");
+        assert!(
+            !root.join("workspaces/work/repo/dev").exists(),
+            "{conflict}"
+        );
+        if conflict == "ordinary-directory" {
+            assert_eq!(fs::read_to_string(tree.join("keep")).unwrap(), "owner data");
+        }
+        if conflict == "missing-branch" {
+            assert!(!bare.exists());
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn verified_collection_honors_clone_settings_and_preserves_existing_conflicts() {
+    let fixture = Fixture::new();
+    let source = fixture.seed_repository();
+    let root = fixture.root.path();
+    fs::write(root.join("config/config.toml"), format!("[collections.fixture]\npath='{}'\n[collections.fixture.clone]\ndepth=1\nsingle_branch=true\noptions=['--no-checkout']\n[[collections.fixture.repos]]\nname='repo'\nurl='{}'\ndefault_branch='dev'\n", root.join("collection").display(), source.display())).unwrap();
+    fixture.assert_command(&["apply", "collections.fixture", "--yes"], true);
+    let checkout = root.join("collection/repo");
+    assert!(checkout.join(".git").is_dir());
+    assert!(!checkout.join("content").exists());
+    assert_eq!(
+        fixture
+            .git(&[
+                "-C",
+                checkout.to_str().unwrap(),
+                "rev-parse",
+                "--is-shallow-repository"
+            ])
+            .stdout,
+        b"true\n"
+    );
+    assert_eq!(
+        fixture
+            .git(&[
+                "-C",
+                checkout.to_str().unwrap(),
+                "config",
+                "--local",
+                "--get",
+                "remote.origin.fetch"
+            ])
+            .stdout,
+        b"+refs/heads/dev:refs/remotes/origin/dev\n"
+    );
+    fs::write(checkout.join("keep"), "untracked").unwrap();
+    fixture.assert_command(&["apply", "collections", "--yes"], true);
+    fixture.git(&[
+        "-C",
+        checkout.to_str().unwrap(),
+        "symbolic-ref",
+        "HEAD",
+        "refs/heads/main",
+    ]);
+    fixture.assert_command(&["apply", "collections", "--yes"], false);
+    assert_eq!(
+        fs::read_to_string(checkout.join("keep")).unwrap(),
+        "untracked"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn verified_setup_rejects_wrong_links_unavailable_mounts_and_unknown_selectors() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    let mount = root.join("mount");
+    fs::create_dir(&mount).unwrap();
+    fs::write(mount.join("content"), "source").unwrap();
+    let link = root.join("link");
+    let config = root.join("config/config.toml");
+    let text = format!(
+        "[storage.disk]\nmount='{}'\ntype='internal'\n[[storage.disk.symlinks]]\nfrom='{}'\nto='{{mount}}/content'\n",
+        mount.display(),
+        link.display()
+    );
+    fs::write(&config, &text).unwrap();
+    fixture.assert_command(&["apply", "storage", "--yes"], true);
+    fixture.assert_command(&["apply", "storage.disk", "--yes"], true);
+    fixture.assert_command(&["status", "storage"], true);
+    fs::remove_file(&link).unwrap();
+    for kind in ["wrong", "dangling", "file"] {
+        let wrong = root.join("wrong");
+        if kind == "file" {
+            fs::write(&link, "keep").unwrap();
+        } else {
+            if kind == "wrong" {
+                fs::write(&wrong, "keep").unwrap();
+            }
+            std::os::unix::fs::symlink(&wrong, &link).unwrap();
+        }
+        fixture.assert_command(&["apply", "storage", "--yes"], false);
+        if kind == "file" {
+            assert_eq!(fs::read_to_string(&link).unwrap(), "keep");
+        } else {
+            assert_eq!(fs::read_link(&link).unwrap(), wrong);
+        }
+        fs::remove_file(&link).unwrap();
+        if wrong.exists() {
+            fs::remove_file(wrong).unwrap();
+        }
+    }
+    fs::write(&config, text.replace("type='internal'", "type='external'")).unwrap();
+    fixture.assert_command(&["apply", "storage", "--yes"], false);
+    assert!(!link.exists());
+    for target in ["unknown", "storage.missing", "unknown.disk", "storage."] {
+        for command in ["status", "diff", "apply"] {
+            fixture.assert_command(&[command, target], false);
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn verified_setup_reports_failed_clone_and_never_accepts_marker_directories_as_repositories() {
+    for case in ["missing-source", "marker-only"] {
+        let fixture = Fixture::new();
+        fixture.real_git();
+        let root = fixture.root.path();
+        if case == "marker-only" {
+            fs::create_dir_all(root.join("collection/repo/.git")).unwrap();
+        }
+        fs::write(root.join("config/config.toml"), format!("[collections.fixture]\npath='{}'\n[[collections.fixture.repos]]\nname='repo'\nurl='{}'\n", root.join("collection").display(), root.join("absent-source").display())).unwrap();
+        let output = fixture.assert_command(&["apply", "collections", "--yes"], false);
+        assert!(
+            !String::from_utf8_lossy(&output.stdout).contains("Selected postconditions verified")
+        );
+        if case == "marker-only" {
+            assert!(root.join("collection/repo/.git").is_dir());
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn verified_setup_retains_partial_effects_and_rejects_success_without_a_repository() {
+    for mode in ["clone", "no-repository", "worktree"] {
+        let fixture = Fixture::new();
+        let source = fixture.seed_repository();
+        fixture.workspace_config(&source, "'main','dev'");
+        let root = fixture.root.path();
+        fs::remove_file(root.join("bin/git")).unwrap();
+        fixture.executable("git", include_str!("fixtures/setup-git.sh"));
+        let output = fixture
+            .command_with_env(
+                &["apply", "workspaces", "--yes"],
+                &[("BOSSA_TEST_GIT_FAILURE", Some(mode))],
+            )
+            .unwrap();
+        assert!(!output.status.success(), "{mode}");
+        assert!(
+            !String::from_utf8_lossy(&output.stdout).contains("Selected postconditions verified")
+        );
+        let bare = root.join("workspaces/work/repo.git");
+        let main = root.join("workspaces/work/repo/main");
+        let dev = root.join("workspaces/work/repo/dev");
+        match mode {
+            "clone" => {
+                assert_eq!(
+                    fs::read_to_string(bare.join("partial")).unwrap(),
+                    "partial clone retained\n"
+                );
+            }
+            "worktree" => {
+                assert!(main.join(".git").is_file());
+                assert_eq!(
+                    fs::read_to_string(dev.join("partial")).unwrap(),
+                    "partial worktree retained\n"
+                );
+            }
+            _ => {
+                assert!(bare.is_dir());
+                assert_eq!(fs::read_dir(&bare).unwrap().count(), 0);
+            }
+        }
+        // A partial destination is retained and blocked on rerun, never repaired.
+        fixture.assert_command(&["apply", "workspaces", "--yes"], false);
+        if mode == "clone" {
+            assert!(bare.join("partial").is_file());
+        }
+        if mode == "worktree" {
+            assert!(dev.join("partial").is_file());
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn verified_selection_ignores_unused_workspace_paths_and_rejects_ambiguous_names() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    fs::create_dir(root.join("mount")).unwrap();
+    std::os::unix::fs::symlink(root.join("absent"), root.join("unused-root")).unwrap();
+    fs::write(root.join("config/config.toml"), format!("[collections.same]\npath='{}'\n[storage.same]\nmount='{}'\ntype='internal'\n[workspaces]\nroot='{}'\n[[workspaces.repos]]\nname='unused'\nurl='unused-source'\n", root.join("collection").display(), root.join("mount").display(), root.join("unused-root").display())).unwrap();
+    for target in ["collections", "storage.same"] {
+        for command in ["status", "diff"] {
+            let output = fixture
+                .command_with_env(&[command, target], &[("BOSSA_WORKSPACES_DIR", None)])
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{command} {target}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let output = fixture
+            .command_with_env(
+                &["apply", target, "--yes"],
+                &[("BOSSA_WORKSPACES_DIR", None)],
+            )
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    for command in ["status", "diff", "apply"] {
+        fixture.assert_command(&[command, "same"], false);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn verified_setup_clears_inherited_git_repository_and_command_config_injection() {
+    let fixture = Fixture::new();
+    let source = fixture.seed_repository();
+    fixture.workspace_config(&source, "'main'");
+    let root = fixture.root.path();
+    let external = root.join("external.git");
+    fixture.git(&["init", "--bare", "--template=", external.to_str().unwrap()]);
+    let output = fixture
+        .command_with_env(
+            &["apply", "workspaces", "--yes"],
+            &[
+                ("GIT_DIR", Some(external.to_str().unwrap())),
+                ("GIT_WORK_TREE", Some(root.to_str().unwrap())),
+                (
+                    "GIT_INDEX_FILE",
+                    Some(root.join("external-index").to_str().unwrap()),
+                ),
+                ("GIT_CONFIG_COUNT", Some("1")),
+                ("GIT_CONFIG_KEY_0", Some("core.bare")),
+                ("GIT_CONFIG_VALUE_0", Some("true")),
+                ("GIT_CONFIG_PARAMETERS", Some("'core.bare'='true'")),
+            ],
+        )
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(root.join("workspaces/work/repo/main/.git").is_file());
+    assert!(!root.join("external-index").exists());
+    assert!(!external.join("worktrees").exists());
 }
 
 struct Fixture {
@@ -70,10 +630,7 @@ impl Fixture {
     ) -> io::Result<Output> {
         // Bound real-CLI process pressure so timing assertions have stable
         // scheduler capacity. Supervisor concurrency has dedicated library tests.
-        static CLI_CAPACITY: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _capacity = CLI_CAPACITY
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _capacity = fixture_process_capacity();
         let root = self.root.path();
         // File-backed output avoids pipe deadlock while the parent enforces a
         // deadline. Process-supervision cases use finite, owned child fixtures.
@@ -126,9 +683,21 @@ impl Fixture {
             let output_size =
                 fs::metadata(root.join("stdout"))?.len() + fs::metadata(root.join("stderr"))?.len();
             if Instant::now() >= deadline || output_size >= 64 * 1024 {
+                use std::io::Read as _;
+                let read = |name| -> io::Result<String> {
+                    let mut bytes = Vec::new();
+                    fs::File::open(root.join(name))?
+                        .take(64 * 1024)
+                        .read_to_end(&mut bytes)?;
+                    Ok(String::from_utf8_lossy(&bytes).into_owned())
+                };
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
-                    "fixture exceeded time or output limit",
+                    format!(
+                        "fixture {args:?} exceeded time or output limit; stdout: {}; stderr: {}",
+                        read("stdout")?,
+                        read("stderr")?
+                    ),
                 ));
             }
             thread::sleep(Duration::from_millis(10));
@@ -504,12 +1073,16 @@ fn relative_workspace_roots_execute_at_the_same_absolute_destination_as_prefligh
         let fixture = Fixture::new();
         let root = fixture.root.path();
         fs::write(root.join("config/config.toml"), "[workspaces]\nroot='relative-config'\n[[workspaces.repos]]\nname='repo'\nurl='fixture-source'\ncategory='work'\n").unwrap();
-        // PATH intentionally has no Git. The checked parent must be created,
-        // then launch must fail; no clone, network, or default-home write occurs.
+        fixture.executable("git", include_str!("fixtures/setup-git.sh"));
+        // A failing fixture Git preserves the checked absolute parent; no
+        // clone, network, or default-home write occurs.
         let result = fixture
             .command_with_env(
                 &["apply", "workspaces", "--yes"],
-                &[("BOSSA_WORKSPACES_DIR", override_value)],
+                &[
+                    ("BOSSA_WORKSPACES_DIR", override_value),
+                    ("BOSSA_TEST_GIT_FAILURE", Some("clone")),
+                ],
             )
             .unwrap();
         assert!(!result.status.success());
@@ -529,7 +1102,7 @@ fn storage_mount_expansion_and_placeholders_match_canonical_intent() {
     fs::create_dir(&mount).unwrap();
     fs::write(mount.join("content"), "fixture").unwrap();
     for selected in ["~/disk", "$EXTERNAL"] {
-        fs::write(root.join("config/config.toml"), format!("[storage.disk]\nmount='{selected}'\ntype='external'\n[[storage.disk.symlinks]]\nfrom='~/link'\nto='{{mount}}/content'\n")).unwrap();
+        fs::write(root.join("config/config.toml"), format!("[storage.disk]\nmount='{selected}'\ntype='internal'\n[[storage.disk.symlinks]]\nfrom='~/link'\nto='{{mount}}/content'\n")).unwrap();
         let result = fixture
             .command_with_env(
                 &["apply", "storage", "--yes"],
@@ -1303,7 +1876,7 @@ fn legacy_apply_and_relocation_never_infer_consent_from_quiet_or_closed_input() 
         let collection = root.join("collection");
         let trace = root.join("trace");
         fs::write(root.join("config/config.toml"), format!("[collections.fixture]\npath='{}'\n[[collections.fixture.repos]]\nname='repo'\nurl='fixture-source'\n", collection.display())).unwrap();
-        fixture.executable("git", include_str!("fixtures/failed-command.sh"));
+        fixture.real_git();
         let mut args = vec!["apply", "collections"];
         if quiet {
             args.insert(0, "--quiet");
@@ -1353,7 +1926,7 @@ fn legacy_previews_stay_read_only_with_yes_and_relocation_needs_explicit_authori
     let collection = root.join("collection");
     let trace = root.join("trace");
     fs::write(root.join("config/config.toml"), format!("[collections.fixture]\npath='{}'\n[[collections.fixture.repos]]\nname='repo'\nurl='fixture-source'\n", collection.display())).unwrap();
-    fixture.executable("git", include_str!("fixtures/failed-command.sh"));
+    fixture.real_git();
     let preview = fixture
         .command_with_env(
             &["apply", "collections", "--dry-run", "--yes"],

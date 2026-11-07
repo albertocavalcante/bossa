@@ -69,7 +69,13 @@ the same consent rule; its `--scan-only` and `--dry-run` modes remain read-only.
 
 ### Idempotency
 
-All operations are idempotent - running them multiple times produces the same result:
+Verified collection, workspace, and storage setup reobserves current state on every run.
+An already satisfied selection performs no setup mutations. Dirty and untracked checkout
+content is preserved. Conflicting or unavailable state fails before selected changes;
+partial creation is retained for explicit inspection rather than automatically removed.
+Other commands have their own behavior and recovery contracts.
+
+Package reconciliation is separate from repository setup:
 
 ```bash
 # First run: installs 5 packages
