@@ -858,6 +858,39 @@ fn malformed_inventory_stops_stow_and_caches_before_directory_creation() {
 }
 
 #[test]
+#[cfg(unix)]
+fn stow_reports_failed_required_recording_and_retains_the_completed_link() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    let source = root.join("source");
+    fs::create_dir_all(source.join("shell")).unwrap();
+    fs::write(source.join("shell/.fixture-rc"), "owned\n").unwrap();
+    fs::write(
+        root.join("config/config.toml"),
+        format!(
+            "[symlinks]\nsource='{}'\ntarget='{}'\npackages=['shell']\n",
+            source.display(),
+            root.join("home").display()
+        ),
+    )
+    .unwrap();
+    let state = root.join("state/state.toml");
+    let original = "last_updated = '2026-11-07T00:00:00Z'\n";
+    fs::write(&state, original).unwrap();
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o400)).unwrap();
+    let output = fixture.command(&["stow", "sync"]).unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("earlier symlink effects may remain"));
+    assert_eq!(fs::read_to_string(&state).unwrap(), original);
+    assert_eq!(
+        fs::read_link(root.join("home/.fixture-rc")).unwrap(),
+        source.join("shell/.fixture-rc")
+    );
+    fs::set_permissions(state, fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+#[test]
 fn selected_empty_nova_preview_needs_no_live_tools_or_state() {
     let fixture = Fixture::new();
     let root = fixture.root.path();
