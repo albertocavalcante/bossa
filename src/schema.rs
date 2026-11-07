@@ -15,6 +15,8 @@ use crate::paths;
 #[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct BossaConfig {
+    #[serde(skip)]
+    pub(crate) store_revision: Option<(bossa::DocumentStore, bossa::StoreRevision)>,
     /// Collections of git repositories (e.g., reference repos)
     #[serde(default)]
     pub collections: HashMap<String, Collection>,
@@ -97,32 +99,65 @@ impl BossaConfig {
     }
 
     /// Save to the selected source and format; reads never convert legacy input.
-    pub fn save(&self) -> Result<PathBuf> {
+    pub fn save(&mut self) -> Result<PathBuf> {
         self.validate()?;
-        let directory = paths::config_dir()?;
-        let document = crate::config::bossa_document()?;
-        let (path, format) = match document {
-            Some(document) => {
-                let (_, legacy) = crate::config::parse_bossa_document(&document)?;
-                if legacy {
-                    anyhow::bail!(
-                        "Legacy configuration is read-compatible; explicitly convert it before editing"
-                    );
-                }
-                (
-                    document.path,
-                    crate::config::ConfigFormat::from(document.format),
-                )
+        let store = crate::config::main_store()?;
+        let guard = store.lock()?;
+        let current = guard.read()?;
+        if let Some((bound, expected)) = &self.store_revision {
+            if bound != &store || expected != &current.revision {
+                return Err(bossa::StoreError::Conflict.into());
             }
-            None => (
-                directory.join("config.toml"),
-                crate::config::ConfigFormat::Toml,
-            ),
-        };
-        let contents = format.serialize(self)?;
-        bossa::write_config_document(&path, &contents)
-            .with_context(|| format!("Could not save configuration {}", path.display()))?;
+        } else if current.document.is_some() {
+            anyhow::bail!(
+                "An unbound configuration cannot overwrite an existing document; reload first"
+            );
+        }
+        let (path, format) = Self::writable_source(&store, &current)?;
+        let contents = crate::config::ConfigFormat::from(format).serialize(self)?;
+        let revision = guard.commit(&current.revision, &contents)?;
+        self.store_revision = Some((store, revision));
         Ok(path)
+    }
+
+    fn writable_source(
+        store: &bossa::DocumentStore,
+        snapshot: &bossa::StoreSnapshot,
+    ) -> Result<(PathBuf, bossa::ConfigFormat)> {
+        if let Some(document) = &snapshot.document {
+            let (_, legacy) = crate::config::parse_bossa_document(document)?;
+            if legacy {
+                anyhow::bail!(
+                    "Legacy configuration is read-compatible; explicitly convert it before editing"
+                );
+            }
+            Ok((document.path.clone(), document.format))
+        } else {
+            Ok((store.default_path(), bossa::ConfigFormat::Toml))
+        }
+    }
+
+    /// Fresh read, pure mutation, validation and promotion under one store guard.
+    pub fn update<T>(mutate: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        let store = crate::config::main_store()?;
+        let guard = store.lock()?;
+        let snapshot = guard.read()?;
+        let (path, format) = Self::writable_source(&store, &snapshot)?;
+        let mut config = match &snapshot.document {
+            Some(document) => crate::config::parse_bossa_document(document)?.0,
+            None => Self::default(),
+        };
+        let format = crate::config::ConfigFormat::from(format);
+        let before = format.serialize(&config)?;
+        let result = mutate(&mut config)?;
+        config.validate()?;
+        let after = format.serialize(&config)?;
+        if before != after {
+            guard
+                .commit(&snapshot.revision, &after)
+                .with_context(|| format!("Could not update configuration {}", path.display()))?;
+        }
+        Ok(result)
     }
 
     /// Validate the configuration
@@ -2839,5 +2874,121 @@ name = "rust"
             ..Default::default()
         };
         assert!(with_proxy.has_proxy());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod persistence_tests {
+    use super::*;
+    use bossa::{CommandRequest, IoMode, ProcessLimits, ProcessRunner, SystemRunner};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn stale_config_child() {
+        let Some(name) = std::env::var_os("BOSSA_STALE_CONFIG_CHILD") else {
+            return;
+        };
+        let root = PathBuf::from(std::env::var_os("BOSSA_CONFIG_FIXTURE").unwrap());
+        let name = name.to_str().unwrap();
+        let mut config = BossaConfig::load().unwrap();
+        config.collections.insert(
+            name.into(),
+            Collection {
+                path: root.join(name).to_str().unwrap().into(),
+                description: String::new(),
+                clone: Default::default(),
+                storage: None,
+                repos: vec![],
+            },
+        );
+        std::fs::write(root.join(format!("ready-{name}")), b"").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !root.join("go").exists() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        if let Err(error) = config.save() {
+            eprintln!("{error:#}");
+            std::process::exit(7);
+        }
+    }
+
+    #[test]
+    fn competing_loaded_config_snapshots_never_both_report_success() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        std::fs::create_dir(root.join("config")).unwrap();
+        std::fs::create_dir(root.join("home")).unwrap();
+        std::fs::write(root.join("config/config.toml"), "[collections]\n").unwrap();
+        let outputs = std::thread::scope(|scope| {
+            let jobs = ["a", "b"].map(|name| {
+                scope.spawn(|| {
+                    let environment = std::collections::BTreeMap::from([
+                        ("HOME".into(), root.join("home").into_os_string()),
+                        (
+                            "BOSSA_CONFIG_DIR".into(),
+                            root.join("config").into_os_string(),
+                        ),
+                        ("BOSSA_CONFIG_FIXTURE".into(), root.clone().into_os_string()),
+                        ("BOSSA_STALE_CONFIG_CHILD".into(), name.into()),
+                    ]);
+                    SystemRunner::new(environment)
+                        .with_limits(ProcessLimits {
+                            timeout: Duration::from_secs(15),
+                            max_output_bytes: 64 * 1024,
+                        })
+                        .run(
+                            &CommandRequest {
+                                program: std::env::current_exe().unwrap().into_os_string(),
+                                args: [
+                                    "--exact",
+                                    "schema::persistence_tests::stale_config_child",
+                                    "--nocapture",
+                                ]
+                                .into_iter()
+                                .map(Into::into)
+                                .collect(),
+                                working_dir: root.clone(),
+                            },
+                            IoMode::Capture,
+                        )
+                        .unwrap()
+                })
+            });
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !root.join("ready-a").exists() || !root.join("ready-b").exists() {
+                assert!(
+                    Instant::now() < deadline,
+                    "owned children did not reach read barrier"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            std::fs::write(root.join("go"), b"").unwrap();
+            jobs.into_iter()
+                .map(|job| job.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            outputs
+                .iter()
+                .filter(|output| output.status.success())
+                .count(),
+            1,
+            "both stale writers reported success, or neither reached promotion"
+        );
+        let rejected = outputs
+            .iter()
+            .find(|output| !output.status.success())
+            .unwrap();
+        assert_eq!(rejected.status.code(), Some(7));
+        assert!(
+            String::from_utf8_lossy(&rejected.stderr).contains("revision"),
+            "wrong failure: {}",
+            String::from_utf8_lossy(&rejected.stderr)
+        );
+        let config: BossaConfig =
+            toml::from_str(&std::fs::read_to_string(root.join("config/config.toml")).unwrap())
+                .unwrap();
+        assert_eq!(config.collections.len(), 1);
     }
 }

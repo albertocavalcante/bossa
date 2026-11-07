@@ -118,71 +118,13 @@ fn replace_config_with(
     path: &Path,
     write: impl FnOnce(&mut File) -> io::Result<()>,
 ) -> io::Result<()> {
-    let filename = path.file_name().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Configuration needs a filename",
-        )
-    })?;
-    let existing = match fs::symlink_metadata(path) {
-        Ok(_) => Some(fs::metadata(path)?),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            confirm_missing_parent(path)?;
-            None
-        }
-        Err(error) => return Err(error),
-    };
-    if let Some(metadata) = &existing
-        && (!metadata.is_file() || metadata.permissions().readonly())
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "Configuration is not a writable regular file",
-        ));
-    }
-    let target = if existing.is_some() {
-        path.canonicalize()?
-    } else {
-        let parent = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        fs::create_dir_all(parent)?;
-        parent.canonicalize()?.join(filename)
-    };
-    let parent = target.parent().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Configuration needs a parent directory",
-        )
-    })?;
-    let mut staged = tempfile::NamedTempFile::new_in(parent)?;
-    write(staged.as_file_mut())?;
-    if let Some(metadata) = existing.as_ref() {
-        staged.as_file().set_permissions(metadata.permissions())?;
-    }
-    staged.as_file().sync_all()?;
-    if existing.is_some() {
-        if path.canonicalize()? != target {
-            return Err(io::Error::other(
-                "Selected configuration path changed before replacement",
-            ));
-        }
-        staged.persist(target).map_err(|error| error.error)?;
-    } else {
-        let selected_parent = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        if selected_parent.canonicalize()? != parent {
-            return Err(io::Error::other(
-                "Selected configuration directory changed before replacement",
-            ));
-        }
-        staged
-            .persist_noclobber(target)
-            .map_err(|error| error.error)?;
-    }
+    let path = std::path::absolute(path)?;
+    let store = crate::DocumentStore::file(&path, ConfigFormat::Toml)?;
+    let guard = store.lock().map_err(io::Error::other)?;
+    let snapshot = guard.read().map_err(io::Error::other)?;
+    guard
+        .replace(&snapshot.revision, write)
+        .map_err(io::Error::other)?;
     Ok(())
 }
 
@@ -194,6 +136,13 @@ pub struct ConfigDocument {
 }
 
 impl ConfigDocument {
+    pub(crate) fn from_contents(path: PathBuf, format: ConfigFormat, contents: String) -> Self {
+        Self {
+            path,
+            format,
+            contents,
+        }
+    }
     pub fn read(
         source: &dyn ConfigSource,
         path: &Path,
@@ -314,7 +263,7 @@ mod tests {
             document.parse::<HashMap<String, String>>().unwrap()["key"],
             "value"
         );
-        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 1);
+        assert_directory_entries(temp.path(), &["config.json"]);
     }
 
     #[test]
@@ -437,7 +386,7 @@ mod tests {
         });
         assert!(result.is_err());
         assert_eq!(fs::read(path).unwrap(), b"original");
-        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 1);
+        assert_directory_entries(temp.path(), &[".bossa-store.lock", "config.toml"]);
     }
 
     #[cfg(unix)]
@@ -457,7 +406,10 @@ mod tests {
             fs::metadata(target).unwrap().permissions().mode() & 0o777,
             0o640
         );
-        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 2);
+        assert_directory_entries(
+            temp.path(),
+            &[".bossa-store.lock", "config.toml", "source.toml"],
+        );
     }
 
     #[test]
@@ -470,7 +422,22 @@ mod tests {
         });
         assert!(result.is_err());
         assert_eq!(fs::read(path).unwrap(), b"concurrent work");
-        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 1);
+        assert_directory_entries(temp.path(), &[".bossa-store.lock", "config.toml"]);
+    }
+
+    fn assert_directory_entries(path: &Path, expected: &[&str]) {
+        let mut actual: Vec<_> = fs::read_dir(path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        actual.sort();
+        assert_eq!(
+            actual,
+            expected
+                .iter()
+                .map(std::ffi::OsString::from)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

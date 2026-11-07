@@ -29,3 +29,36 @@ pub fn confirm_missing_parent(path: &Path) -> io::Result<()> {
     }
     Ok(())
 }
+
+/// Resolve existing ancestors without treating broken links or non-directories as absence.
+pub fn resolve_location(path: &Path) -> anyhow::Result<std::path::PathBuf> {
+    anyhow::ensure!(path.is_absolute(), "Location must be absolute");
+    use anyhow::Context as _;
+    let mut existing = path.to_path_buf();
+    let mut suffix = Vec::new();
+    loop {
+        match fs::symlink_metadata(&existing) {
+            Ok(_) => {
+                let mut resolved = existing.canonicalize().context("Location unavailable")?;
+                anyhow::ensure!(
+                    suffix.is_empty() || fs::metadata(&existing)?.is_dir(),
+                    "Location parent is not a directory"
+                );
+                for part in suffix.into_iter().rev() {
+                    resolved.push(part);
+                }
+                return Ok(resolved);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                suffix.push(
+                    existing
+                        .file_name()
+                        .context("No existing location ancestor")?
+                        .to_os_string(),
+                );
+                existing = existing.parent().context("No location parent")?.into();
+            }
+            Err(e) => return Err(e).context("Could not inspect location"),
+        }
+    }
+}

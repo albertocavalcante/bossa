@@ -6,7 +6,7 @@ use std::os::unix::fs as unix_fs;
 use std::path::Path;
 
 use crate::cli::CachesCommand;
-use crate::config::{CachesConfig, ConfigFormat};
+use crate::config::CachesConfig;
 use crate::runner;
 use crate::state::{BossaState, TrackedSymlink};
 use crate::ui;
@@ -161,6 +161,9 @@ fn apply(dry_run: bool) -> Result<()> {
 
     let config = CachesConfig::load()
         .context("No caches.toml found. Run 'bossa caches init' to create one.")?;
+    if !dry_run {
+        BossaState::load().context("State unavailable; no cache changes attempted")?;
+    }
 
     // Check drive is mounted
     if !config.is_drive_mounted() {
@@ -237,7 +240,7 @@ fn apply(dry_run: bool) -> Result<()> {
                     }
                     unix_fs::symlink(&target, &source)?;
                     // Track in unified symlink inventory
-                    track_symlink_in_inventory(&source, &target);
+                    track_symlink_in_inventory(&source, &target)?;
                     println!("  {} {} → {}", "✓".green(), symlink.name, symlink.target);
                 }
             }
@@ -256,7 +259,7 @@ fn apply(dry_run: bool) -> Result<()> {
                     }
                     unix_fs::symlink(&target, &source)?;
                     // Track in unified symlink inventory
-                    track_symlink_in_inventory(&source, &target);
+                    track_symlink_in_inventory(&source, &target)?;
                     println!("  {} {} (fixed)", "✓".green(), symlink.name);
                 }
             }
@@ -289,7 +292,7 @@ fn apply(dry_run: bool) -> Result<()> {
                     // Create symlink
                     unix_fs::symlink(&target, &source)?;
                     // Track in unified symlink inventory
-                    track_symlink_in_inventory(&source, &target);
+                    track_symlink_in_inventory(&source, &target)?;
                     println!("  {} {} (migrated)", "✓".green(), symlink.name);
                 }
             }
@@ -527,17 +530,10 @@ fn doctor() -> Result<()> {
 fn init(force: bool) -> Result<()> {
     ui::header("Initialize Cache Configuration");
 
-    let dir = crate::config::config_dir()?;
-    let path = dir.join("caches.toml");
-
-    if path.exists() && !force {
-        ui::warn(&format!("Config already exists: {}", path.display()));
-        ui::info("Use --force to overwrite");
+    let Some(path) = CachesConfig::initialize(force)? else {
+        ui::warn("Cache configuration already exists; use --force to replace it");
         return Ok(());
-    }
-
-    let config = CachesConfig::default_config();
-    config.save_as(ConfigFormat::Toml)?;
+    };
 
     ui::success(&format!("Created {}", path.display()));
     println!();
@@ -552,21 +548,36 @@ fn init(force: bool) -> Result<()> {
 
 /// Track a symlink in the unified inventory.
 /// This is called after successful symlink creation to record it in BossaState.
-/// Errors are logged but do not fail the operation (non-critical).
-fn track_symlink_in_inventory(source: &Path, target: &Path) {
-    if let Ok(mut state) = BossaState::load() {
-        state.symlinks.add(TrackedSymlink {
-            source: source.to_string_lossy().to_string(),
-            target: target.to_string_lossy().to_string(),
-            subsystem: "caches".to_string(),
-            created_at: Utc::now(),
-        });
-        if let Err(e) = state.save() {
-            log::warn!("Failed to save symlink to state: {e}");
-        }
-    } else {
-        log::warn!("Failed to load state for symlink tracking");
-    }
+/// Recording is required; failure reports retained possible filesystem effects.
+fn track_symlink_in_inventory(link_path: &Path, backing_path: &Path) -> Result<()> {
+    let link_path = link_path
+        .to_str()
+        .context("Legacy inventory needs a UTF-8 link path; symlink effects may remain")?;
+    let backing_path = backing_path
+        .to_str()
+        .context("Legacy inventory needs a UTF-8 backing path; symlink effects may remain")?;
+    BossaState::update(|state| {
+        record_cache_symlink(state, link_path, backing_path);
+        Ok(())
+    })
+    .context("Symlink inventory recording failed; earlier filesystem effects may remain")
+}
+
+fn record_cache_symlink(state: &mut BossaState, link_path: &str, backing_path: &str) {
+    state.symlinks.entries.retain(|link| {
+        link.target != link_path
+            // Earlier cache writers reversed this exact pair. Replace only a
+            // proven matching cache row; other historical records stay intact.
+            && !(link.subsystem == "caches"
+                && link.source == link_path
+                && link.target == backing_path)
+    });
+    state.symlinks.add(TrackedSymlink {
+        source: backing_path.into(),
+        target: link_path.into(),
+        subsystem: "caches".into(),
+        created_at: Utc::now(),
+    });
 }
 
 #[derive(Debug)]
@@ -655,5 +666,44 @@ mod tests {
 
         let status = check_symlink_status(&source, &target);
         assert!(matches!(status, SymlinkStatus::NotSymlink));
+    }
+
+    #[test]
+    fn inventory_uses_link_identity_and_preserves_other_links_to_the_same_backing_path() {
+        let mut state = BossaState::default();
+        for (source, target, subsystem) in [
+            ("/links/a", "/backing", "caches"), // historical reversed row
+            ("/other", "/backing", "stow"),
+        ] {
+            state.symlinks.add(TrackedSymlink {
+                source: source.into(),
+                target: target.into(),
+                subsystem: subsystem.into(),
+                created_at: Utc::now(),
+            });
+        }
+        record_cache_symlink(&mut state, "/links/a", "/backing");
+        record_cache_symlink(&mut state, "/links/b", "/backing");
+        record_cache_symlink(&mut state, "/links/a", "/backing");
+        assert_eq!(state.symlinks.entries.len(), 3);
+        for path in ["/links/a", "/links/b"] {
+            let row = state
+                .symlinks
+                .entries
+                .iter()
+                .find(|row| row.target == path)
+                .unwrap();
+            assert_eq!(row.source, "/backing");
+            assert_eq!(row.subsystem, "caches");
+        }
+        assert!(
+            state
+                .symlinks
+                .entries
+                .iter()
+                .any(|row| row.source == "/other"
+                    && row.target == "/backing"
+                    && row.subsystem == "stow")
+        );
     }
 }

@@ -756,6 +756,108 @@ fn actual_add_collection_dispatch_writes_only_the_selected_config_root() {
 }
 
 #[test]
+#[cfg(unix)]
+fn concurrent_crud_preserves_both_updates_and_noop_preserves_source_bytes() {
+    use bossa::ProcessRunner as _;
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    let capacity = fixture_process_capacity();
+    let environment = std::collections::BTreeMap::from([
+        ("HOME".into(), root.join("home").into_os_string()),
+        (
+            "BOSSA_CONFIG_DIR".into(),
+            root.join("config").into_os_string(),
+        ),
+        (
+            "BOSSA_STATE_DIR".into(),
+            root.join("state").into_os_string(),
+        ),
+        ("PATH".into(), root.join("bin").into_os_string()),
+    ]);
+    thread::scope(|scope| {
+        let jobs = ["first", "second"].map(|name| {
+            scope.spawn(|| {
+                let output = bossa::SystemRunner::new(environment.clone())
+                    .with_limits(bossa::ProcessLimits {
+                        timeout: Duration::from_secs(10),
+                        max_output_bytes: 64 * 1024,
+                    })
+                    .run(
+                        &bossa::CommandRequest {
+                            program: binary().into_os_string(),
+                            args: ["add", "collection", name, "~/fixture"]
+                                .into_iter()
+                                .map(Into::into)
+                                .collect(),
+                            working_dir: root.into(),
+                        },
+                        bossa::IoMode::Capture,
+                    )
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            })
+        });
+        for job in jobs {
+            job.join().unwrap();
+        }
+    });
+    let path = root.join("config/config.toml");
+    let content = fs::read_to_string(&path).unwrap();
+    let parsed: toml::Value = toml::from_str(&content).unwrap();
+    assert_eq!(parsed["collections"].as_table().unwrap().len(), 2);
+    let with_comment = format!("# Owner comment\n{content}");
+    fs::write(&path, &with_comment).unwrap();
+    drop(capacity);
+    assert!(
+        fixture
+            .command(&["add", "collection", "first", "~/fixture"])
+            .unwrap()
+            .status
+            .success()
+    );
+    assert_eq!(fs::read_to_string(path).unwrap(), with_comment);
+}
+
+#[test]
+fn malformed_inventory_stops_stow_and_caches_before_directory_creation() {
+    for command in [["stow", "sync"], ["caches", "apply"]] {
+        let fixture = Fixture::new();
+        let root = fixture.root.path();
+        let source = root.join("source");
+        fs::create_dir(&source).unwrap();
+        fs::write(
+            root.join("config/config.toml"),
+            format!(
+                "[symlinks]\nsource='{}'\ntarget='{}'\npackages=['missing']\n",
+                source.display(),
+                root.join("home").display()
+            ),
+        )
+        .unwrap();
+        fs::write(
+            root.join("config/caches.toml"),
+            format!(
+                "[external_drive]\nname='fixture'\nmount_point='{}'\nbase_path='cache-data'\n",
+                root.display()
+            ),
+        )
+        .unwrap();
+        let state = root.join("state/state.toml");
+        fs::write(&state, "[broken").unwrap();
+        let output = fixture.command(&command).unwrap();
+        assert!(!output.status.success(), "{command:?}");
+        assert_eq!(fs::read(&state).unwrap(), b"[broken");
+        assert!(!source.join("missing").exists());
+        assert!(!root.join("cache-data").exists());
+        assert_eq!(fs::read_dir(root.join("state")).unwrap().count(), 1);
+    }
+}
+
+#[test]
 fn selected_empty_nova_preview_needs_no_live_tools_or_state() {
     let fixture = Fixture::new();
     let root = fixture.root.path();
