@@ -4,32 +4,38 @@ use anyhow::{Context, Result};
 use std::env;
 use std::fs;
 use std::path::Path;
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus};
+
+use bossa::{CommandRequest, IoMode, ProcessRunner, SystemRunner};
 
 /// Run a command and inherit stdio (shows output in real-time)
 pub fn run(cmd: &str, args: &[&str]) -> Result<ExitStatus> {
-    Command::new(cmd)
-        .args(args)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .with_context(|| format!("Failed to execute: {} {}", cmd, args.join(" ")))
+    Ok(run_native(cmd, args, IoMode::Inherit)?.status)
 }
 
 /// Run a command and capture output
 pub fn run_capture(cmd: &str, args: &[&str]) -> Result<String> {
-    let output = Command::new(cmd)
-        .args(args)
-        .output()
-        .with_context(|| format!("Failed to execute: {} {}", cmd, args.join(" ")))?;
-
+    let output = run_native(cmd, args, IoMode::Capture)?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("Command failed: {}", stderr.trim())
     }
+}
+
+fn run_native(cmd: &str, args: &[&str], mode: IoMode) -> Result<std::process::Output> {
+    let runner = SystemRunner::new(crate::paths::environment().variables().clone());
+    runner
+        .run(
+            &CommandRequest {
+                program: cmd.into(),
+                args: args.iter().map(|arg| (*arg).into()).collect(),
+                working_dir: env::current_dir().context("Could not determine working directory")?,
+            },
+            mode,
+        )
+        .with_context(|| format!("Failed to execute {cmd}"))
 }
 
 /// Check if a command exists
@@ -40,7 +46,7 @@ pub fn command_exists(cmd: &str) -> bool {
         return command_candidate_exists(cmd_path);
     }
 
-    let Some(path_var) = env::var_os("PATH") else {
+    let Some(path_var) = crate::paths::environment().variable("PATH") else {
         return false;
     };
 
@@ -57,7 +63,10 @@ fn command_candidate_exists(candidate: &Path) -> bool {
         return false;
     }
 
-    let pathext = env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+    let pathext = crate::paths::environment()
+        .variable("PATHEXT")
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or(".COM;.EXE;.BAT;.CMD");
 
     pathext.split(';').filter(|ext| !ext.is_empty()).any(|ext| {
         let ext = if ext.starts_with('.') {
