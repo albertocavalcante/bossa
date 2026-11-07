@@ -616,6 +616,47 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn linux_named_acl_and_mode_survive_replacement() {
+        let root = tempfile::TempDir::new().unwrap();
+        let path = root.path().join("config.toml");
+        fs::write(&path, "value=1").unwrap();
+        let file = metadata::open_regular(&path).unwrap();
+        // Linux UAPI posix_acl{,_xattr}.h: version2 and little-endian entries
+        // (tag, permissions, ID). A named UID keeps the ACL nontrivial; the
+        // private fixture directory prevents granting access outside this test.
+        let mut acl = 2u32.to_le_bytes().to_vec();
+        let named = rustix::process::geteuid().as_raw().checked_add(1).unwrap();
+        for (tag, permissions, id) in [
+            (1u16, 6u16, u32::MAX),
+            (2, 4, named),
+            (4, 0, u32::MAX),
+            (16, 4, u32::MAX),
+            (32, 0, u32::MAX),
+        ] {
+            acl.extend(tag.to_le_bytes());
+            acl.extend(permissions.to_le_bytes());
+            acl.extend(id.to_le_bytes());
+        }
+        const ATTRIBUTE: &str = "system.posix_acl_access";
+        rustix::fs::fsetxattr(&file, ATTRIBUTE, &acl, rustix::fs::XattrFlags::empty()).unwrap();
+        let mut before = [0u8; 256];
+        let length = rustix::fs::fgetxattr(&file, ATTRIBUTE, &mut before[..]).unwrap();
+        assert_eq!(&before[..length], acl);
+        let mode = file.metadata().unwrap().permissions().mode();
+        let store = store(root.path());
+        store
+            .commit(&store.read().unwrap().revision, "value=2")
+            .unwrap();
+        let file = metadata::open_regular(&path).unwrap();
+        let mut after = [0u8; 256];
+        let copied = rustix::fs::fgetxattr(&file, ATTRIBUTE, &mut after[..]).unwrap();
+        assert_eq!(&after[..copied], &before[..length]);
+        assert_eq!(file.metadata().unwrap().permissions().mode(), mode);
+        assert_eq!(fs::read_to_string(path).unwrap(), "value=2");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn linux_policy_flags_are_rejected_without_replacing_the_document() {
         let root = tempfile::TempDir::new().unwrap();
         let path = root.path().join("config.toml");
