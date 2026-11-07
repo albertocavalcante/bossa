@@ -87,7 +87,9 @@ Homebrew reads receipt files and validated opt links locally, including aliases 
 It uses only shell-fast installation-path queries during observation. An absent package requires
 existing local formula/cask metadata to resolve its identity; explicitly install or update its
 tap before retrying when that metadata is unavailable. Preview never downloads API metadata or
-evaluates formula definitions. Receipt verification does not prove executable or application health. Package intent
+evaluates formula definitions. Casks also require a unique latest timestamped installed record;
+Ruby records remain bounded opaque data. Recorded installation verification does not prove
+executable, application or Ruby definition health. Package intent
 must be a canonical lowercase Homebrew token or `owner/tap/token` (without `homebrew-` repository prefixes), a pnpm package name, a GitHub `owner/repository`,
 or a VS Code `publisher.extension`. Unsupported URLs, local package paths and ecosystem version
 pins are rejected before installation. Native handler configuration uses UTIs and bundle IDs.
