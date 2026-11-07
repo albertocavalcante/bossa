@@ -224,15 +224,18 @@ Bossa reads from a platform-specific config directory:
 
 Files:
 
-- `config.toml` — main configuration (collections, workspaces, tools, symlinks)
+- `config.toml` or `config.json` — main configuration (collections, workspaces, tools, symlinks)
 - `tools.toml` — installed tools tracking
 - `caches.toml` — cache symlinks configuration
 
-```bash
-bossa config show                        # Show current config files
-bossa config convert all --format toml   # Convert to TOML
-bossa config validate                    # Validate configs
-```
+Main configuration uses the same schema across Nova, CRUD, status, diff, and apply. TOML takes
+precedence when both formats exist. An unreadable or malformed selected file is an error; Bossa
+does not fall back to another format or an empty configuration. Unknown fields in typed sections
+are rejected. CRUD edits retain the selected file and format, including JSON.
+
+Status can report an unconfigured environment. Apply and Nova require a configuration file,
+including for previews. Reads never migrate or rewrite files. See the
+[configuration reference](docs/src/reference/config-files.md) for legacy compatibility and limits.
 
 ### Environment Variables
 

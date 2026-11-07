@@ -91,8 +91,22 @@ impl AppEnvironment {
             return Ok(path);
         }
         let existing = self.home.as_ref().map(|home| home.join(".config/bossa"));
-        if let Some(path) = existing.filter(|path| path.exists()) {
-            return Ok(path);
+        if let Some(path) = existing {
+            match std::fs::symlink_metadata(&path) {
+                Ok(_) => {
+                    std::fs::metadata(&path).with_context(|| {
+                        format!("Could not inspect config directory {}", path.display())
+                    })?;
+                    return Ok(path);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    crate::configuration::confirm_missing_parent(&path)
+                        .context("Could not inspect the home config directory")?;
+                }
+                Err(error) => {
+                    return Err(error).context("Could not inspect the home config directory");
+                }
+            }
         }
         if let Some(path) = self.variable("XDG_CONFIG_HOME") {
             return Ok(PathBuf::from(path).join("bossa"));
@@ -234,6 +248,16 @@ mod tests {
         #[cfg(not(windows))]
         assert!(env.variable("PATH").is_none());
         assert_eq!(env.variable("Path"), Some(OsStr::new("fixture-bin")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unavailable_home_config_parent_does_not_fall_back_to_xdg() {
+        let temp = TempDir::new().unwrap();
+        std::os::unix::fs::symlink(temp.path().join("missing"), temp.path().join(".config"))
+            .unwrap();
+        let env = environment(temp.path(), &[("XDG_CONFIG_HOME", "/must-not-select")]);
+        assert!(env.config_dir().is_err());
     }
 
     #[cfg(unix)]

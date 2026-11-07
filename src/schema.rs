@@ -13,6 +13,7 @@ use crate::paths;
 
 /// The unified bossa configuration structure
 #[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct BossaConfig {
     /// Collections of git repositories (e.g., reference repos)
     #[serde(default)]
@@ -92,32 +93,36 @@ impl BossaConfig {
     ///
     /// See [`crate::paths::config_dir`] for path resolution details.
     pub fn load() -> Result<Self> {
-        let config_dir = paths::config_dir()?;
-        let config_path = config_dir.join("config.toml");
-
-        if !config_path.exists() {
-            // Return default config if file doesn't exist
-            return Ok(Self::default());
-        }
-
-        let content = std::fs::read_to_string(&config_path)
-            .with_context(|| format!("Could not read config file: {}", config_path.display()))?;
-
-        toml::from_str(&content).context("Invalid TOML format in bossa config")
+        crate::config::load_bossa_config(false)
     }
 
-    /// Save the config to the config directory
-    ///
-    /// See [`crate::paths::config_dir`] for path resolution details.
+    /// Save to the selected source and format; reads never convert legacy input.
     pub fn save(&self) -> Result<PathBuf> {
-        let config_dir = paths::config_dir()?;
-        std::fs::create_dir_all(&config_dir)?;
-
-        let config_path = config_dir.join("config.toml");
-        let content = toml::to_string_pretty(self).context("Failed to serialize config")?;
-        std::fs::write(&config_path, content)?;
-
-        Ok(config_path)
+        self.validate()?;
+        let directory = paths::config_dir()?;
+        let document = crate::config::bossa_document()?;
+        let (path, format) = match document {
+            Some(document) => {
+                let (_, legacy) = crate::config::parse_bossa_document(&document)?;
+                if legacy {
+                    anyhow::bail!(
+                        "Legacy configuration is read-compatible; explicitly convert it before editing"
+                    );
+                }
+                (
+                    document.path,
+                    crate::config::ConfigFormat::from(document.format),
+                )
+            }
+            None => (
+                directory.join("config.toml"),
+                crate::config::ConfigFormat::Toml,
+            ),
+        };
+        let contents = format.serialize(self)?;
+        bossa::write_config_document(&path, &contents)
+            .with_context(|| format!("Could not save configuration {}", path.display()))?;
+        Ok(path)
     }
 
     /// Validate the configuration
@@ -174,6 +179,7 @@ impl BossaConfig {
 // ============================================================================
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Collection {
     /// Path to the collection directory
     pub path: String,
@@ -238,6 +244,7 @@ impl Collection {
 
 /// Settings for cloning repositories
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct CloneSettings {
     /// Shallow clone depth (0 for full clone)
     #[serde(default)]
@@ -252,8 +259,35 @@ pub struct CloneSettings {
     pub options: Vec<String>,
 }
 
+impl CloneSettings {
+    pub fn validate(&self) -> Result<()> {
+        for option in &self.options {
+            let flag = option.split('=').next().unwrap_or(option);
+            if option == "--"
+                || [
+                    "--depth",
+                    "--no-depth",
+                    "--single-branch",
+                    "--no-single-branch",
+                    "--branch",
+                    "--no-branch",
+                ]
+                .iter()
+                .any(|protected| protected.starts_with(flag))
+                || option.starts_with("-b")
+            {
+                anyhow::bail!(
+                    "Clone options cannot override depth, single_branch, default_branch, or the argument boundary"
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
 /// A repository in a collection
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct CollectionRepo {
     /// Repository name
     pub name: String,
@@ -282,6 +316,8 @@ impl CollectionRepo {
         if self.url.is_empty() {
             anyhow::bail!("Repository URL cannot be empty");
         }
+        validate_relative_path(&self.name, false, "Repository name")?;
+        validate_relative_path(&self.default_branch, true, "Repository default branch")?;
         Ok(())
     }
 }
@@ -294,7 +330,8 @@ fn default_branch() -> String {
 // Workspaces - Bare repo + worktree structure
 // ============================================================================
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspacesConfig {
     /// Root directory for all workspaces
     #[serde(default = "default_workspaces_root")]
@@ -309,16 +346,41 @@ pub struct WorkspacesConfig {
     pub repos: Vec<WorkspaceRepo>,
 }
 
+impl Default for WorkspacesConfig {
+    fn default() -> Self {
+        Self {
+            root: default_workspaces_root(),
+            structure: default_structure(),
+            repos: Vec::new(),
+        }
+    }
+}
+
 impl WorkspacesConfig {
     /// Get the expanded root path
     pub fn expanded_root(&self) -> Result<PathBuf> {
+        if self.is_historical_empty_default() {
+            return paths::workspaces_dir();
+        }
         Ok(crate::paths::expand(&self.root))
+    }
+
+    fn is_historical_empty_default(&self) -> bool {
+        self.root.is_empty() && self.structure.is_empty() && self.repos.is_empty()
     }
 
     /// Validate the workspaces config
     pub fn validate(&self) -> Result<()> {
+        // Earlier CRUD serialized this exact unused default. It carries no
+        // workspace intent and must remain readable without rewriting it.
+        if self.is_historical_empty_default() {
+            return Ok(());
+        }
         if self.root.is_empty() {
             anyhow::bail!("Workspaces root cannot be empty");
+        }
+        if self.structure != "bare-worktree" {
+            anyhow::bail!("Unsupported workspace structure: {}", self.structure);
         }
 
         for repo in &self.repos {
@@ -340,6 +402,9 @@ impl WorkspacesConfig {
 
     /// Add or update a repo
     pub fn add_repo(&mut self, repo: WorkspaceRepo) {
+        if self.is_historical_empty_default() {
+            *self = Self::default();
+        }
         // Remove if exists (update)
         self.repos.retain(|r| r.name != repo.name);
         self.repos.push(repo);
@@ -390,6 +455,7 @@ fn default_structure() -> String {
 
 /// A workspace repository with worktrees
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceRepo {
     /// Repository name
     pub name: String,
@@ -425,6 +491,11 @@ impl WorkspaceRepo {
         if self.category.trim().is_empty() {
             anyhow::bail!("Repository category cannot be empty");
         }
+        validate_relative_path(&self.name, false, "Repository name")?;
+        validate_relative_path(&self.category, false, "Repository category")?;
+        for branch in &self.worktrees {
+            validate_relative_path(branch, true, "Worktree branch")?;
+        }
         Ok(())
     }
 
@@ -439,6 +510,22 @@ impl WorkspaceRepo {
     }
 }
 
+fn validate_relative_path(value: &str, nested: bool, label: &str) -> Result<()> {
+    if value.trim().is_empty()
+        || value.starts_with('-')
+        || value.contains(['\\', ':'])
+        || value.chars().any(char::is_control)
+        || (!nested && value.contains('/'))
+        || value.split('/').any(|part| matches!(part, "" | "." | ".."))
+    {
+        anyhow::bail!(
+            "{label} must be a safe relative {}",
+            if nested { "path" } else { "name" }
+        );
+    }
+    Ok(())
+}
+
 fn default_category() -> String {
     "default".to_string()
 }
@@ -448,6 +535,7 @@ fn default_category() -> String {
 // ============================================================================
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Storage {
     /// Mount point path
     pub mount: String,
@@ -505,6 +593,7 @@ pub enum StorageType {
 
 /// A symlink configuration
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Symlink {
     /// Source path (the symlink location)
     pub from: String,
@@ -543,6 +632,7 @@ impl Symlink {
 // ============================================================================
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct NovaConfig {
     /// Ordered list of bootstrap stages to run
     #[serde(default)]
@@ -600,6 +690,7 @@ fn default_true() -> bool {
 
 /// Sudo allowlist configuration
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SudoConfig {
     #[serde(default)]
     pub casks: Vec<String>,
@@ -626,6 +717,7 @@ pub struct DefaultsConfig {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DefaultsRestartConfig {
     #[serde(default)]
     pub services: Vec<String>,
@@ -669,6 +761,7 @@ impl DefaultValue {
 
 /// Packages configuration (aggregates all package managers)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PackagesConfig {
     #[serde(default)]
     pub brew: BrewConfig,
@@ -682,6 +775,7 @@ pub struct PackagesConfig {
 
 /// Brew packages configuration
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BrewConfig {
     #[serde(default)]
     pub taps: Vec<String>,
@@ -696,6 +790,7 @@ pub struct BrewConfig {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BrewEssentialConfig {
     #[serde(default)]
     pub packages: Vec<String>,
@@ -708,18 +803,21 @@ fn default_retries() -> usize {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PnpmConfig {
     #[serde(default)]
     pub globals: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GhConfig {
     #[serde(default)]
     pub extensions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VscodeConfig {
     #[serde(default)]
     pub extensions: Vec<String>,
@@ -731,6 +829,7 @@ pub struct VscodeConfig {
 
 /// Symlinks configuration (replaces stow)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SymlinksConfig {
     pub source: String,
     pub target: String,
@@ -746,6 +845,7 @@ pub struct SymlinksConfig {
 
 /// Dock configuration
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DockConfig {
     /// Auto-hide the dock
     #[serde(default)]
@@ -782,6 +882,7 @@ fn default_minimize_effect() -> String {
 
 /// Dock folder configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DockFolder {
     /// Path to folder
     pub path: String,
@@ -851,6 +952,7 @@ pub struct ThemesSection {
 
 /// A theme preset definition
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ThemeDefinition {
     /// Human-readable description
     #[serde(default)]
@@ -956,6 +1058,7 @@ fn default_install_dir() -> String {
 
 /// A declarative tool definition
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct ToolDefinition {
     /// Source type: http, container, github-release
     pub source: ToolSource,
@@ -1136,6 +1239,7 @@ pub enum ToolSource {
 
 /// Platform availability configuration
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct PlatformsConfig {
     /// Linux platform configurations
     #[serde(default)]
@@ -1152,6 +1256,7 @@ pub struct PlatformsConfig {
 
 /// Architecture-specific platform configuration
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct PlatformArch {
     /// Whether this platform/arch combo is available
     #[serde(default = "default_available")]
@@ -1488,6 +1593,7 @@ impl ToolsSection {
 
 /// Network configuration for proxies and package registries
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct NetworkConfig {
     /// HTTP proxy URL
     #[serde(default)]
@@ -1520,6 +1626,7 @@ pub struct NetworkConfig {
 
 /// Go-specific network configuration
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct GoNetworkConfig {
     /// GOPROXY value
     #[serde(default)]
@@ -1544,6 +1651,7 @@ pub struct GoNetworkConfig {
 
 /// npm/pnpm/bun network configuration
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct NpmNetworkConfig {
     /// npm registry URL
     #[serde(default)]
@@ -1556,6 +1664,7 @@ pub struct NpmNetworkConfig {
 
 /// Python/pip network configuration
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct PythonNetworkConfig {
     /// Primary index URL (pip --index-url)
     #[serde(default)]
@@ -1572,6 +1681,7 @@ pub struct PythonNetworkConfig {
 
 /// Cargo/Rust network configuration
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct CargoNetworkConfig {
     /// Alternative registry name and URL
     #[serde(default)]
@@ -1628,6 +1738,7 @@ impl NetworkConfig {
 
 /// Configuration for logical locations (path aliases)
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct LocationsConfig {
     /// Named location mappings (e.g., "dev" -> "/Volumes/T9/dev")
     #[serde(default)]
@@ -1668,6 +1779,7 @@ impl LocationsConfig {
 
 /// Configuration for generated config files
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ConfigsSection {
     /// Git configuration
     #[serde(default)]
@@ -1725,6 +1837,7 @@ impl GitConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct GitUserConfig {
     pub name: Option<String>,
     pub email: Option<String>,
@@ -1842,6 +1955,7 @@ fn default_runtime() -> String {
 
 /// Dotfiles repository configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DotfilesConfig {
     /// Git repository URL
     pub repo: String,
@@ -1893,6 +2007,7 @@ impl DotfilesConfig {
 
 /// Private dotfiles submodule configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DotfilesPrivateConfig {
     /// Relative path within the dotfiles repo
     pub path: String,
@@ -1928,6 +2043,7 @@ impl DotfilesPrivateConfig {
 
 /// Configuration for reconciling dotfiles across multiple sources
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DotfilesReconcileConfig {
     /// Primary source (e.g., "~/.dotfiles")
     pub source_a: String,
@@ -1956,6 +2072,7 @@ fn default_reconcile_strategy() -> String {
 // ============================================================================
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct CellarConfig {
     /// Path to external cellar root (e.g., "/Volumes/T9/homebrew")
     #[serde(default)]
@@ -2106,7 +2223,7 @@ stages = ["defaults", "homebrew", "essential", "stow", "collections", "workspace
     }
 
     #[test]
-    fn test_parse_config_with_unknown_fields() {
+    fn test_parse_config_rejects_unknown_fields() {
         let toml = r#"
 [collections.refs]
 path = "~/dev/refs"
@@ -2117,9 +2234,9 @@ name = "rust"
 url = "https://github.com/rust-lang/rust"
 extra_field = 123
 "#;
-        // Serde should ignore unknown fields by default
+        // Unknown intent must be diagnosed instead of silently disappearing.
         let result: Result<BossaConfig, _> = toml::from_str(toml);
-        assert!(result.is_ok());
+        assert!(result.unwrap_err().to_string().contains("unknown field"));
     }
 
     #[test]

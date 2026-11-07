@@ -15,7 +15,11 @@ All configuration lives in `~/.config/bossa/`:
 
 ## File Format
 
-Bossa uses TOML for `config.toml`. The caches file is also TOML by default (created with `bossa caches init`).
+Bossa reads the main configuration from `config.toml` or `config.json`, preferring TOML when both
+exist. Both use the same schema. Malformed or unreadable configuration is an error, and CRUD edits
+preserve the selected format. The caches file is TOML by default (created with `bossa caches init`).
+See [loading and editing rules](../reference/config-files.md#loading-and-editing) for precedence,
+legacy compatibility, and limits.
 
 Legacy configs from `~/.config/workspace-setup/` can be migrated with:
 
@@ -36,7 +40,6 @@ path = "~/dev/refs"
 [[collections.refs.repos]]
 url = "https://github.com/rust-lang/rust.git"
 name = "rust"
-name = "rust" # Optional, derived from URL if omitted
 
 [[collections.refs.repos]]
 url = "https://github.com/torvalds/linux.git"

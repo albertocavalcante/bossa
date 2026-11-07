@@ -6,6 +6,7 @@ package(default_visibility = ["//visibility:public"])
 
 APP_SRCS = [
     "src/app.rs",
+    "src/configuration.rs",
     "src/lib.rs",
     "src/process.rs",
 ]
@@ -16,10 +17,16 @@ rust_library(
     crate_name = "bossa",
     crate_root = "src/lib.rs",
     edition = "2024",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
     deps = [
         "@crates//:anyhow",
         "@crates//:dirs",
+        "@crates//:serde",
+        "@crates//:serde_json",
         "@crates//:shellexpand",
+        "@crates//:tempfile",
+        "@crates//:thiserror",
+        "@crates//:toml",
     ],
 )
 

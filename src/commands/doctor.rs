@@ -5,7 +5,6 @@ use std::path::Path;
 use crate::Context;
 use crate::config;
 use crate::runner;
-use crate::schema::BossaConfig;
 use crate::ui;
 
 struct Issue {
@@ -156,10 +155,10 @@ fn check_configs(issues: &mut Vec<Issue>) {
             "config.json"
         };
         let config_file = config_dir.join(file_name);
-        let result = config::load_config::<BossaConfig>(&config_dir, "config");
+        let result = config::load_bossa_config(true);
 
         match result {
-            Ok((cfg, _)) => {
+            Ok(cfg) => {
                 // Config parsed — now run semantic validation
                 match cfg.validate() {
                     Ok(()) => {

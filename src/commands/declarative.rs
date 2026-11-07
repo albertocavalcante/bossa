@@ -10,7 +10,6 @@
 use anyhow::{Context as AnyhowContext, Result};
 use colored::Colorize;
 use rayon::prelude::*;
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,70 +21,61 @@ use crate::progress;
 use crate::ui;
 
 // ============================================================================
-// Temporary stub types (will be replaced by schema.rs and state.rs)
+// Command projections from the canonical schema; never deserialized as input
 // ============================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BossaConfig {
-    #[serde(default)]
+#[derive(Debug, Clone)]
+pub struct CommandConfig {
+    pub workspace_root: PathBuf,
     pub collections: Vec<Collection>,
-    #[serde(default)]
+
     pub workspaces: Vec<Workspace>,
-    #[serde(default)]
+
     pub storage: Vec<Storage>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Collection {
     pub name: String,
     pub path: String,
-    #[serde(default)]
+
     pub description: Option<String>,
-    #[serde(default)]
+
     pub repositories: Vec<Repository>,
+    pub clone: crate::schema::CloneSettings,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Repository {
-    pub name: String,
-    pub url: String,
-    #[serde(default = "default_branch")]
-    pub default_branch: String,
-}
+type Repository = crate::schema::CollectionRepo;
 
-fn default_branch() -> String {
-    "main".to_string()
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Workspace {
     pub name: String,
     pub url: String,
-    #[serde(default)]
-    pub bare_dir: Option<String>,
-    #[serde(default)]
+
+    pub bare_path: PathBuf,
+
     pub worktrees: Vec<WorktreeConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WorktreeConfig {
     pub branch: String,
-    pub path: String,
+    pub path: PathBuf,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Storage {
     pub name: String,
-    pub mount_point: String,
+    pub mount_point: PathBuf,
     pub storage_type: String,
-    #[serde(default)]
+
     pub symlinks: Vec<Symlink>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Symlink {
-    pub source: String,
-    pub target: String,
+    pub source: PathBuf,
+    pub target: PathBuf,
 }
 
 #[derive(Debug, Default)]
@@ -113,7 +103,7 @@ pub struct WorkspaceState {
 pub struct StorageState {
     pub name: String,
     pub mounted: bool,
-    pub symlinks: Vec<String>,
+    pub symlinks: Vec<PathBuf>,
 }
 
 #[derive(Debug, Default)]
@@ -190,32 +180,95 @@ impl std::fmt::Display for ResourceType {
 // Config and State Loading (Stubs)
 // ============================================================================
 
-fn load_config() -> Result<BossaConfig> {
-    // Stub: Will load from ~/.config/bossa/config.{toml,json}
-    // This is a temporary implementation that returns empty config
-    // until schema.rs is implemented with proper BossaConfig serialization
+fn load_config() -> Result<CommandConfig> {
+    load_command_config(false)
+}
 
-    let config_dir = crate::config::config_dir()?;
-
-    // Try to load the new unified config format
-    if let Ok((config, _)) = crate::config::load_config::<BossaConfig>(&config_dir, "config") {
-        return Ok(config);
+fn load_command_config(required: bool) -> Result<CommandConfig> {
+    let config = crate::config::load_bossa_config(required)?;
+    let working_dir = std::env::current_dir()?;
+    let root = if crate::paths::environment()
+        .variable("BOSSA_WORKSPACES_DIR")
+        .is_some()
+    {
+        crate::paths::workspaces_dir()?
+    } else {
+        config.workspaces.expanded_root()?
+    };
+    let absolute = |path: PathBuf| {
+        if path.is_absolute() {
+            path
+        } else {
+            working_dir.join(path)
+        }
+    };
+    let root = absolute(root);
+    let mut collections: Vec<_> = config
+        .collections
+        .into_iter()
+        .map(|(name, collection)| Collection {
+            name,
+            path: collection.path,
+            description: (!collection.description.is_empty()).then_some(collection.description),
+            repositories: collection.repos,
+            clone: collection.clone,
+        })
+        .collect();
+    collections.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut workspaces = Vec::new();
+    for workspace in config.workspaces.repos {
+        let bare = workspace.bare_path(&root);
+        let worktrees = workspace
+            .worktrees
+            .iter()
+            .map(|branch| WorktreeConfig {
+                branch: branch.clone(),
+                path: workspace.worktree_path(&root, branch),
+            })
+            .collect();
+        workspaces.push(Workspace {
+            name: workspace.name,
+            url: workspace.url,
+            bare_path: bare,
+            worktrees,
+        });
     }
-
-    // Fallback: Try legacy configs from workspace-setup directory
-    let _legacy_dir = crate::config::legacy_config_dir().ok();
-
-    let collections = vec![];
-    let workspaces = vec![];
-
-    // Try loading legacy refs.json/toml if it exists
-    // Note: These types need to be defined in schema.rs or we load as serde_json::Value
-    // For now, just return empty to avoid compilation errors
-
-    Ok(BossaConfig {
+    let mut storage = Vec::new();
+    for (name, configured) in config.storage {
+        let mount = absolute(configured.expanded_mount()?);
+        let mut symlinks = Vec::new();
+        for link in configured.symlinks {
+            let source = if link.to.contains("{mount}") {
+                let mount_text = mount
+                    .to_str()
+                    .context("A storage placeholder requires a UTF-8 mount path")?;
+                crate::paths::expand(&link.to.replace("{mount}", mount_text))
+            } else {
+                crate::paths::expand(&link.to)
+            };
+            symlinks.push(Symlink {
+                source,
+                target: absolute(crate::paths::expand(&link.from)),
+            });
+        }
+        storage.push(Storage {
+            name,
+            mount_point: mount,
+            storage_type: match configured.storage_type {
+                crate::schema::StorageType::External => "external",
+                crate::schema::StorageType::Network => "network",
+                crate::schema::StorageType::Internal => "internal",
+            }
+            .to_string(),
+            symlinks,
+        });
+    }
+    storage.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(CommandConfig {
+        workspace_root: root,
         collections,
         workspaces,
-        storage: vec![],
+        storage,
     })
 }
 
@@ -302,7 +355,7 @@ pub fn status(ctx: &Context, target: Option<&str>) -> Result<()> {
 }
 
 fn show_collections_status(
-    config: &BossaConfig,
+    config: &CommandConfig,
     state: &BossaState,
     name_filter: Option<&str>,
     ctx: &Context,
@@ -361,7 +414,7 @@ fn show_collections_status(
 }
 
 fn show_workspaces_status(
-    config: &BossaConfig,
+    config: &CommandConfig,
     state: &BossaState,
     name_filter: Option<&str>,
     ctx: &Context,
@@ -412,7 +465,7 @@ fn show_workspaces_status(
 }
 
 fn show_storage_status(
-    config: &BossaConfig,
+    config: &CommandConfig,
     state: &BossaState,
     name_filter: Option<&str>,
     ctx: &Context,
@@ -452,7 +505,7 @@ fn show_storage_status(
         );
 
         if !ctx.quiet {
-            ui::dim(&format!("    Mount: {}", stor.mount_point));
+            ui::dim(&format!("    Mount: {}", stor.mount_point.display()));
             ui::dim(&format!("    Mounted: {}", if mounted { "✓" } else { "✗" }));
             ui::dim(&format!("    Symlinks: {symlinks_count}/{expected_count}"));
         }
@@ -473,11 +526,44 @@ pub fn apply(ctx: &Context, target: Option<&str>, dry_run: bool, jobs: usize) ->
         println!();
     }
 
-    let config = load_config()?;
+    let config = load_command_config(true)?;
     let mut state = compute_state(&config)?;
     let mut summary = ApplySummary::default();
 
     let (resource_filter, name_filter) = target.map_or((None, None), parse_target);
+
+    if resource_filter.is_none() || resource_filter == Some(ResourceType::Collections) {
+        for collection in config.collections.iter().filter(|collection| {
+            name_filter
+                .as_deref()
+                .is_none_or(|name| name == collection.name)
+        }) {
+            collection.clone.validate()?;
+        }
+    }
+
+    // Validate every selected workspace destination before any collection or
+    // storage mutation, including escapes through existing directory symlinks.
+    if resource_filter.is_none() || resource_filter == Some(ResourceType::Workspaces) {
+        let selected: Vec<_> = config
+            .workspaces
+            .iter()
+            .filter(|workspace| {
+                name_filter
+                    .as_deref()
+                    .is_none_or(|name| name == workspace.name)
+            })
+            .collect();
+        if !selected.is_empty() {
+            let root = resolve_workspace_location(&config.workspace_root)?;
+            for workspace in selected {
+                ensure_workspace_scope(&root, &workspace.bare_path)?;
+                for worktree in &workspace.worktrees {
+                    ensure_workspace_scope(&root, &worktree.path)?;
+                }
+            }
+        }
+    }
 
     // Apply collections
     if resource_filter.is_none() || resource_filter == Some(ResourceType::Collections) {
@@ -533,7 +619,7 @@ pub fn apply(ctx: &Context, target: Option<&str>, dry_run: bool, jobs: usize) ->
 }
 
 fn apply_collections(
-    config: &BossaConfig,
+    config: &CommandConfig,
     state: &mut BossaState,
     name_filter: Option<&str>,
     dry_run: bool,
@@ -561,7 +647,7 @@ fn apply_collections(
 }
 
 fn apply_collection(
-    _config: &BossaConfig,
+    _config: &CommandConfig,
     state: &mut BossaState,
     collection: &Collection,
     dry_run: bool,
@@ -612,7 +698,7 @@ fn apply_collection(
 
     pool.install(|| {
         repos_to_clone.par_iter().for_each(|repo| {
-            let result = clone_repo(&root, repo);
+            let result = clone_repo(&root, repo, &collection.clone);
 
             match result {
                 Ok(()) => {
@@ -684,7 +770,7 @@ fn apply_collection(
 }
 
 fn apply_workspaces(
-    config: &BossaConfig,
+    config: &CommandConfig,
     state: &mut BossaState,
     name_filter: Option<&str>,
     dry_run: bool,
@@ -719,9 +805,7 @@ fn apply_workspace(
     ui::section(&format!("Workspace: {}", workspace.name));
 
     // Check if bare repo exists
-    let ws_dir = crate::config::workspaces_dir()?;
-    let bare_dir = workspace.bare_dir.as_deref().unwrap_or(&workspace.name);
-    let bare_path = ws_dir.join(bare_dir);
+    let bare_path = &workspace.bare_path;
 
     let bare_exists = bare_path.exists() && bare_path.join("config").exists();
 
@@ -733,11 +817,14 @@ fn apply_workspace(
         } else {
             let pb = progress::spinner("Cloning bare repository...");
 
-            fs::create_dir_all(&ws_dir)?;
-
-            let bare_path_str = bare_path.to_string_lossy().into_owned();
+            fs::create_dir_all(
+                bare_path
+                    .parent()
+                    .context("Workspace destination has no parent")?,
+            )?;
             let result = std::process::Command::new("git")
-                .args(["clone", "--bare", &workspace.url, bare_path_str.as_str()])
+                .args(["clone", "--bare", "--", &workspace.url])
+                .arg(bare_path)
                 .output()?;
 
             if result.status.success() {
@@ -764,7 +851,7 @@ fn apply_workspace(
 
     // Setup worktrees
     for worktree in &workspace.worktrees {
-        let wt_path = crate::paths::expand(&worktree.path);
+        let wt_path = &worktree.path;
 
         if !wt_path.exists() {
             ui::info(&format!("Creating worktree: {}", worktree.branch));
@@ -799,7 +886,7 @@ fn apply_workspace(
 }
 
 fn apply_storage(
-    config: &BossaConfig,
+    config: &CommandConfig,
     state: &mut BossaState,
     name_filter: Option<&str>,
     dry_run: bool,
@@ -833,12 +920,12 @@ fn apply_storage_item(
 ) -> Result<()> {
     ui::section(&format!("Storage: {}", storage.name));
 
-    let mount_path = PathBuf::from(&storage.mount_point);
+    let mount_path = &storage.mount_point;
     let mounted = mount_path.exists();
 
     if !mounted {
         ui::warn("Storage not mounted");
-        ui::dim(&format!("  Mount point: {}", storage.mount_point));
+        ui::dim(&format!("  Mount point: {}", storage.mount_point.display()));
         return Ok(());
     }
 
@@ -846,8 +933,8 @@ fn apply_storage_item(
 
     // Create symlinks
     for symlink in &storage.symlinks {
-        let target = crate::paths::expand(&symlink.target);
-        let source = crate::paths::expand(&symlink.source);
+        let target = &symlink.target;
+        let source = &symlink.source;
 
         if target.exists() {
             if !ctx.quiet {
@@ -870,7 +957,7 @@ fn apply_storage_item(
                 }
 
                 #[cfg(unix)]
-                std::os::unix::fs::symlink(&source, &target)?;
+                std::os::unix::fs::symlink(source, target)?;
 
                 #[cfg(not(unix))]
                 ui::warn("Symlink creation not supported on this platform");
@@ -957,7 +1044,7 @@ pub fn diff(ctx: &Context, target: Option<&str>) -> Result<()> {
 }
 
 fn diff_collections(
-    config: &BossaConfig,
+    config: &CommandConfig,
     _state: &BossaState,
     name_filter: Option<&str>,
     ctx: &Context,
@@ -1031,7 +1118,7 @@ fn diff_collections(
 }
 
 fn diff_workspaces(
-    config: &BossaConfig,
+    config: &CommandConfig,
     state: &BossaState,
     name_filter: Option<&str>,
     ctx: &Context,
@@ -1081,7 +1168,7 @@ fn diff_workspaces(
             );
             if !ctx.quiet {
                 for wt in &workspace.worktrees {
-                    ui::dim(&format!("      {} -> {}", wt.branch, wt.path));
+                    ui::dim(&format!("      {} -> {}", wt.branch, wt.path.display()));
                 }
             }
         }
@@ -1091,7 +1178,7 @@ fn diff_workspaces(
 }
 
 fn diff_storage(
-    config: &BossaConfig,
+    config: &CommandConfig,
     state: &BossaState,
     name_filter: Option<&str>,
     _ctx: &Context,
@@ -1121,7 +1208,11 @@ fn diff_storage(
 
             println!();
             println!("  {}", stor.name.bold());
-            println!("    {} Not mounted: {}", "!".yellow(), stor.mount_point);
+            println!(
+                "    {} Not mounted: {}",
+                "!".yellow(),
+                stor.mount_point.display()
+            );
             continue;
         }
 
@@ -1129,7 +1220,7 @@ fn diff_storage(
         let missing_symlinks: Vec<_> = stor
             .symlinks
             .iter()
-            .filter(|s| !crate::paths::expand(&s.target).exists())
+            .filter(|s| !s.target.exists())
             .collect();
 
         if missing_symlinks.is_empty() {
@@ -1148,8 +1239,8 @@ fn diff_storage(
             println!(
                 "      {} {} -> {}",
                 "+".green(),
-                symlink.target,
-                symlink.source
+                symlink.target.display(),
+                symlink.source.display()
             );
         }
     }
@@ -1161,7 +1252,7 @@ fn diff_storage(
 // Helper Functions
 // ============================================================================
 
-fn compute_state(config: &BossaConfig) -> Result<BossaState> {
+fn compute_state(config: &CommandConfig) -> Result<BossaState> {
     let mut state = BossaState::default();
 
     // Compute collections state
@@ -1179,9 +1270,7 @@ fn compute_state(config: &BossaConfig) -> Result<BossaState> {
 
     // Compute workspaces state
     for workspace in &config.workspaces {
-        let ws_dir = crate::config::workspaces_dir()?;
-        let bare_dir = workspace.bare_dir.as_deref().unwrap_or(&workspace.name);
-        let bare_path = ws_dir.join(bare_dir);
+        let bare_path = &workspace.bare_path;
 
         let bare_setup = bare_path.exists() && bare_path.join("config").exists();
 
@@ -1194,13 +1283,13 @@ fn compute_state(config: &BossaConfig) -> Result<BossaState> {
 
     // Compute storage state
     for storage in &config.storage {
-        let mount_path = PathBuf::from(&storage.mount_point);
+        let mount_path = &storage.mount_point;
         let mounted = mount_path.exists();
 
         let symlinks: Vec<_> = storage
             .symlinks
             .iter()
-            .filter(|s| crate::paths::expand(&s.target).exists())
+            .filter(|s| s.target.exists())
             .map(|s| s.target.clone())
             .collect();
 
@@ -1237,13 +1326,104 @@ fn get_cloned_repos(root: &Path) -> Result<Vec<String>> {
     Ok(repos)
 }
 
-fn clone_repo(root: &Path, repo: &Repository) -> Result<()> {
-    let repo_path = root.join(&repo.name);
-    let repo_path_str = repo_path.to_string_lossy().into_owned();
+fn resolve_workspace_location(path: &Path) -> Result<PathBuf> {
+    let mut existing = if path.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        path.to_path_buf()
+    };
+    let mut suffix = Vec::new();
+    loop {
+        match fs::symlink_metadata(&existing) {
+            Ok(_) => {
+                let mut resolved = existing
+                    .canonicalize()
+                    .context("Could not resolve workspace location")?;
+                if !suffix.is_empty() && !fs::metadata(&existing)?.is_dir() {
+                    anyhow::bail!("Workspace ancestor is not a directory");
+                }
+                for component in suffix.into_iter().rev() {
+                    resolved.push(component);
+                }
+                return Ok(resolved);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                suffix.push(
+                    existing
+                        .file_name()
+                        .context("Could not resolve workspace ancestor")?
+                        .to_os_string(),
+                );
+                existing = existing
+                    .parent()
+                    .context("No existing workspace ancestor")?
+                    .to_path_buf();
+                if existing.as_os_str().is_empty() {
+                    existing = PathBuf::from(".");
+                }
+            }
+            Err(error) => return Err(error).context("Could not inspect workspace location"),
+        }
+    }
+}
 
-    let output = std::process::Command::new("git")
-        .args(["clone", "--depth", "1", &repo.url, repo_path_str.as_str()])
-        .output()
+fn ensure_workspace_scope(root: &Path, destination: &Path) -> Result<()> {
+    if !resolve_workspace_location(destination)?.starts_with(root) {
+        anyhow::bail!(
+            "Workspace destination resolves outside the configured root: {}",
+            destination.display()
+        );
+    }
+    Ok(())
+}
+
+fn clone_repo(
+    root: &Path,
+    repo: &Repository,
+    settings: &crate::schema::CloneSettings,
+) -> Result<()> {
+    let runner = bossa::SystemRunner::new(crate::paths::environment().variables().clone());
+    clone_repo_using(root, repo, settings, &runner)
+}
+
+fn clone_repo_using(
+    root: &Path,
+    repo: &Repository,
+    settings: &crate::schema::CloneSettings,
+    runner: &dyn bossa::ProcessRunner,
+) -> Result<()> {
+    settings.validate()?;
+    repo.validate()?;
+    let repo_path = root.join(&repo.name);
+    let mut args: Vec<std::ffi::OsString> = vec!["clone".into()];
+    if settings.depth > 0 {
+        args.extend(["--depth".into(), settings.depth.to_string().into()]);
+    }
+    args.push(
+        if settings.single_branch {
+            "--single-branch"
+        } else {
+            "--no-single-branch"
+        }
+        .into(),
+    );
+    args.extend(settings.options.iter().map(Into::into));
+    args.extend([
+        "--branch".into(),
+        repo.default_branch.clone().into(),
+        "--".into(),
+        repo.url.clone().into(),
+        repo_path.as_os_str().to_os_string(),
+    ]);
+    let output = runner
+        .run(
+            &bossa::CommandRequest {
+                program: "git".into(),
+                args,
+                working_dir: std::env::current_dir()?,
+            },
+            bossa::IoMode::Capture,
+        )
         .context("Failed to execute git clone")?;
 
     if !output.status.success() {
@@ -1251,19 +1431,155 @@ fn clone_repo(root: &Path, repo: &Repository) -> Result<()> {
         anyhow::bail!("{}", stderr.trim());
     }
 
-    // Configure for exFAT (T9 drive)
-    let _ = std::process::Command::new("git")
-        .args([
-            "-C",
-            repo_path_str.as_str(),
-            "config",
-            "--local",
-            "core.fileMode",
-            "false",
-        ])
-        .output();
+    // Preserve the existing collection policy; full outcome verification follows.
+    let _ = runner.run(
+        &bossa::CommandRequest {
+            program: "git".into(),
+            args: vec![
+                "-C".into(),
+                repo_path.into_os_string(),
+                "config".into(),
+                "--local".into(),
+                "core.fileMode".into(),
+                "false".into(),
+            ],
+            working_dir: std::env::current_dir()?,
+        },
+        bossa::IoMode::Capture,
+    );
 
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod config_application_tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::ffi::OsString;
+    use std::os::unix::process::ExitStatusExt;
+
+    #[derive(Default)]
+    struct RecordingRunner {
+        calls: RefCell<Vec<Vec<OsString>>>,
+        fail: bool,
+    }
+
+    impl bossa::ProcessRunner for RecordingRunner {
+        fn run(
+            &self,
+            request: &bossa::CommandRequest,
+            _: bossa::IoMode,
+        ) -> std::io::Result<std::process::Output> {
+            assert_eq!(request.program, "git");
+            self.calls.borrow_mut().push(request.args.clone());
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(if self.fail { 256 } else { 0 }),
+                stdout: Vec::new(),
+                stderr: b"fixture failure".to_vec(),
+            })
+        }
+    }
+
+    fn repository() -> Repository {
+        Repository {
+            name: "repo".into(),
+            url: "fixture-source".into(),
+            default_branch: "other".into(),
+            description: String::new(),
+        }
+    }
+
+    #[test]
+    fn clone_honors_canonical_depth_branch_and_additional_options() {
+        let root = tempfile::TempDir::new().unwrap();
+        let runner = RecordingRunner::default();
+        let settings = crate::schema::CloneSettings {
+            depth: 0,
+            single_branch: true,
+            options: vec!["--no-checkout".into()],
+        };
+        clone_repo_using(root.path(), &repository(), &settings, &runner).unwrap();
+        let calls = runner.calls.borrow();
+        assert_eq!(
+            calls[0],
+            vec![
+                OsString::from("clone"),
+                "--single-branch".into(),
+                "--no-checkout".into(),
+                "--branch".into(),
+                "other".into(),
+                "--".into(),
+                "fixture-source".into(),
+                root.path().join("repo").into_os_string()
+            ]
+        );
+        assert_eq!(calls.len(), 2);
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn shallow_depth_is_explicit_and_conflicting_options_never_execute() {
+        let root = tempfile::TempDir::new().unwrap();
+        let runner = RecordingRunner::default();
+        clone_repo_using(
+            root.path(),
+            &repository(),
+            &crate::schema::CloneSettings {
+                depth: 7,
+                ..Default::default()
+            },
+            &runner,
+        )
+        .unwrap();
+        assert_eq!(
+            &runner.calls.borrow()[0][..3],
+            &[OsString::from("clone"), "--depth".into(), "7".into()]
+        );
+        assert!(runner.calls.borrow()[0].contains(&OsString::from("--no-single-branch")));
+        runner.calls.borrow_mut().clear();
+        for option in [
+            "--branch=ignored",
+            "--dep=1",
+            "--no-depth",
+            "--no-branch",
+            "--bran=ignored",
+            "--single-br",
+            "--no-single-br",
+        ] {
+            assert!(
+                clone_repo_using(
+                    root.path(),
+                    &repository(),
+                    &crate::schema::CloneSettings {
+                        options: vec![option.into()],
+                        ..Default::default()
+                    },
+                    &runner
+                )
+                .is_err()
+            );
+            assert!(runner.calls.borrow().is_empty());
+        }
+    }
+
+    #[test]
+    fn unsuccessful_clone_does_not_run_follow_up_commands() {
+        let root = tempfile::TempDir::new().unwrap();
+        let runner = RecordingRunner {
+            fail: true,
+            ..Default::default()
+        };
+        assert!(
+            clone_repo_using(
+                root.path(),
+                &repository(),
+                &crate::schema::CloneSettings::default(),
+                &runner
+            )
+            .is_err()
+        );
+        assert_eq!(runner.calls.borrow().len(), 1);
+    }
 }
 
 fn push_failed_repo(

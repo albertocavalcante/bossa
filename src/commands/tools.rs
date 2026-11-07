@@ -857,13 +857,10 @@ fn install_from_container(
 /// List installed tools.
 fn list(_ctx: &Context, show_all: bool) -> Result<()> {
     let state = ToolsConfig::load()?;
-    let config = BossaConfig::load().ok();
+    let config = BossaConfig::load()?;
 
     // Collect defined tools from config
-    let defined_tools: HashSet<_> = config
-        .as_ref()
-        .map(|c| c.tools.definitions.keys().cloned().collect())
-        .unwrap_or_default();
+    let defined_tools: HashSet<_> = config.tools.definitions.keys().cloned().collect();
 
     if state.tools.is_empty() && (!show_all || defined_tools.is_empty()) {
         ui::info("No tools installed yet.");
@@ -915,17 +912,15 @@ fn list(_ctx: &Context, show_all: bool) -> Result<()> {
             ui::header("Defined in Config (Not Installed)");
             println!();
 
-            if let Some(ref cfg) = config {
-                for name in not_installed {
-                    if let Some(def) = cfg.tools.get(name) {
-                        let status = if def.enabled { "○" } else { "○ (disabled)" };
-                        println!("  {status} {name}");
-                        if !def.description.is_empty() {
-                            ui::kv("    Description", &def.description);
-                        }
-                        ui::kv("    Source", &format!("{:?}", def.source).to_lowercase());
-                        println!();
+            for name in not_installed {
+                if let Some(def) = config.tools.get(name) {
+                    let status = if def.enabled { "○" } else { "○ (disabled)" };
+                    println!("  {status} {name}");
+                    if !def.description.is_empty() {
+                        ui::kv("    Description", &def.description);
                     }
+                    ui::kv("    Source", &format!("{:?}", def.source).to_lowercase());
+                    println!();
                 }
             }
 
@@ -939,10 +934,10 @@ fn list(_ctx: &Context, show_all: bool) -> Result<()> {
 /// Show status of a specific tool.
 fn status(_ctx: &Context, name: &str) -> Result<()> {
     let state = ToolsConfig::load()?;
-    let config = BossaConfig::load().ok();
+    let config = BossaConfig::load()?;
 
     let installed = state.get(name);
-    let defined = config.as_ref().and_then(|c| c.tools.get(name));
+    let defined = config.tools.get(name);
 
     if installed.is_none() && defined.is_none() {
         bail!("Tool '{name}' not found (not installed and not defined in config)");
@@ -1177,7 +1172,7 @@ impl VersionInfo {
 /// Check for outdated tools
 fn outdated(ctx: &Context, filter_tools: &[String], as_json: bool) -> Result<()> {
     let state = ToolsConfig::load()?;
-    let config = BossaConfig::load().ok();
+    let config = BossaConfig::load()?;
 
     // Collect tools to check
     let tools_to_check: Vec<(&String, Option<&ToolDefinition>)> = if filter_tools.is_empty() {
@@ -1186,7 +1181,7 @@ fn outdated(ctx: &Context, filter_tools: &[String], as_json: bool) -> Result<()>
             .tools
             .keys()
             .map(|name| {
-                let def = config.as_ref().and_then(|c| c.tools.get(name));
+                let def = config.tools.get(name);
                 (name, def)
             })
             .collect()
@@ -1195,7 +1190,7 @@ fn outdated(ctx: &Context, filter_tools: &[String], as_json: bool) -> Result<()>
         filter_tools
             .iter()
             .filter_map(|name| {
-                let def = config.as_ref().and_then(|c| c.tools.get(name));
+                let def = config.tools.get(name);
                 if state.tools.contains_key(name) || def.is_some() {
                     Some((name, def))
                 } else {
