@@ -2,7 +2,7 @@
 //!
 //! "bossa nova" - the vision: new machine → brew install bossa → bossa nova → done
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use colored::Colorize;
 
 use crate::Context as AppContext;
@@ -14,7 +14,6 @@ use crate::resource::{
     BrewPackage, DefaultValue as ResDefaultValue, DockApp, DockFolder, FileHandler, GHExtension,
     MacOSDefault, PnpmPackage, Symlink, VSCodeExtension,
 };
-use crate::runner;
 use crate::schema::{BossaConfig, DefaultValue as SchemaDefaultValue};
 use crate::sudo::SudoConfig;
 use crate::ui;
@@ -34,10 +33,12 @@ pub fn run(ctx: &AppContext, args: NovaArgs) -> Result<()> {
     let config = load_config()?;
 
     // Build execution plan
-    let plan = build_plan(ctx, &config, &args)?;
+    let stages = determine_stages(&args)?;
+    check_prerequisites(&config, &stages)?;
+    let plan = build_plan(&config, &stages)?;
 
     if plan.is_empty() {
-        ui::success("Nothing to do - system is already configured!");
+        ui::success("No resources configured in the selected stages");
         return Ok(());
     }
 
@@ -67,78 +68,44 @@ pub fn run(ctx: &AppContext, args: NovaArgs) -> Result<()> {
     Ok(())
 }
 
-/// Install Homebrew if it's not already present.
-///
-/// Returns `Ok(())` immediately if brew is already on `$PATH` (idempotent).
-/// Otherwise prompts the user for confirmation (skipped when `yes` is true)
-/// and runs the official Homebrew install script.
-pub(crate) fn install_homebrew(yes: bool) -> Result<()> {
-    if runner::command_exists("brew") {
-        return Ok(());
-    }
-
-    ui::info("Homebrew is not installed.");
-
-    if !yes {
-        let confirmed = dialoguer::Confirm::new()
-            .with_prompt("Install Homebrew now?")
-            .default(true)
-            .interact()
-            .context("Failed to read confirmation")?;
-
-        if !confirmed {
-            anyhow::bail!("Homebrew installation declined — cannot continue without brew");
-        }
-    }
-
-    ui::info("Installing Homebrew...");
-
-    let status = runner::run(
-        "/bin/bash",
-        &[
-            "-c",
-            "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)",
-        ],
-    )
-    .context("Failed to run Homebrew install script")?;
-
-    if !status.success() {
-        anyhow::bail!("Homebrew install script exited with status {status}");
-    }
-
-    // Verify brew is now reachable
-    if !runner::command_exists("brew") {
-        anyhow::bail!(
-            "Homebrew install script succeeded but `brew` is still not found on $PATH.\n\
-             You may need to add Homebrew to your PATH and restart your shell."
-        );
-    }
-
-    ui::success("Homebrew installed successfully!");
-    Ok(())
-}
-
 fn load_config() -> Result<BossaConfig> {
     config::load_bossa_config(true)
 }
 
-fn build_plan(ctx: &AppContext, config: &BossaConfig, args: &NovaArgs) -> Result<ExecutionPlan> {
-    let mut plan = ExecutionPlan::new();
+/// Preflight Homebrew, cellar and dotfiles before constructing resources.
+/// Unsupported synchronization is blocked until it has an explicit safe executor.
+fn check_prerequisites(config: &BossaConfig, stages: &[&str]) -> Result<()> {
+    let brew = &config.packages.brew;
+    let packages_configured = !brew.taps.is_empty()
+        || !brew.essential.packages.is_empty()
+        || !brew.formulas.is_empty()
+        || !brew.casks.is_empty()
+        || !brew.fonts.is_empty();
+    let needs_brew =
+        stages.contains(&"homebrew") || (stages.contains(&"packages") && packages_configured);
+    let mut blockers = Vec::new();
+    if needs_brew && !crate::runner::command_exists("brew") {
+        blockers.push("homebrew: install Homebrew explicitly, then retry; verified bootstrap acquisition is not implemented");
+    }
+    if stages.contains(&"cellar") && !config.cellar.path.is_empty() {
+        blockers.push("cellar: Nova synchronization is blocked until preservation and recovery are implemented; omit this stage to preview other resources");
+    }
+    if stages.contains(&"dotfiles") && config.dotfiles.is_some() {
+        blockers.push("dotfiles: Nova synchronization is blocked until acquisition and dependent symlinks have a safe executor; omit this stage to preview other resources");
+    }
+    if !blockers.is_empty() {
+        bail!("Nova blocked before changes:\n  {}", blockers.join("\n  "));
+    }
+    Ok(())
+}
 
-    // Convert schema::SudoConfig to sudo::SudoConfig
+fn build_plan(config: &BossaConfig, stages: &[&str]) -> Result<ExecutionPlan> {
+    let mut plan = ExecutionPlan::new();
     let sudo_config = SudoConfig {
         casks: config.sudo.casks.clone(),
         defaults: config.sudo.defaults.clone(),
         operations: config.sudo.operations.clone(),
     };
-
-    // Determine which stages to run
-    let stages = determine_stages(args);
-
-    // Stage: homebrew (eager — must run before any brew resources are built)
-    if stages.contains(&"homebrew") {
-        install_homebrew(args.yes)?;
-    }
 
     // Stage: defaults
     if stages.contains(&"defaults") {
@@ -148,20 +115,6 @@ fn build_plan(ctx: &AppContext, config: &BossaConfig, args: &NovaArgs) -> Result
     // Stage: packages (brew)
     if stages.contains(&"packages") {
         add_brew_resources(&mut plan, config, &sudo_config)?;
-    }
-
-    // Stage: cellar (sync homebrew packages to external SSD)
-    if stages.contains(&"cellar")
-        && let Err(e) = super::cellar::sync_for_nova(ctx)
-    {
-        ui::warn(&format!("Cellar stage failed: {e} — continuing"));
-    }
-
-    // Stage: dotfiles (must run before symlinks — stow depends on ~/.dotfiles)
-    if stages.contains(&"dotfiles")
-        && let Err(e) = super::dotfiles::sync_for_nova(config)
-    {
-        ui::warn(&format!("Dotfiles stage failed: {e} — continuing"));
     }
 
     // Stage: symlinks
@@ -197,28 +150,37 @@ fn normalize_stage(name: &str) -> &str {
     }
 }
 
-fn determine_stages(args: &NovaArgs) -> Vec<&'static str> {
-    // If --only specified, use only those
-    if let Some(ref only) = args.only {
-        let only_set: Vec<&str> = only.split(',').map(|s| normalize_stage(s.trim())).collect();
-        return IMPLEMENTED_STAGES
+fn determine_stages(args: &NovaArgs) -> Result<Vec<&'static str>> {
+    let parse = |selection: &str| -> Result<Vec<&'static str>> {
+        selection
+            .split(',')
+            .map(|name| {
+                let name = normalize_stage(name.trim());
+                IMPLEMENTED_STAGES
+                    .iter()
+                    .copied()
+                    .find(|stage| *stage == name)
+                    .with_context(|| format!("Unknown or unsupported Nova stage: {name}"))
+            })
+            .collect()
+    };
+    if let Some(only) = &args.only {
+        let selected = parse(only)?;
+        return Ok(IMPLEMENTED_STAGES
             .iter()
-            .filter(|&&s| only_set.contains(&s))
             .copied()
-            .collect();
+            .filter(|stage| selected.contains(stage))
+            .collect());
     }
-
-    // If --skip specified, remove those
-    if let Some(ref skip) = args.skip {
-        let skip_set: Vec<&str> = skip.split(',').map(|s| normalize_stage(s.trim())).collect();
-        return IMPLEMENTED_STAGES
+    if let Some(skip) = &args.skip {
+        let skipped = parse(skip)?;
+        return Ok(IMPLEMENTED_STAGES
             .iter()
-            .filter(|&&s| !skip_set.contains(&s))
             .copied()
-            .collect();
+            .filter(|stage| !skipped.contains(stage))
+            .collect());
     }
-
-    IMPLEMENTED_STAGES.to_vec()
+    Ok(IMPLEMENTED_STAGES.to_vec())
 }
 
 fn add_defaults_resources(
@@ -227,7 +189,8 @@ fn add_defaults_resources(
     sudo_config: &SudoConfig,
 ) -> Result<()> {
     for (domain_key, value) in &config.defaults.settings {
-        let res_value = convert_default_value(value);
+        let res_value = convert_default_value(value)
+            .with_context(|| format!("Unsupported default {domain_key}"))?;
 
         let mut resource = MacOSDefault::from_domain_key(domain_key, res_value)
             .with_context(|| format!("Invalid default key: {domain_key}"))?;
@@ -429,18 +392,16 @@ fn add_ecosystem_resources(plan: &mut ExecutionPlan, config: &BossaConfig) -> Re
     Ok(())
 }
 
-fn convert_default_value(value: &SchemaDefaultValue) -> ResDefaultValue {
-    match value {
+fn convert_default_value(value: &SchemaDefaultValue) -> Result<ResDefaultValue> {
+    Ok(match value {
         SchemaDefaultValue::Bool(b) => ResDefaultValue::Bool(*b),
         SchemaDefaultValue::Int(i) => ResDefaultValue::Int(*i),
         SchemaDefaultValue::Float(f) => ResDefaultValue::Float(*f),
         SchemaDefaultValue::String(s) => ResDefaultValue::String(s.clone()),
         SchemaDefaultValue::Array(_) => {
-            // The resource layer has no Array variant; log a warning and skip
-            log::warn!("Skipping array default value (not supported): {value:?}");
-            ResDefaultValue::String(String::new())
+            bail!("Array defaults are not supported; no replacement was scheduled")
         }
-    }
+    })
 }
 
 /// Implemented stages (subset of NovaStage that have actual logic wired up)
@@ -462,18 +423,27 @@ fn list_stages() {
     ui::header("Available Stages");
     println!();
 
+    for name in IMPLEMENTED_STAGES {
+        let description = match *name {
+            "homebrew" => "Existing Homebrew prerequisite (automatic installation blocked)",
+            "packages" => "Configured Homebrew packages (aliases: brew, essential)",
+            "cellar" => "Configured synchronization blocked pending preservation/recovery",
+            "dotfiles" => "Configured synchronization blocked pending safe acquisition",
+            "symlinks" => "Native dotfile symlinks (alias: stow)",
+            "ecosystem" => "pnpm globals, gh and VS Code extensions (alias: pnpm)",
+            "defaults" => "Scalar macOS defaults",
+            "dock" => "Dock apps and folders",
+            "handlers" => "File handlers",
+            _ => unreachable!("Every supported stage has a description"),
+        };
+        println!("  {:<15} {}", name.bold(), description.dimmed());
+    }
     for stage in NovaStage::all() {
-        let name = stage.name();
-        let desc = stage.description();
-        let is_implemented = IMPLEMENTED_STAGES.contains(&name);
-        if is_implemented {
-            println!("  {:<15} {}", name.bold(), desc.dimmed());
-        } else {
+        if !IMPLEMENTED_STAGES.contains(&normalize_stage(stage.name())) {
             println!(
-                "  {:<15} {} {}",
-                name.bold(),
-                desc.dimmed(),
-                "(planned)".yellow()
+                "  {:<15} {} (planned)",
+                stage.name().bold(),
+                stage.description().dimmed()
             );
         }
     }

@@ -521,3 +521,137 @@ fn storage_mount_expansion_and_placeholders_match_canonical_intent() {
         fs::remove_file(root.join("home/link")).unwrap();
     }
 }
+
+#[cfg(unix)]
+impl Fixture {
+    fn executable(&self, name: &str, contents: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let path = self.root.path().join("bin").join(name);
+        fs::write(&path, contents).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+// These recording scripts never run a real installer or Git operation. Their
+// exact contents are checked with ShellCheck and shfmt during native validation.
+#[cfg(unix)]
+const RECORD_CURL: &str =
+    "#!/bin/sh\nset -eu\nprintf 'installer\\n' >>\"$BOSSA_TEST_TRACE\"\nprintf '%s\\n' ':'\n";
+#[cfg(unix)]
+const RECORD_GIT: &str =
+    "#!/bin/sh\nset -eu\nprintf 'git %s\\n' \"$*\" >>\"$BOSSA_TEST_TRACE\"\nexit 1\n";
+
+#[test]
+#[cfg(unix)]
+fn nova_homebrew_preview_never_runs_an_installer_even_with_yes() {
+    for yes in [true, false] {
+        let fixture = Fixture::new();
+        let root = fixture.root.path();
+        fs::write(root.join("config/config.toml"), "").unwrap();
+        fixture.executable("curl", RECORD_CURL);
+        let trace = root.join("trace");
+        let mut args = vec!["nova", "--only", "homebrew", "--dry-run"];
+        if yes {
+            args.push("--yes");
+        }
+        let output = fixture
+            .command_with_env(
+                &args,
+                &[("BOSSA_TEST_TRACE", Some(trace.to_str().unwrap()))],
+            )
+            .unwrap();
+        assert!(!trace.exists(), "preview invoked an installer");
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("blocked"));
+        assert_eq!(fs::read_dir(root.join("home")).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(root.join("state")).unwrap().count(), 0);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn nova_dotfiles_preview_never_clones_and_reports_its_blocker() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    let contents = format!(
+        "[dotfiles]\nrepo = 'fixture-source'\npath = '{}'\n",
+        root.join("home/dotfiles").display()
+    );
+    fs::write(root.join("config/config.toml"), &contents).unwrap();
+    fixture.executable("git", RECORD_GIT);
+    let trace = root.join("trace");
+    let output = fixture
+        .command_with_env(
+            &["nova", "--only", "dotfiles", "--dry-run", "--yes"],
+            &[("BOSSA_TEST_TRACE", Some(trace.to_str().unwrap()))],
+        )
+        .unwrap();
+    assert!(!trace.exists(), "preview invoked Git mutation");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("blocked"));
+    assert_eq!(fs::read_dir(root.join("home")).unwrap().count(), 0);
+    assert_eq!(fs::read_dir(root.join("state")).unwrap().count(), 0);
+    assert_eq!(
+        fs::read_to_string(root.join("config/config.toml")).unwrap(),
+        contents
+    );
+}
+
+#[test]
+fn nova_cellar_preview_reports_blocked_without_creating_staging_directories() {
+    for yes in [false, true] {
+        let fixture = Fixture::new();
+        let root = fixture.root.path();
+        fs::write(
+            root.join("config/config.toml"),
+            format!("[cellar]\npath = '{}'\n", root.join("warehouse").display()),
+        )
+        .unwrap();
+        let mut args = vec!["nova", "--only", "cellar", "--dry-run"];
+        if yes {
+            args.push("--yes");
+        }
+        let output = fixture.command(&args).unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("Nova blocked"));
+        assert!(!root.join("warehouse").exists());
+        assert_eq!(fs::read_dir(root.join("state")).unwrap().count(), 0);
+    }
+}
+
+#[test]
+fn nova_rejects_unsupported_values_and_unknown_stage_selections() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    fs::write(
+        root.join("config/config.toml"),
+        "[defaults]\n'com.example.Array' = [1, 2]\n",
+    )
+    .unwrap();
+    for args in [
+        vec!["nova", "--only", "defaults", "--dry-run", "--yes"],
+        vec!["nova", "--only", "typo", "--dry-run"],
+        vec!["nova", "--skip", "typo", "--dry-run"],
+        vec![
+            "nova",
+            "--only",
+            "defaults",
+            "--skip",
+            "homebrew",
+            "--dry-run",
+        ],
+    ] {
+        let output = fixture.command(&args).unwrap();
+        assert!(!output.status.success(), "{args:?}");
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("already configured"));
+        assert_eq!(fs::read_dir(root.join("state")).unwrap().count(), 0);
+    }
+    // Unsupported values in a different scope do not block an empty symlink preview.
+    assert!(
+        fixture
+            .command(&["nova", "--only", "symlinks", "--dry-run"])
+            .unwrap()
+            .status
+            .success()
+    );
+}

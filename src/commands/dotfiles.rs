@@ -72,33 +72,6 @@ pub fn run(ctx: &AppContext, cmd: DotfilesCommand) -> Result<()> {
     }
 }
 
-/// Simplified entry point for the nova bootstrap pipeline.
-/// Runs sync with defaults (no dry-run, stow enabled, private enabled).
-pub fn sync_for_nova(config: &BossaConfig) -> Result<()> {
-    let dotfiles = match config.dotfiles.as_ref() {
-        Some(d) => d,
-        None => {
-            ui::dim("No [dotfiles] config — skipping");
-            return Ok(());
-        }
-    };
-    if let Err(e) = dotfiles.validate() {
-        ui::warn(&format!("Invalid dotfiles config: {e}"));
-        return Ok(());
-    }
-
-    let ctx = AppContext {
-        verbose: 0,
-        quiet: true,
-    };
-    let args = DotfilesSyncArgs {
-        dry_run: false,
-        no_stow: false,
-        no_private: false,
-    };
-    sync(&ctx, dotfiles, config, args)
-}
-
 // ============================================================================
 // status
 // ============================================================================

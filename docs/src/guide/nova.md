@@ -1,180 +1,59 @@
-# Machine Bootstrap (Nova)
+# Machine configuration (Nova)
 
-The `nova` command bootstraps a new machine through 16 stages. The name comes from "bossa nova" - the Brazilian music genre.
-
-## Usage
+Nova applies the selected sections of `config.toml` or `config.json`. Start with a narrow preview:
 
 ```bash
-# Run all stages
-bossa nova
-
-# List available stages
 bossa nova --list-stages
-
-# Run specific stages only
-bossa nova --only=homebrew,brew,stow
-
-# Skip certain stages
-bossa nova --skip=dock,handlers
-
-# Dry run
-bossa nova --dry-run
-
-# Parallel execution
-bossa nova -j 4
+bossa nova --only=defaults,symlinks --dry-run
+bossa nova --only=defaults,symlinks
 ```
 
-## Stages
+## Selected stages
 
-| Stage         | Description                                             |
-| ------------- | ------------------------------------------------------- |
-| `defaults`    | macOS system defaults (Finder, Dock, keyboard settings) |
-| `terminal`    | Terminal font setup                                     |
-| `git-signing` | Git commit signing key configuration                    |
-| `homebrew`    | Homebrew installation                                   |
-| `bash`        | Bash 4+ bootstrap (macOS ships with Bash 3)             |
-| `essential`   | Essential packages (stow, jq, gh, ripgrep, fd)          |
-| `brew`        | Full Brewfile installation                              |
-| `pnpm`        | Node.js packages via pnpm                               |
-| `dock`        | Dock configuration (apps, size, position)               |
-| `ecosystem`   | Ecosystem extensions (VS Code, etc.)                    |
-| `handlers`    | File type handlers via duti                             |
-| `stow`        | Symlinks via GNU Stow                                   |
-| `caches`      | Cache symlinks to external drive                        |
-| `mcp`         | MCP server configuration                                |
-| `refs`        | Reference repository collections                        |
-| `workspaces`  | Development workspaces                                  |
+| Stage       | Configuration or prerequisite                                                            |
+| ----------- | ---------------------------------------------------------------------------------------- |
+| `defaults`  | Scalar macOS defaults from `[defaults]`; arrays are rejected                             |
+| `homebrew`  | Check for an existing Homebrew installation                                              |
+| `packages`  | Taps, essential packages, formulas, casks and fonts from `[packages.brew]`               |
+| `cellar`    | Configured synchronization is blocked pending preservation and recovery support          |
+| `dotfiles`  | Configured synchronization is blocked pending a safe acquisition and dependency executor |
+| `symlinks`  | Native dotfile links from `[symlinks]`                                                   |
+| `dock`      | Apps and folders from `[dock]`                                                           |
+| `handlers`  | File handlers from `[handlers]`                                                          |
+| `ecosystem` | pnpm globals, GitHub CLI extensions and VS Code extensions                               |
 
-## Stage Details
+Aliases are `brew` and `essential` for `packages`, `stow` for `symlinks`, and `pnpm` for
+`ecosystem`. The package stage reads the unified configuration; use `bossa brew apply` for a
+Brewfile. Other stages displayed as planned by `--list-stages` cannot be selected yet.
 
-### defaults
+`--only` and `--skip` take comma-separated names and cannot be combined. Unknown, empty and
+unsupported names return an error. Selecting an alias selects the whole corresponding stage.
+Without either option, Nova selects all supported stages.
 
-Configures macOS system preferences:
+## Prerequisites and previews
 
-- Finder: Show hidden files, path bar, status bar
-- Dock: Size, magnification, position
-- Keyboard: Key repeat rate, disable auto-correct
-- Screenshots: Location, format
+Nova checks the Homebrew, cellar and dotfiles prerequisites before applying resources. Missing Homebrew blocks its
+stage and configured Homebrew packages. Install it explicitly and retry; Nova does not fetch or
+execute an installer. Creating a `bossa brew` client also never installs Homebrew implicitly.
 
-### homebrew
-
-Installs Homebrew if not present:
+Configured cellar and dotfiles synchronization currently block the selected Nova scope. An
+unconfigured section needs no synchronization. To preview other resources while these stages
+are blocked, select them explicitly:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+bossa nova --only=defaults,dock --dry-run
 ```
 
-### essential
+`--dry-run` does not install Homebrew or synchronize cellar/dotfiles. Adding `--yes` still makes
+no changes. A blocked preview returns a nonzero result with the unmet prerequisite; it does not
+claim the machine is configured. Read-only previews never rewrite configuration.
 
-Installs core utilities needed by other stages:
+## Applying resources
 
-- `stow` - Symlink manager for dotfiles
-- `jq` - JSON processor
-- `gh` - GitHub CLI
-- `ripgrep` - Fast search
-- `fd` - Fast find
+Remove `--dry-run` to request changes. `--yes` skips confirmation for that request. `--quiet`
+controls output and does not grant consent. `-j` sets the requested resource job count.
 
-### brew
-
-Runs `brew bundle` with your Brewfile:
-
-```bash
-brew bundle --file=~/dotfiles/Brewfile
-```
-
-### stow
-
-Symlinks dotfiles from your dotfiles repository:
-
-```bash
-cd ~/dotfiles
-stow -t ~ bash zsh git vim
-```
-
-### caches
-
-Applies cache symlink configuration:
-
-```bash
-bossa caches apply
-```
-
-### refs
-
-Clones repository collections defined in `config.toml`:
-
-```bash
-bossa collections sync refs
-```
-
-## Customizing Stages
-
-### Running Specific Stages
-
-```bash
-# Only install Homebrew and essential tools
-bossa nova --only=homebrew,essential
-
-# Skip dock configuration
-bossa nova --skip=dock
-```
-
-### Stage Dependencies
-
-Some stages depend on others:
-
-- `brew` requires `homebrew`
-- `stow` requires `essential` (for stow binary)
-- `refs` requires `essential` (for git)
-
-When using `--only`, dependencies are **not** automatically included. Make sure to include required stages.
-
-### Dry Run
-
-Preview what would happen without making changes:
-
-```bash
-bossa nova --dry-run
-```
-
-## Idempotency
-
-All stages are idempotent - running them multiple times is safe:
-
-- Already installed packages are skipped
-- Existing symlinks are preserved
-- Configurations are applied only if different
-
-## Parallelism
-
-Use `-j` to run independent stages in parallel:
-
-```bash
-bossa nova -j 4
-```
-
-Stages with dependencies still run in order.
-
-## Troubleshooting
-
-### Stage Failed
-
-If a stage fails, fix the issue and re-run:
-
-```bash
-# Re-run failed stage
-bossa nova --only=brew
-```
-
-### Reset and Retry
-
-```bash
-# Skip problematic stages
-bossa nova --skip=dock,handlers
-```
-
-### Verbose Output
-
-```bash
-bossa nova -vv
-```
+Execution observation, verification, scheduling and completion reporting are being hardened in
+the next modernization slice. Successful preview alone is not evidence of completed setup or a
+persisted finish receipt. Preserve the failed command and its diagnostics when investigating an
+incomplete apply; do not assume it rolled back all effects.

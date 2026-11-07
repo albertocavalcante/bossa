@@ -76,27 +76,12 @@ fn print_package_summary(brewfile: &brewkit::Brewfile) {
     }
 }
 
-/// Create a brewkit client, with better error handling.
-///
-/// When Homebrew is not installed, offers to install it interactively
-/// and retries.
+/// Open the existing installation. Client creation never installs software.
 fn create_client() -> Result<brewkit::Client, String> {
-    match brewkit::Client::new() {
-        Ok(c) => Ok(c),
-        Err(brewkit::Error::BrewNotFound) => {
-            // Offer to install Homebrew
-            match super::nova::install_homebrew(false) {
-                Ok(()) => {
-                    // Retry after install
-                    brewkit::Client::new().map_err(|e| {
-                        format!("Failed to initialize Homebrew client after install: {e}")
-                    })
-                }
-                Err(e) => Err(format!("{e:#}")),
-            }
-        }
-        Err(e) => Err(format!("Failed to initialize Homebrew client: {e}")),
-    }
+    brewkit::Client::new().map_err(|error| match error {
+        brewkit::Error::BrewNotFound => "Homebrew prerequisite blocked: install Homebrew explicitly, then retry; verified bootstrap acquisition is not implemented".to_string(),
+        error => format!("Failed to initialize Homebrew client: {error}"),
+    })
 }
 
 fn apply(essential: bool, dry_run: bool, file: Option<String>) -> Result<()> {
