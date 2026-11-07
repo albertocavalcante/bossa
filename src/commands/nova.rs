@@ -10,8 +10,8 @@ use crate::cli::NovaArgs;
 use crate::config;
 use crate::engine::{self, ExecuteOptions, ExecutionPlan};
 use crate::resource::{
-    BrewPackage, DefaultValue as ResDefaultValue, DockApp, DockFolder, FileHandler, GHExtension,
-    MacOSDefault, PnpmPackage, Symlink, VSCodeExtension,
+    BrewPackage, DefaultValue as ResDefaultValue, DockApps, DockFolder, FileHandler, GHExtension,
+    MacOSDefault, PnpmPackage, Resource, Symlink, VSCodeExtension,
 };
 use crate::schema::{BossaConfig, DefaultValue as SchemaDefaultValue};
 use crate::sudo::SudoConfig;
@@ -96,8 +96,12 @@ fn check_prerequisites(config: &BossaConfig, stages: &[&str]) -> Result<()> {
     let needs_brew =
         stages.contains(&"homebrew") || (stages.contains(&"packages") && packages_configured);
     let mut blockers = Vec::new();
-    if needs_brew && !crate::runner::command_exists("brew") {
-        blockers.push("homebrew: install Homebrew explicitly, then retry; verified bootstrap acquisition is not implemented");
+    if needs_brew {
+        crate::runner::observe("brew", ["--version"])
+            .context("Nova blocked: Homebrew is unavailable; install it explicitly and retry; verified bootstrap acquisition is not implemented")?;
+    }
+    if !config.sudo.operations.is_empty() {
+        blockers.push("custom sudo.operations are not implemented; use the explicit cask/default allowlists instead of an ignored privilege policy");
     }
     if stages.contains(&"cellar") && !config.cellar.path.is_empty() {
         blockers.push("cellar: Nova synchronization is blocked until preservation and recovery are implemented; omit this stage to preview other resources");
@@ -270,7 +274,7 @@ fn add_brew_resources(
 
     // Fonts (also casks)
     for font in &brew.fonts {
-        let resource = BrewPackage::cask(font);
+        let resource = BrewPackage::cask(font).with_sudo(sudo_config.cask_requires_sudo(font));
         plan.add_resource(Box::new(resource), sudo_config);
     }
 
@@ -278,90 +282,120 @@ fn add_brew_resources(
 }
 
 fn add_symlink_resources(plan: &mut ExecutionPlan, config: &BossaConfig) -> Result<()> {
-    let symlinks_opt = &config.symlinks;
-
-    // Check if symlinks config exists
-    let symlinks = match symlinks_opt {
-        Some(s) => s,
-        None => return Ok(()), // No symlinks configured
+    let Some(symlinks) = &config.symlinks else {
+        return Ok(());
     };
-
-    if symlinks.source.is_empty() || symlinks.packages.is_empty() {
-        return Ok(());
+    if symlinks.source.is_empty() || symlinks.target.is_empty() {
+        bail!("Symlink source and target must be explicit nonempty paths");
     }
-
-    let source_base = crate::paths::expand(&symlinks.source)
-        .to_string_lossy()
-        .to_string();
-    let target_base = crate::paths::expand(&symlinks.target)
-        .to_string_lossy()
-        .to_string();
-
+    let source = crate::paths::expand(&symlinks.source);
+    let target = crate::paths::expand(&symlinks.target);
+    if !source.is_absolute() || !target.is_absolute() {
+        bail!("Symlink source and target must be absolute after expansion");
+    }
+    let mut count = 0;
     for package in &symlinks.packages {
-        let package_source = std::path::Path::new(&source_base).join(package);
-
-        // Walk the package directory and create symlinks
-        if package_source.exists() {
-            walk_and_create_symlinks(
-                plan,
-                &package_source,
-                &package_source,
-                std::path::Path::new(&target_base),
-                &symlinks.ignore,
-            )?;
+        let mut components = std::path::Path::new(package).components();
+        if !matches!(components.next(), Some(std::path::Component::Normal(_)))
+            || components.next().is_some()
+        {
+            bail!("Symlink package must be a single directory name: {package}");
+        }
+        let base = source.join(package);
+        let metadata = std::fs::symlink_metadata(&base).with_context(|| {
+            format!(
+                "Configured symlink package is unavailable: {}",
+                base.display()
+            )
+        })?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            bail!(
+                "Symlink package must be a directory, not a directory link: {}",
+                base.display()
+            );
+        }
+        let mut pending = vec![(base.clone(), 0_usize)];
+        while let Some((directory, depth)) = pending.pop() {
+            if depth > 64 {
+                bail!("Symlink package exceeds directory nesting limit");
+            }
+            let mut entries = Vec::new();
+            for entry in std::fs::read_dir(&directory)? {
+                count += 1;
+                if count > 100_000 {
+                    bail!("Symlink discovery exceeds entry limit");
+                }
+                entries.push(entry?);
+            }
+            entries.sort_by_key(std::fs::DirEntry::file_name);
+            for entry in entries {
+                let path = entry.path();
+                if symlinks.ignore.iter().any(|pattern| {
+                    entry.file_name() == std::ffi::OsStr::new(pattern) || path.ends_with(pattern)
+                }) {
+                    continue;
+                }
+                let kind = entry.file_type()?;
+                if kind.is_dir() {
+                    pending.push((path, depth + 1));
+                } else if kind.is_file() || kind.is_symlink() {
+                    let destination = target.join(path.strip_prefix(&base)?);
+                    plan.add_resource(
+                        Box::new(Symlink::new(&path, destination)),
+                        &SudoConfig::default(),
+                    );
+                } else {
+                    bail!(
+                        "Unsupported filesystem object in symlink package: {}",
+                        path.display()
+                    );
+                }
+            }
         }
     }
-
-    Ok(())
-}
-
-fn walk_and_create_symlinks(
-    plan: &mut ExecutionPlan,
-    base: &std::path::Path,
-    current: &std::path::Path,
-    target_base: &std::path::Path,
-    ignore: &[String],
-) -> Result<()> {
-    use std::fs;
-
-    if !current.is_dir() {
-        return Ok(());
-    }
-
-    for entry in fs::read_dir(current)? {
-        let entry = entry?;
-        let path = entry.path();
-        let file_name = entry.file_name().to_string_lossy().to_string();
-
-        // Skip ignored patterns
-        if ignore.iter().any(|p| file_name == *p || path.ends_with(p)) {
-            continue;
-        }
-
-        // Calculate relative path from base
-        let relative = path.strip_prefix(base)?;
-        let target = target_base.join(relative);
-
-        if path.is_file() || path.is_symlink() {
-            // Create symlink for files
-            let resource = Symlink::new(&path, &target);
-            plan.add_resource(Box::new(resource), &SudoConfig::default());
-        } else if path.is_dir() {
-            // Recurse into directories
-            walk_and_create_symlinks(plan, base, &path, target_base, ignore)?;
-        }
-    }
-
     Ok(())
 }
 
 fn add_dock_resources(plan: &mut ExecutionPlan, config: &BossaConfig) -> Result<()> {
     let dock = &config.dock;
 
-    // Add dock apps
-    for (i, app) in dock.apps.iter().enumerate() {
-        let resource = DockApp::new(app).at_position(i + 1);
+    let mut preferences = Vec::new();
+    if let Some(value) = dock.autohide {
+        preferences.push(("autohide", ResDefaultValue::Bool(value)));
+    }
+    if let Some(value) = dock.tilesize {
+        if value == 0 {
+            bail!("Dock tilesize must be positive");
+        }
+        preferences.push(("tilesize", ResDefaultValue::Int(i64::from(value))));
+    }
+    if let Some(value) = &dock.minimize_effect {
+        if !matches!(value.as_str(), "scale" | "genie") {
+            bail!("Unsupported Dock minimize_effect");
+        }
+        preferences.push(("mineffect", ResDefaultValue::String(value.clone())));
+    }
+    if let Some(value) = dock.show_recents {
+        preferences.push(("show-recents", ResDefaultValue::Bool(value)));
+    }
+    let mut parents = Vec::new();
+    for (key, value) in preferences {
+        let resource = MacOSDefault::new("com.apple.dock", key, value);
+        parents.push(declarative::ResourceKey {
+            resource_type: resource.resource_type().into(),
+            id: resource.id(),
+        });
         plan.add_resource(Box::new(resource), &SudoConfig::default());
+    }
+
+    // Add dock apps
+    if !dock.apps.is_empty() {
+        plan.add_resource(
+            Box::new(DockApps {
+                paths: dock.apps.clone(),
+            }),
+            &SudoConfig::default(),
+        );
     }
 
     // Add dock folders
@@ -376,17 +410,17 @@ fn add_dock_resources(plan: &mut ExecutionPlan, config: &BossaConfig) -> Result<
     }
 
     // Restart Dock after changes
-    if !dock.apps.is_empty() || !dock.folders.is_empty() {
-        let parents = plan
-            .unprivileged
-            .iter()
-            .chain(&plan.privileged)
-            .filter(|resource| resource.resource_type().starts_with("dock_"))
-            .map(|resource| declarative::ResourceKey {
-                resource_type: resource.resource_type().into(),
-                id: resource.id(),
-            })
-            .collect();
+    if !dock.apps.is_empty() || !dock.folders.is_empty() || !parents.is_empty() {
+        parents.extend(
+            plan.unprivileged
+                .iter()
+                .chain(&plan.privileged)
+                .filter(|resource| resource.resource_type().starts_with("dock_"))
+                .map(|resource| declarative::ResourceKey {
+                    resource_type: resource.resource_type().into(),
+                    id: resource.id(),
+                }),
+        );
         plan.add_post_action_for("Dock".to_string(), parents);
     }
 
@@ -429,7 +463,10 @@ fn convert_default_value(value: &SchemaDefaultValue) -> Result<ResDefaultValue> 
     Ok(match value {
         SchemaDefaultValue::Bool(b) => ResDefaultValue::Bool(*b),
         SchemaDefaultValue::Int(i) => ResDefaultValue::Int(*i),
-        SchemaDefaultValue::Float(f) => ResDefaultValue::Float(*f),
+        SchemaDefaultValue::Float(f) if f.is_finite() => ResDefaultValue::Float(*f),
+        SchemaDefaultValue::Float(_) => {
+            bail!("Non-finite defaults are not supported; no replacement was scheduled")
+        }
         SchemaDefaultValue::String(s) => ResDefaultValue::String(s.clone()),
         SchemaDefaultValue::Array(_) => {
             bail!("Array defaults are not supported; no replacement was scheduled")

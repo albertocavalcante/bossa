@@ -19,6 +19,10 @@ pub struct CommandRequest {
 #[derive(Debug, Clone, Copy)]
 pub enum IoMode {
     Capture,
+    /// Capture output while retaining the foreground process group. This is
+    /// intended for elevation adapters whose credentials may change; only the
+    /// direct child is supervised and OS permissions can prevent termination.
+    ForegroundCapture,
     Inherit,
 }
 
@@ -79,6 +83,15 @@ impl SystemRunner {
         self
     }
 
+    /// Override only this clone's child environment; never mutate process globals.
+    pub fn with_environment_overrides(
+        mut self,
+        variables: impl IntoIterator<Item = (OsString, OsString)>,
+    ) -> Self {
+        Arc::make_mut(&mut self.environment).extend(variables);
+        self
+    }
+
     /// Cancel all current jobs shared by clones, and reject subsequent jobs.
     pub fn cancel(&self) -> io::Result<()> {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -126,7 +139,7 @@ impl ProcessRunner for SystemRunner {
             .env_clear()
             .envs(self.environment.as_ref());
         match mode {
-            IoMode::Capture => {
+            IoMode::Capture | IoMode::ForegroundCapture => {
                 command
                     .stdin(Stdio::null())
                     .stdout(Stdio::piped())
@@ -161,6 +174,60 @@ impl ProcessRunner for SystemRunner {
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn child_overrides_are_local_and_foreground_capture_preserves_group() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let runner = SystemRunner::new(BTreeMap::from([("FIXTURE".into(), "original".into())]));
+        let overridden = runner
+            .clone()
+            .with_environment_overrides([("FIXTURE".into(), "override".into())]);
+        let request = CommandRequest {
+            program: "/usr/bin/env".into(),
+            args: vec![],
+            working_dir: temp.path().into(),
+        };
+        assert_eq!(
+            overridden
+                .run(&request, IoMode::ForegroundCapture)
+                .unwrap()
+                .stdout,
+            b"FIXTURE=override\n"
+        );
+        assert_eq!(
+            runner.run(&request, IoMode::Capture).unwrap().stdout,
+            b"FIXTURE=original\n"
+        );
+        let request = CommandRequest {
+            program: "/bin/ps".into(),
+            args: vec![
+                "-o".into(),
+                "pgid=".into(),
+                "-p".into(),
+                std::process::id().to_string().into(),
+            ],
+            working_dir: temp.path().into(),
+        };
+        let group = runner.run(&request, IoMode::Capture).unwrap().stdout;
+        let request = CommandRequest {
+            program: "/bin/sh".into(),
+            args: vec!["-c".into(), "exec /bin/ps -o pgid= -p $$".into()],
+            working_dir: temp.path().into(),
+        };
+        assert_eq!(
+            runner
+                .run(&request, IoMode::ForegroundCapture)
+                .unwrap()
+                .stdout,
+            group
+        );
+        assert_ne!(runner.run(&request, IoMode::Capture).unwrap().stdout, group);
+        overridden.cancel().unwrap();
+        assert_eq!(
+            runner.run(&request, IoMode::Capture).unwrap_err().kind(),
+            io::ErrorKind::Interrupted
+        );
+    }
 
     #[test]
     fn native_process_gets_only_explicit_environment_and_preserves_failure_status() {
@@ -283,7 +350,7 @@ mod supervision_tests {
         let error = runner(Duration::from_secs(2), 7)
             .run(&request, IoMode::Capture)
             .unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData, "{error}");
     }
 
     #[test]
@@ -300,7 +367,8 @@ mod supervision_tests {
             },
             IoMode::Capture,
         );
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+        let error = result.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData, "{error}");
     }
 
     #[test]

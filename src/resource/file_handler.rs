@@ -1,7 +1,6 @@
 //! File handler association resource (duti)
 
 use anyhow::{Context, Result, bail};
-use std::process::Command;
 
 use super::{ApplyContext, ApplyResult, Resource, ResourceState};
 
@@ -22,24 +21,24 @@ impl FileHandler {
 
     /// Check if handler is set
     fn is_set(&self) -> Result<bool> {
-        let output = Command::new("duti")
-            .args(["-x", &self.uti])
-            .output()
-            .context("Failed to run duti")?;
-
-        if !output.status.success() {
-            return Ok(false);
+        super::native::package_name(&self.bundle_id, "handler bundle identifier")?;
+        super::native::package_name(&self.uti, "uniform type identifier")?;
+        if !valid_identifier(&self.uti) || !valid_identifier(&self.bundle_id) {
+            bail!("File handlers require a UTI, not an extension or URL scheme");
         }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(stdout.contains(&self.bundle_id))
+        let output = crate::runner::observe("duti", ["-d", &self.uti])?;
+        let handler = std::str::from_utf8(&output)
+            .context("Invalid handler observation encoding")?
+            .trim();
+        if !valid_identifier(handler) {
+            bail!("Unavailable default UTI handler observation");
+        }
+        Ok(handler.eq_ignore_ascii_case(&self.bundle_id))
     }
 
     /// Set the handler
     fn set_handler(&self, _ctx: &ApplyContext) -> Result<()> {
-        let output = Command::new("duti")
-            .args(["-s", &self.bundle_id, &self.uti, "all"])
-            .output()
+        let output = crate::runner::capture("duti", ["-s", &self.bundle_id, &self.uti, "all"])
             .context("Failed to run duti")?;
 
         if !output.status.success() {
@@ -49,6 +48,17 @@ impl FileHandler {
 
         Ok(())
     }
+}
+
+fn valid_identifier(value: &str) -> bool {
+    value.contains('.')
+        && value.split('.').all(|part| {
+            !part.is_empty()
+                && !part.starts_with('-')
+                && part
+                    .chars()
+                    .all(|value| value.is_ascii_alphanumeric() || "_-".contains(value))
+        })
 }
 
 impl Resource for FileHandler {

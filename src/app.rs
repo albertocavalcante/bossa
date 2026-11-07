@@ -100,7 +100,7 @@ impl AppEnvironment {
                     return Ok(path);
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    crate::configuration::confirm_missing_parent(&path)
+                    crate::confirm_missing_parent(&path)
                         .context("Could not inspect the home config directory")?;
                 }
                 Err(error) => {

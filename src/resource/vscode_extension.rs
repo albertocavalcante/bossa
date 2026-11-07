@@ -1,7 +1,6 @@
 //! VS Code extension resource
 
 use anyhow::{Context, Result, bail};
-use std::process::Command;
 
 use super::{ApplyContext, ApplyResult, Resource, ResourceState};
 
@@ -20,24 +19,20 @@ impl VSCodeExtension {
 
     /// Check if extension is installed
     fn is_installed(&self) -> Result<bool> {
-        let output = Command::new("code")
-            .args(["--list-extensions"])
-            .output()
-            .context("Failed to run code --list-extensions")?;
-
-        if !output.status.success() {
-            return Ok(false);
+        validate_name(&self.extension_id)?;
+        let output = crate::runner::observe("code", ["--list-extensions"])?;
+        let text = std::str::from_utf8(&output).context("Invalid VS Code inventory encoding")?;
+        let mut found = false;
+        for line in text.lines().filter(|line| !line.trim().is_empty()) {
+            validate_name(line.trim()).context("Unsupported VS Code inventory format")?;
+            found |= line.trim().eq_ignore_ascii_case(&self.extension_id);
         }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(stdout.lines().any(|line| line.trim() == self.extension_id))
+        Ok(found)
     }
 
     /// Install the extension
     fn install(&self, _ctx: &ApplyContext) -> Result<()> {
-        let output = Command::new("code")
-            .args(["--install-extension", &self.extension_id, "--force"])
-            .output()
+        let output = crate::runner::capture("code", ["--install-extension", &self.extension_id])
             .context("Failed to run code --install-extension")?;
 
         if !output.status.success() {
@@ -47,6 +42,24 @@ impl VSCodeExtension {
 
         Ok(())
     }
+}
+
+fn validate_name(name: &str) -> Result<()> {
+    super::native::package_name(name, "VS Code extension")?;
+    let pieces: Vec<_> = name.split('.').collect();
+    if pieces.len() != 2
+        || pieces
+            .iter()
+            .any(|piece| piece.is_empty() || piece.starts_with('-'))
+        || name
+            .chars()
+            .any(|value| !value.is_ascii_alphanumeric() && !"._-".contains(value))
+    {
+        bail!(
+            "VS Code extensions require publisher.extension identifiers; version or URL specifications are not supported"
+        );
+    }
+    Ok(())
 }
 
 impl Resource for VSCodeExtension {

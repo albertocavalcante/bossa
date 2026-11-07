@@ -2,7 +2,6 @@
 
 use anyhow::{Context, Result, bail};
 use std::fmt;
-use std::process::Command;
 
 use super::{ApplyContext, ApplyResult, Resource, ResourceState, SudoRequirement};
 
@@ -72,35 +71,38 @@ impl MacOSDefault {
 
     /// Read current value from defaults
     fn read_current(&self) -> Result<Option<DefaultValue>> {
-        let output = Command::new("defaults")
-            .args(["read", &self.domain, &self.key])
-            .output()
-            .context("Failed to execute defaults read")?;
-
-        if !output.status.success() {
-            // Key doesn't exist
-            return Ok(None);
+        if self.requires_sudo {
+            bail!(
+                "Privileged user-domain defaults are unsupported: elevation changes the observed preference namespace; no write was scheduled"
+            );
         }
-
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-        // Try to parse as the same type as desired value
-        let parsed = match &self.value {
-            DefaultValue::Bool(_) => match stdout.as_str() {
-                "1" | "true" => Some(DefaultValue::Bool(true)),
-                "0" | "false" => Some(DefaultValue::Bool(false)),
-                _ => None,
-            },
-            DefaultValue::Int(_) => stdout.parse::<i64>().ok().map(DefaultValue::Int),
-            DefaultValue::Float(_) => stdout.parse::<f64>().ok().map(DefaultValue::Float),
-            DefaultValue::String(_) => Some(DefaultValue::String(stdout)),
+        if matches!(self.value, DefaultValue::Float(value) if !value.is_finite()) {
+            bail!("Non-finite preference values are not supported");
+        }
+        super::native::identifier(&self.key, "preference key")?;
+        let values = super::native::preferences(&self.domain)?;
+        let Some(value) = values.get(&self.key) else {
+            return Ok(None);
         };
-
-        Ok(parsed)
+        let value = match value {
+            plist::Value::Boolean(value) => DefaultValue::Bool(*value),
+            plist::Value::Integer(value) => DefaultValue::Int(
+                value
+                    .as_signed()
+                    .context("Native integer is outside the supported signed range")?,
+            ),
+            plist::Value::Real(value) if value.is_finite() => DefaultValue::Float(*value),
+            plist::Value::String(value) => DefaultValue::String(value.clone()),
+            _ => bail!("Native preference has an unsupported value type; it was not replaced"),
+        };
+        Ok(Some(value))
     }
 
     /// Write value to defaults
-    fn write_value(&self, ctx: &ApplyContext) -> Result<()> {
+    fn write_value(&self, _ctx: &ApplyContext) -> Result<()> {
+        if self.requires_sudo {
+            bail!("Privileged user-domain defaults are unsupported; no command was executed");
+        }
         let type_flag = match &self.value {
             DefaultValue::Bool(_) => "-bool",
             DefaultValue::Int(_) => "-int",
@@ -117,26 +119,13 @@ impl MacOSDefault {
 
         let args = ["write", &self.domain, &self.key, type_flag, &value_str];
 
-        let (success, stderr) = if self.requires_sudo {
-            let output = ctx
-                .sudo
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Sudo required but not available"))?
-                .run("defaults", &args)?;
-            (output.success, output.stderr_str())
-        } else {
-            let output = Command::new("defaults")
-                .args(args)
-                .output()
-                .context("Failed to execute defaults write")?;
-            (
-                output.status.success(),
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            )
-        };
-
-        if !success {
-            bail!("defaults write failed: {}", stderr.trim());
+        let output =
+            crate::runner::capture("defaults", args).context("Failed to execute defaults write")?;
+        if !output.status.success() {
+            bail!(
+                "defaults write failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
         }
 
         Ok(())

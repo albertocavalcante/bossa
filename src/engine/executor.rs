@@ -52,6 +52,14 @@ pub fn execute(
     options: ExecuteOptions,
     quiet: bool,
 ) -> Result<ExecuteSummary> {
+    // Check all configured capabilities, independently of mutable observations.
+    // A second snapshot cannot authorize omission of a later execution tool.
+    if !plan.privileged.is_empty() {
+        crate::runner::require_command_at("sudo", crate::paths::environment().home_dir()?)?;
+    }
+    if !plan.post_actions.is_empty() {
+        crate::runner::require_command_at("killall", &std::env::current_dir()?)?;
+    }
     let runner = crate::runner::native_runner();
     let summary = bossa::apply_resources(
         plan,

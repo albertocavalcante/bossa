@@ -849,19 +849,19 @@ pub struct SymlinksConfig {
 pub struct DockConfig {
     /// Auto-hide the dock
     #[serde(default)]
-    pub autohide: bool,
+    pub autohide: Option<bool>,
 
     /// Tile size in pixels
-    #[serde(default = "default_tilesize")]
-    pub tilesize: u32,
+    #[serde(default)]
+    pub tilesize: Option<u32>,
 
     /// Minimize effect ("scale" or "genie")
-    #[serde(default = "default_minimize_effect")]
-    pub minimize_effect: String,
+    #[serde(default)]
+    pub minimize_effect: Option<String>,
 
     /// Show recent applications
     #[serde(default)]
-    pub show_recents: bool,
+    pub show_recents: Option<bool>,
 
     /// Applications to pin to dock (in order)
     #[serde(default)]
@@ -870,14 +870,6 @@ pub struct DockConfig {
     /// Folders to add to dock
     #[serde(default)]
     pub folders: Vec<DockFolder>,
-}
-
-fn default_tilesize() -> u32 {
-    64
-}
-
-fn default_minimize_effect() -> String {
-    "scale".to_string()
 }
 
 /// Dock folder configuration
