@@ -2,7 +2,7 @@
 
 use crate::resource::Resource;
 use crate::types::{ResourceState, SudoRequirement};
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 /// A diff between current and desired state of a resource
@@ -27,6 +27,14 @@ impl ResourceDiff {
     pub fn from_resource(resource: &dyn Resource) -> Result<Option<Self>> {
         let current = resource.current_state()?;
         let desired = resource.desired_state();
+
+        if current == ResourceState::Unknown || desired == ResourceState::Unknown {
+            bail!(
+                "Unknown state for {} {}",
+                resource.resource_type(),
+                resource.id()
+            );
+        }
 
         if current == desired {
             return Ok(None);
@@ -79,11 +87,20 @@ impl ResourceDiff {
 /// Compute diffs for a list of resources
 ///
 /// Returns only resources that have differences between current and desired state.
-pub fn compute_diffs(resources: &[Box<dyn Resource>]) -> Vec<ResourceDiff> {
-    resources
-        .iter()
-        .filter_map(|r| ResourceDiff::from_resource(r.as_ref()).ok().flatten())
-        .collect()
+pub fn compute_diffs(resources: &[Box<dyn Resource>]) -> Result<Vec<ResourceDiff>> {
+    let mut diffs = Vec::new();
+    for resource in resources {
+        if let Some(diff) = ResourceDiff::from_resource(resource.as_ref()).with_context(|| {
+            format!(
+                "Could not observe {} {}",
+                resource.resource_type(),
+                resource.id()
+            )
+        })? {
+            diffs.push(diff);
+        }
+    }
+    Ok(diffs)
 }
 
 /// Diff summary statistics

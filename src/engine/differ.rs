@@ -5,11 +5,8 @@ use colored::Colorize;
 use declarative::{ResourceDiff, ResourceState};
 
 /// Compute diffs for all resources
-pub fn compute_diffs(resources: &[Box<dyn Resource>]) -> Vec<ResourceDiff> {
-    resources
-        .iter()
-        .filter_map(|r| ResourceDiff::from_resource(r.as_ref()).ok().flatten())
-        .collect()
+pub fn compute_diffs(resources: &[Box<dyn Resource>]) -> anyhow::Result<Vec<ResourceDiff>> {
+    declarative::compute_diffs(resources)
 }
 
 /// Display a list of diffs in a user-friendly format
@@ -144,7 +141,7 @@ pub fn display_sudo_boundary(privileged_diffs: &[ResourceDiff]) {
     }
 
     println!("│");
-    println!("│  Sudo will be requested once and released immediately after.");
+    println!("│  Privileged changes require authorization before execution.");
     println!("│");
     println!("└─────────────────────────────────────────────────────────────┘");
 }

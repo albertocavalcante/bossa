@@ -92,8 +92,9 @@ pub trait Resource: Send + Sync + fmt::Debug {
 
     /// Detect the current state of this resource
     ///
-    /// This should query the system to determine what state
-    /// the resource is currently in.
+    /// Return confirmed absence only when the observation proves it. Permission,
+    /// command-exit, decoding and other observation failures remain errors.
+    /// The executor cannot recover errors an adapter has already discarded.
     fn current_state(&self) -> Result<ResourceState>;
 
     /// Get the desired state for this resource
@@ -119,7 +120,7 @@ pub trait Resource: Send + Sync + fmt::Debug {
     /// 4. Return the appropriate ApplyResult
     fn apply(&self, ctx: &mut ApplyContext) -> Result<ApplyResult>;
 
-    /// Whether this resource can be applied in parallel with others
+    /// Permission to parallelize, not a promise that the executor will do so
     ///
     /// Override to return false for resources that have ordering
     /// dependencies or shared state concerns.
