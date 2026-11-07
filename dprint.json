@@ -18,9 +18,9 @@
   "includes": ["**/*.md", "**/*.mdx", "**/*.toml", "**/*.json", "**/*.yaml", "**/*.yml"],
   "excludes": ["**/target/**", "**/Cargo.lock", "**/MODULE.bazel.lock"],
   "plugins": [
-    "https://plugins.dprint.dev/markdown-0.17.8.wasm",
-    "https://plugins.dprint.dev/toml-0.6.4.wasm",
-    "https://plugins.dprint.dev/json-0.19.4.wasm",
-    "https://plugins.dprint.dev/g-plane/pretty_yaml-v0.6.0.wasm"
+    "https://plugins.dprint.dev/markdown-0.17.8.wasm@3c810df549d80bc7682697734bb33a4041d0350b63ed6c17020bdec0fb138eab",
+    "https://plugins.dprint.dev/toml-0.6.4.wasm@e20fe7bbc5a8ee817ef0e0325cececf4cb86a6dd91146bc3e7c05a7e7aebdd94",
+    "https://plugins.dprint.dev/json-0.19.4.wasm@4b0f879146f82b6c2b2ee4116626ebf20382477473dfa21e21de157782e28e66",
+    "https://plugins.dprint.dev/g-plane/pretty_yaml-v0.6.0.wasm@40a2fdda7040317eb1b23520f3a00769a5571eedb049c4ca9175c1b9eeba01ae"
   ]
 }

@@ -577,7 +577,7 @@ mod tests {
 
         assert_eq!(result.installed, vec!["git", "curl"]);
         assert_eq!(result.skipped, vec!["wget"]);
-        assert!(result.failed.is_empty());
+        assert_eq!(result.failed.len(), 0);
     }
 
     #[test]
@@ -585,6 +585,6 @@ mod tests {
         let stderr = "Error: foo: not found";
         let result = parse_bundle_output("", stderr, false).unwrap();
 
-        assert!(!result.failed.is_empty());
+        assert_ne!(result.failed.len(), 0);
     }
 }

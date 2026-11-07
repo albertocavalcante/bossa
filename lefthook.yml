@@ -7,12 +7,12 @@ pre-commit:
     # Check Rust formatting
     cargo-fmt:
       glob: "**/*.rs"
-      run: cargo fmt -- --check
+      run: just fmt-check
 
     # Run Clippy linter
     cargo-clippy:
       glob: "**/*.rs"
-      run: cargo clippy --workspace --all-targets -- -D warnings
+      run: just lint
 
     # Shell script linting
     shellcheck:
@@ -41,46 +41,40 @@ pre-commit:
 
     # GitHub Actions workflow linting
     workflow-lint:
-      glob: ".github/workflows/*.{yml,yaml}"
-      run: ghalint run -c tools/lint/ghalint.yaml
-      fail_text: "Fix GitHub Actions workflow issues (ghalint)"
-
-    # Verify action versions are pinned to SHAs
-    workflow-pin:
-      glob: ".github/workflows/*.{yml,yaml}"
-      run: pinact run --verify -c tools/lint/pinact.yaml
-      fail_text: "Run 'pinact run -u -c tools/lint/pinact.yaml' to pin action versions"
+      glob: "{.github/workflows/*.{yml,yaml},tools/lint/*.{yml,yaml},tools/scripts/check-actions*.sh}"
+      run: just workflow-check
+      fail_text: "Fix workflow lint or action pin verification failures"
 
 pre-push:
   commands:
     # Run the same Clippy command used in CI
     cargo-clippy:
-      run: cargo clippy --workspace --all-targets -- -D warnings
+      run: just lint
 
     # Optional extra check: catch Linux-specific lints locally when target is installed
     cargo-clippy-linux:
       run: |
         if rustup target list --installed | grep -q '^x86_64-unknown-linux-gnu$'; then
-          cargo clippy --workspace --all-targets --target x86_64-unknown-linux-gnu -- -D warnings
+          cargo clippy --workspace --all-targets --locked --target x86_64-unknown-linux-gnu -- -D warnings
         else
           echo "Skipping Linux clippy (target x86_64-unknown-linux-gnu not installed)"
         fi
 
     # Run tests before pushing
     cargo-test:
-      run: cargo test --quiet
+      run: just test
 
     # Match CI rustdoc checks
     cargo-doc:
-      run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+      run: just doc-check
 
     # Ensure it builds in release mode
     cargo-build:
-      run: cargo build --release --quiet
+      run: just release
 
     # Bazel build verification
     bazel-build:
-      run: bazel build //:bossa --config=ci
+      run: just bazel-build
 
 commit-msg:
   commands:

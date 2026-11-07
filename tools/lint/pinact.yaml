@@ -14,5 +14,14 @@
 version: 3
 
 files:
-  - pattern: ".github/workflows/*.yml"
-  - pattern: ".github/workflows/*.yaml"
+  - pattern: "../../.github/workflows/*.yml"
+  - pattern: "../../.github/workflows/*.yaml"
+
+# No version tags exist at these commits. check-actions.sh verifies that each
+# remains in its trusted upstream branch history. Any changed SHA is subject to
+# pinact verification unless both the rule and that upstream check are reviewed.
+rules:
+  - ignore: true
+    conditions:
+      - expr: ActionRepoFullName == "dtolnay/rust-toolchain" && ActionVersion == "888c2e1ea69ab0d4330cbf0af1ecc7b68f368cc1"
+      - expr: ActionRepoFullName == "albertocavalcante/actions" && ActionVersion == "9a91e672159e2d4d806bce6fca6199ec65852947"

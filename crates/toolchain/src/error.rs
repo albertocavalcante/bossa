@@ -275,16 +275,16 @@ mod tests {
 
     #[test]
     fn test_error_category_description() {
-        assert!(!ErrorCategory::Network.description().is_empty());
-        assert!(!ErrorCategory::Platform.description().is_empty());
-        assert!(!ErrorCategory::NotFound.description().is_empty());
+        assert_ne!(ErrorCategory::Network.description(), "");
+        assert_ne!(ErrorCategory::Platform.description(), "");
+        assert_ne!(ErrorCategory::NotFound.description(), "");
     }
 
     #[test]
     fn test_error_category_advice() {
-        assert!(!ErrorCategory::Network.advice().is_empty());
-        assert!(!ErrorCategory::Platform.advice().is_empty());
-        assert!(!ErrorCategory::NotFound.advice().is_empty());
+        assert_ne!(ErrorCategory::Network.advice(), "");
+        assert_ne!(ErrorCategory::Platform.advice(), "");
+        assert_ne!(ErrorCategory::NotFound.advice(), "");
     }
 
     #[test]

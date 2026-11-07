@@ -112,9 +112,9 @@ mod tests {
     #[test]
     fn test_detect_platform() {
         let platform = detect().expect("should detect platform");
-        assert!(!platform.os.is_empty());
-        assert!(!platform.arch.is_empty());
-        assert!(!platform.triple.is_empty());
+        assert_ne!(platform.os, "");
+        assert_ne!(platform.arch, "");
+        assert_ne!(platform.triple, "");
     }
 
     #[test]

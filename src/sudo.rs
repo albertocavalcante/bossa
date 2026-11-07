@@ -148,9 +148,9 @@ mod tests {
     #[test]
     fn test_sudo_config_defaults() {
         let config = SudoConfig::default();
-        assert!(config.casks.is_empty());
-        assert!(config.defaults.is_empty());
-        assert!(config.operations.is_empty());
+        assert_eq!(config.casks.len(), 0);
+        assert_eq!(config.defaults.len(), 0);
+        assert_eq!(config.operations.len(), 0);
     }
 
     #[test]

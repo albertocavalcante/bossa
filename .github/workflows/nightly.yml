@@ -39,7 +39,7 @@ jobs:
 
       - name: Check for changes
         id: check
-        uses: albertocavalcante/actions/check-nightly-changes@9a91e672159e2d4d806bce6fca6199ec65852947 # main
+        uses: albertocavalcante/actions/check-nightly-changes@9a91e672159e2d4d806bce6fca6199ec65852947 # main (untagged commit; no version tag)
         with:
           force: ${{ inputs.force == true }}
 
@@ -49,10 +49,10 @@ jobs:
     if: needs.check-changes.outputs.should_build == 'true'
     permissions:
       contents: read
-    uses: albertocavalcante/actions/.github/workflows/rust-build.yml@9a91e672159e2d4d806bce6fca6199ec65852947 # main
+    uses: albertocavalcante/actions/.github/workflows/rust-build.yml@9a91e672159e2d4d806bce6fca6199ec65852947 # main (untagged commit; no version tag)
     with:
       binary-name: bossa
-      rust-version: "1.90.0"
+      rust-version: "1.99.1"
       platforms: "linux-amd64,linux-aarch64,linux-amd64-musl,darwin-arm64,darwin-amd64,windows-amd64"
       artifact-retention-days: 3
 
@@ -114,7 +114,7 @@ jobs:
 
       - name: Build DEB package
         if: steps.check.outputs.exists == 'true'
-        uses: albertocavalcante/actions/package-deb@9a91e672159e2d4d806bce6fca6199ec65852947 # main
+        uses: albertocavalcante/actions/package-deb@9a91e672159e2d4d806bce6fca6199ec65852947 # main (untagged commit; no version tag)
         with:
           binary-path: extracted/${{ env.BINARY_NAME }}
           binary-name: ${{ env.BINARY_NAME }}
@@ -193,7 +193,7 @@ jobs:
 
       - name: Build RPM package
         if: steps.check.outputs.exists == 'true'
-        uses: albertocavalcante/actions/package-rpm@9a91e672159e2d4d806bce6fca6199ec65852947 # main
+        uses: albertocavalcante/actions/package-rpm@9a91e672159e2d4d806bce6fca6199ec65852947 # main (untagged commit; no version tag)
         with:
           binary-path: extracted/${{ env.BINARY_NAME }}
           binary-name: ${{ env.BINARY_NAME }}
@@ -258,7 +258,7 @@ jobs:
       - name: Generate release notes
         if: steps.assets.outputs.exists == 'true'
         id: notes
-        uses: albertocavalcante/actions/release-notes@9a91e672159e2d4d806bce6fca6199ec65852947 # main
+        uses: albertocavalcante/actions/release-notes@9a91e672159e2d4d806bce6fca6199ec65852947 # main (untagged commit; no version tag)
         with:
           version: nightly-${{ needs.check-changes.outputs.short_sha }}
           assets-dir: release-assets
@@ -308,7 +308,7 @@ jobs:
       - name: Update Homebrew tap
         if: steps.assets.outputs.exists == 'true' && steps.eukia.outcome == 'success'
         continue-on-error: true
-        uses: albertocavalcante/actions/update-homebrew-tap@9a91e672159e2d4d806bce6fca6199ec65852947 # main
+        uses: albertocavalcante/actions/update-homebrew-tap@9a91e672159e2d4d806bce6fca6199ec65852947 # main (untagged commit; no version tag)
         with:
           tap-repo: albertocavalcante/homebrew-tap
           formula-name: bossa-nightly

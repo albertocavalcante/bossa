@@ -1,15 +1,15 @@
-.PHONY: build release install clean
+.PHONY: all build release install clean test check ci
 
 # Default target
 all: release
 
 # Development build
 build:
-	cargo build
+	just build
 
 # Release build (optimized)
 release:
-	cargo build --release
+	just release
 
 # Install to ~/bin (assumes it's in PATH)
 install: release
@@ -25,9 +25,12 @@ clean:
 
 # Run tests
 test:
-	cargo test
+	just test
 
 # Check for issues
 check:
-	cargo clippy
-	cargo fmt --check
+	just check
+
+# Run the canonical workspace checks
+ci:
+	just ci

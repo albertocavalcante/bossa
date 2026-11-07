@@ -248,7 +248,7 @@ mod tests {
         assert!(result.is_err());
 
         if let Err(Error::DecompressionFailed(msg)) = result {
-            assert!(!msg.is_empty());
+            assert_ne!(msg, "");
         } else {
             panic!("Expected DecompressionFailed error");
         }
