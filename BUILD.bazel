@@ -6,6 +6,7 @@ package(default_visibility = ["//visibility:public"])
 
 APP_SRCS = [
     "src/app.rs",
+    "src/application.rs",
     "src/configuration.rs",
     "src/lib.rs",
     "src/process.rs",
@@ -19,6 +20,7 @@ rust_library(
     edition = "2024",
     proc_macro_deps = all_crate_deps(proc_macro = True),
     deps = [
+        "//crates/declarative",
         "@crates//:anyhow",
         "@crates//:dirs",
         "@crates//:serde",

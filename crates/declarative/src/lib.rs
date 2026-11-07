@@ -10,7 +10,7 @@
 //! - **Resource**: Something with state that can be managed (files, packages, settings)
 //! - **ResourceState**: The current or desired state of a resource
 //! - **ExecutionPlan**: A plan grouping resources by privilege level
-//! - **Executor**: Applies resources with parallelism and privilege batching
+//! - **Executor**: Preflights the scope, applies serially and verifies postconditions
 //!
 //! ## Example
 //!
@@ -87,9 +87,10 @@ pub use context::{
     SudoClassifier, SudoProvider,
 };
 pub use diff::{DiffSummary, ResourceDiff, compute_diffs, group_by_type};
-pub use executor::{execute, execute_simple};
+pub use executor::{execute, execute_simple, execute_with_followups};
 pub use planner::ExecutionPlan;
 pub use resource::{BoxedResource, Resource, ResourceExt};
 pub use types::{
-    ApplyResult, CommandOutput, ExecuteOptions, ExecuteSummary, ResourceState, SudoRequirement,
+    ActionOutcome, ApplyResult, CommandOutput, EffectStatus, ExecuteOptions, ExecuteSummary,
+    ExecutionStatus, ResourceKey, ResourceState, SudoRequirement, VerificationStatus,
 };

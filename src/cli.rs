@@ -888,7 +888,7 @@ pub struct NovaArgs {
     #[arg(long, short = 'y')]
     pub yes: bool,
 
-    /// Number of parallel jobs (max 128)
+    /// Requested job limit (max 128); effects currently run serially
     #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..=128))]
     pub jobs: Option<u16>,
 }

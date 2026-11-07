@@ -8,7 +8,6 @@ use colored::Colorize;
 use crate::Context as AppContext;
 use crate::cli::NovaArgs;
 use crate::config;
-use crate::engine::planner::ExecutionPlanExt;
 use crate::engine::{self, ExecuteOptions, ExecutionPlan};
 use crate::resource::{
     BrewPackage, DefaultValue as ResDefaultValue, DockApp, DockFolder, FileHandler, GHExtension,
@@ -19,15 +18,19 @@ use crate::sudo::SudoConfig;
 use crate::ui;
 
 pub fn run(ctx: &AppContext, args: NovaArgs) -> Result<()> {
-    ui::banner();
+    if !ctx.quiet {
+        ui::banner();
+    }
 
     if args.list_stages {
         list_stages();
         return Ok(());
     }
 
-    ui::header("Bossa Nova - System Bootstrap");
-    println!();
+    if !ctx.quiet {
+        ui::header("Bossa Nova - System Bootstrap");
+        println!();
+    }
 
     // Load config
     let config = load_config()?;
@@ -38,18 +41,22 @@ pub fn run(ctx: &AppContext, args: NovaArgs) -> Result<()> {
     let plan = build_plan(&config, &stages)?;
 
     if plan.is_empty() {
-        ui::success("No resources configured in the selected stages");
+        if !ctx.quiet {
+            ui::success("No resources configured in the selected stages");
+        }
         return Ok(());
     }
 
     // Show what we're going to do
-    println!(
-        "  {} resources to apply ({} unprivileged, {} privileged)",
-        plan.total_resources().to_string().bold(),
-        plan.unprivileged.len().to_string().green(),
-        plan.privileged.len().to_string().yellow()
-    );
-    println!();
+    if !ctx.quiet {
+        println!(
+            "  {} resources to apply ({} unprivileged, {} privileged)",
+            plan.total_resources().to_string().bold(),
+            plan.unprivileged.len().to_string().green(),
+            plan.privileged.len().to_string().yellow()
+        );
+        println!();
+    }
 
     // Execute
     let opts = ExecuteOptions {
@@ -59,10 +66,15 @@ pub fn run(ctx: &AppContext, args: NovaArgs) -> Result<()> {
         verbose: ctx.verbose > 0,
     };
 
-    let summary = engine::execute(plan, opts)?;
+    let summary = engine::execute(plan, opts, ctx.quiet)?;
 
     if !summary.is_success() {
-        anyhow::bail!("{} resource(s) failed to apply", summary.failed);
+        anyhow::bail!(
+            "Selected configuration incomplete: {} failed, {} blocked, {} cancelled; inspect the action diagnostics",
+            summary.failed,
+            summary.blocked,
+            summary.cancelled
+        );
     }
 
     Ok(())
@@ -203,9 +215,20 @@ fn add_defaults_resources(
         plan.add_resource(Box::new(resource), sudo_config);
     }
 
-    // Add restart services
+    let parents = plan
+        .unprivileged
+        .iter()
+        .chain(&plan.privileged)
+        .filter(|resource| resource.resource_type() == "macos_default")
+        .map(|resource| declarative::ResourceKey {
+            resource_type: resource.resource_type().into(),
+            id: resource.id(),
+        })
+        .collect::<Vec<_>>();
     for service in &config.defaults.restart.services {
-        plan.add_restart_service(service.clone());
+        if !parents.is_empty() {
+            plan.add_post_action_for(service.clone(), parents.clone());
+        }
     }
 
     Ok(())
@@ -354,7 +377,17 @@ fn add_dock_resources(plan: &mut ExecutionPlan, config: &BossaConfig) -> Result<
 
     // Restart Dock after changes
     if !dock.apps.is_empty() || !dock.folders.is_empty() {
-        plan.add_restart_service("Dock".to_string());
+        let parents = plan
+            .unprivileged
+            .iter()
+            .chain(&plan.privileged)
+            .filter(|resource| resource.resource_type().starts_with("dock_"))
+            .map(|resource| declarative::ResourceKey {
+                resource_type: resource.resource_type().into(),
+                id: resource.id(),
+            })
+            .collect();
+        plan.add_post_action_for("Dock".to_string(), parents);
     }
 
     Ok(())

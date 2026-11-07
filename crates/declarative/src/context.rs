@@ -54,6 +54,9 @@ impl SudoClassifier for NoSudo {
 ///
 /// Implement this trait to receive progress updates during execution.
 pub trait ProgressCallback: Send {
+    /// Read-only differences, shown before any confirmation or effect.
+    fn on_plan(&mut self, _diffs: &[crate::diff::ResourceDiff]) {}
+
     /// Called when starting to apply a batch of resources
     fn on_batch_start(&mut self, count: usize, privileged: bool);
 

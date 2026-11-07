@@ -8,25 +8,11 @@ use declarative::ExecutionPlan;
 pub trait ExecutionPlanExt {
     /// Add a resource using bossa's SudoConfig for classification
     fn add_resource_with_config(&mut self, resource: Box<dyn Resource>, sudo_config: &SudoConfig);
-
-    /// Add a service to restart after apply
-    fn add_restart_service(&mut self, service: String);
-
-    /// Get services to restart
-    fn restart_services(&self) -> &[String];
 }
 
 impl ExecutionPlanExt for ExecutionPlan {
     fn add_resource_with_config(&mut self, resource: Box<dyn Resource>, sudo_config: &SudoConfig) {
         self.add_resource(resource, sudo_config);
-    }
-
-    fn add_restart_service(&mut self, service: String) {
-        self.add_post_action(service);
-    }
-
-    fn restart_services(&self) -> &[String] {
-        &self.post_actions
     }
 }
 

@@ -58,13 +58,53 @@ pub enum ApplyResult {
 impl ApplyResult {
     /// Check if the result represents success (no failure)
     pub fn is_success(&self) -> bool {
-        !matches!(self, Self::Failed { .. })
+        !matches!(self, Self::Failed { .. } | Self::Skipped { .. })
     }
 
     /// Check if the result represents a change
     pub fn is_change(&self) -> bool {
         matches!(self, Self::Created | Self::Modified | Self::Removed)
     }
+}
+
+/// Stable identity within a selected plan, independent of display text.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ResourceKey {
+    pub resource_type: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExecutionStatus {
+    NotStarted,
+    Completed,
+    Failed,
+    Cancelled,
+    Blocked,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EffectStatus {
+    None,
+    VerifiedChange,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VerificationStatus {
+    Pending,
+    Satisfied,
+    Failed,
+}
+
+/// Ephemeral observation of an action, not a durable completion receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionOutcome {
+    pub resource: ResourceKey,
+    pub execution: ExecutionStatus,
+    pub effects: EffectStatus,
+    pub verification: VerificationStatus,
+    pub diagnostic: Option<String>,
 }
 
 /// Summary of execution results
@@ -76,32 +116,61 @@ pub struct ExecuteSummary {
     pub skipped: usize,
     pub failed: usize,
     pub no_change: usize,
+    pub preview: bool,
+    pub blocked: usize,
+    pub cancelled: usize,
+    pub outcomes: Vec<ActionOutcome>,
 }
 
 impl ExecuteSummary {
-    /// Total number of actual changes made
+    /// Verified changed resource and follow-up actions
     pub fn total_changes(&self) -> usize {
         self.created + self.modified + self.removed
     }
 
     /// Check if execution was fully successful (no failures)
     pub fn is_success(&self) -> bool {
-        self.failed == 0
+        self.outcomes.len() == self.total()
+            && self.failed == 0
+            && self.blocked == 0
+            && self.cancelled == 0
+            && (self.preview
+                || (self.skipped == 0
+                    && self
+                        .outcomes
+                        .iter()
+                        .all(|row| row.verification == VerificationStatus::Satisfied)))
     }
 
-    /// Total number of resources processed
+    /// Total selected action outcomes, including follow-ups
     pub fn total(&self) -> usize {
-        self.created + self.modified + self.removed + self.skipped + self.failed + self.no_change
+        self.created
+            + self.modified
+            + self.removed
+            + self.skipped
+            + self.failed
+            + self.no_change
+            + self.blocked
+            + self.cancelled
     }
 
     /// Merge another summary into this one
     pub fn merge(&mut self, other: &ExecuteSummary) {
+        let was_empty = self.total() == 0;
         self.created += other.created;
         self.modified += other.modified;
         self.removed += other.removed;
         self.skipped += other.skipped;
         self.failed += other.failed;
         self.no_change += other.no_change;
+        self.blocked += other.blocked;
+        self.cancelled += other.cancelled;
+        self.preview = if was_empty {
+            other.preview
+        } else {
+            self.preview && other.preview
+        };
+        self.outcomes.extend(other.outcomes.iter().cloned());
     }
 
     /// Add a result to the summary
@@ -122,7 +191,8 @@ impl ExecuteSummary {
 pub struct ExecuteOptions {
     /// Don't make changes, just show what would happen
     pub dry_run: bool,
-    /// Number of parallel jobs for unprivileged operations
+    /// Requested upper bound retained for API compatibility. Execution is
+    /// currently serial until resource independence is demonstrated.
     pub jobs: usize,
     /// Verbose output
     pub verbose: bool,
@@ -165,5 +235,23 @@ impl CommandOutput {
     /// Get stderr as a string
     pub fn stderr_str(&self) -> String {
         String::from_utf8_lossy(&self.stderr).to_string()
+    }
+}
+
+#[cfg(test)]
+mod report_tests {
+    use super::*;
+
+    #[test]
+    fn counters_cannot_substitute_for_verified_action_outcomes() {
+        let mut report = ExecuteSummary::default();
+        report.add_result(&ApplyResult::Created);
+        assert!(!report.is_success());
+        assert!(
+            !ApplyResult::Skipped {
+                reason: "cancelled".into()
+            }
+            .is_success()
+        );
     }
 }

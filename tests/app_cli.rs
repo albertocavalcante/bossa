@@ -655,3 +655,78 @@ fn nova_rejects_unsupported_values_and_unknown_stage_selections() {
             .success()
     );
 }
+
+#[test]
+fn nova_observation_failure_is_unsuccessful_without_any_mutation() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    let contents = "[defaults]\n'com.example.Value' = true\n";
+    fs::write(root.join("config/config.toml"), contents).unwrap();
+    let output = fixture
+        .command(&["nova", "--only", "defaults", "--dry-run", "--yes"])
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "failed defaults observation disappeared"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("config/config.toml")).unwrap(),
+        contents
+    );
+    for name in ["state", "home", "workspaces"] {
+        assert_eq!(fs::read_dir(root.join(name)).unwrap().count(), 0);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn quiet_nova_needs_consent_and_verified_fixture_apply_is_idempotent() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    let source = root.join("dot-source/shell");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join(".fixture-rc"), "preserved content").unwrap();
+    fs::write(
+        root.join("config/config.toml"),
+        format!(
+            "[symlinks]\nsource = '{}'\ntarget = '{}'\npackages = ['shell']\n",
+            root.join("dot-source").display(),
+            root.join("home").display()
+        ),
+    )
+    .unwrap();
+    let target = root.join("home/.fixture-rc");
+    let declined = fixture
+        .command(&["--quiet", "nova", "--only", "symlinks"])
+        .unwrap();
+    assert!(!declined.status.success());
+    assert!(!target.exists());
+    assert_eq!(declined.stdout, b"");
+    let preview = fixture
+        .command(&[
+            "--quiet",
+            "nova",
+            "--only",
+            "symlinks",
+            "--dry-run",
+            "--yes",
+        ])
+        .unwrap();
+    assert!(preview.status.success());
+    assert!(!target.exists());
+    assert_eq!(preview.stdout, b"");
+    for _ in 0..2 {
+        let applied = fixture
+            .command(&["--quiet", "nova", "--only", "symlinks", "--yes"])
+            .unwrap();
+        assert!(
+            applied.status.success(),
+            "{}",
+            String::from_utf8_lossy(&applied.stderr)
+        );
+        assert_eq!(applied.stdout, b"");
+        assert_eq!(fs::read_link(&target).unwrap(), source.join(".fixture-rc"));
+        assert_eq!(fs::read_to_string(&target).unwrap(), "preserved content");
+        assert_eq!(fs::read_dir(root.join("state")).unwrap().count(), 0);
+    }
+}

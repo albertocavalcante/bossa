@@ -51,9 +51,19 @@ claim the machine is configured. Read-only previews never rewrite configuration.
 ## Applying resources
 
 Remove `--dry-run` to request changes. `--yes` skips confirmation for that request. `--quiet`
-controls output and does not grant consent. `-j` sets the requested resource job count.
+controls output and does not grant consent. Closed or unavailable interactive input blocks apply
+unless `--yes` was explicitly selected. `-j` is a requested upper bound; resource effects are
+currently serialized until their independence is demonstrated.
 
-Execution observation, verification, scheduling and completion reporting are being hardened in
-the next modernization slice. Successful preview alone is not evidence of completed setup or a
-persisted finish receipt. Preserve the failed command and its diagnostics when investigating an
-incomplete apply; do not assume it rolled back all effects.
+The resource executor retains observation errors, verifies postconditions after effects, and
+reports failed, blocked or cancelled work as incomplete. Restarts require selected parents with
+verified changes; filtered or failed parents do not trigger them. An accepted restart signal
+request does not verify service health.
+
+Reports separate execution, possible effects and verification. A command can fail after making
+changes; preserve those effects and reobserve before retrying. The report is not a persisted
+finish receipt and does not authorize automatic cleanup.
+
+Native resource adapters and process bounds remain under review in the next modernization
+slice. The executor cannot reconstruct an error that an adapter has already discarded, so
+successful preview is not evidence that every adapter has complete observation coverage.
