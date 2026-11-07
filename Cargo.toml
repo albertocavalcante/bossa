@@ -65,6 +65,7 @@ ureq = { version = "3", features = ["json"] }
 # Archive extraction
 flate2 = "1"
 tar = "0.4"
+tempfile = "3"
 zip = "2"
 
 # Workspace crates
@@ -79,9 +80,6 @@ toolchain = { path = "crates/toolchain" }
 # Windows-specific dependencies
 [target.'cfg(windows)'.dependencies]
 junction = "1"
-
-[dev-dependencies]
-tempfile = "3"
 
 [profile.release]
 opt-level = "z" # Optimize for size

@@ -119,18 +119,7 @@ pub(crate) fn install_homebrew(yes: bool) -> Result<()> {
 }
 
 fn load_config() -> Result<BossaConfig> {
-    let config_dir = config::config_dir()?;
-
-    // Try to load unified config
-    match config::load_config::<BossaConfig>(&config_dir, "config") {
-        Ok((config, _format)) => Ok(config),
-        Err(_) => {
-            // Return default config if none exists
-            ui::warn("No config found at ~/.config/bossa/config.toml");
-            ui::info("Run 'bossa add' commands or create config manually");
-            Ok(BossaConfig::default())
-        }
-    }
+    config::load_bossa_config(true)
 }
 
 fn build_plan(ctx: &AppContext, config: &BossaConfig, args: &NovaArgs) -> Result<ExecutionPlan> {

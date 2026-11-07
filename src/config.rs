@@ -67,14 +67,49 @@ pub fn load_config<T: DeserializeOwned>(
     dir: &std::path::Path,
     base_name: &str,
 ) -> Result<(T, ConfigFormat)> {
-    let (path, format) = find_config_file(dir, base_name)
-        .with_context(|| format!("Config file not found: {base_name}.toml or {base_name}.json"))?;
+    let document =
+        bossa::load_config_document(&bossa::FileConfigSource::default(), dir, base_name)?
+            .with_context(|| {
+                format!("Config file not found: {base_name}.toml or {base_name}.json")
+            })?;
+    Ok((document.parse()?, document.format.into()))
+}
 
-    let content =
-        fs::read_to_string(&path).with_context(|| format!("Could not read {}", path.display()))?;
+impl From<bossa::ConfigFormat> for ConfigFormat {
+    fn from(format: bossa::ConfigFormat) -> Self {
+        match format {
+            bossa::ConfigFormat::Toml => Self::Toml,
+            bossa::ConfigFormat::Json => Self::Json,
+        }
+    }
+}
 
-    let config = format.parse(&content)?;
-    Ok((config, format))
+pub fn bossa_document() -> Result<Option<bossa::ConfigDocument>> {
+    Ok(bossa::load_config_document(
+        &bossa::FileConfigSource::default(),
+        &config_dir()?,
+        "config",
+    )?)
+}
+
+pub fn parse_bossa_document(
+    document: &bossa::ConfigDocument,
+) -> Result<(crate::schema::BossaConfig, bool)> {
+    let result = match document.format {
+        bossa::ConfigFormat::Toml => crate::legacy_config::decode_toml(document.parse()?),
+        bossa::ConfigFormat::Json => crate::legacy_config::decode(document.parse()?),
+    };
+    result.with_context(|| format!("Could not load {}", document.path.display()))
+}
+
+pub fn load_bossa_config(required: bool) -> Result<crate::schema::BossaConfig> {
+    match bossa_document()? {
+        Some(document) => Ok(parse_bossa_document(&document)?.0),
+        None if required => anyhow::bail!(
+            "No Bossa configuration found; select or create config.toml/config.json before applying"
+        ),
+        None => Ok(crate::schema::BossaConfig::default()),
+    }
 }
 
 /// Save a config file in the specified format

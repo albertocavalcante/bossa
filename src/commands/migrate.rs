@@ -2,11 +2,10 @@
 
 #![allow(dead_code)]
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use colored::Colorize;
 use serde::Deserialize;
-use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
 use crate::Context as AppContext;
 use crate::config;
@@ -25,46 +24,59 @@ pub fn run(ctx: &AppContext, dry_run: bool) -> Result<()> {
     let bossa_refs_path = new_dir.join("refs.json");
     let ws_path = legacy_dir.join("workspaces.json");
 
-    // Prefer refs.json in bossa config dir, fall back to legacy dir
-    let refs_path = if bossa_refs_path.exists() {
-        bossa_refs_path
-    } else {
-        legacy_refs_path
+    let source = bossa::FileConfigSource::default();
+    let read_legacy =
+        |path: &Path| bossa::ConfigDocument::read(&source, path, bossa::ConfigFormat::Json);
+    let refs = match read_legacy(&bossa_refs_path)? {
+        Some(document) => Some(document),
+        None => read_legacy(&legacy_refs_path)?,
     };
-
-    let has_refs = refs_path.exists();
-    let has_ws = ws_path.exists();
-
-    if !has_refs && !has_ws {
+    let workspaces = read_legacy(&ws_path)?;
+    let selected = config::bossa_document()?;
+    let (mut config, legacy_main) = match selected.as_ref() {
+        Some(document) => config::parse_bossa_document(document)?,
+        None => (BossaConfig::default(), false),
+    };
+    if legacy_main {
+        anyhow::bail!(
+            "Explicitly convert the vector-shaped main configuration before merging legacy files"
+        );
+    }
+    if refs.is_none() && workspaces.is_none() {
         ui::info("No legacy configs found to migrate");
         return Ok(());
     }
-
-    // Load existing new config or create default
-    let mut config = match config::load_config::<BossaConfig>(&new_dir, "config") {
-        Ok((c, _)) => c,
-        Err(_) => BossaConfig::default(),
-    };
+    let destination = selected.as_ref().map_or_else(
+        || new_dir.join("config.toml"),
+        |document| document.path.clone(),
+    );
+    let format = selected
+        .as_ref()
+        .map_or(config::ConfigFormat::Toml, |document| {
+            document.format.into()
+        });
+    ui::info(&format!("Migration destination: {}", destination.display()));
 
     // Migrate refs.json
-    if has_refs {
-        ui::section("Migrating refs.json");
-        migrate_refs(&refs_path, &mut config, ctx)?;
+    if let Some(document) = &refs {
+        ui::section("Preparing refs.json migration");
+        migrate_refs(document, &mut config, ctx)?;
     }
 
     // Migrate workspaces.json
-    if has_ws {
-        ui::section("Migrating workspaces.json");
-        migrate_workspaces(&ws_path, &mut config, ctx)?;
+    if let Some(document) = &workspaces {
+        ui::section("Preparing workspaces.json migration");
+        migrate_workspaces(document, &mut config, ctx)?;
     }
+    config.validate()?;
 
     if dry_run {
         ui::warn("Dry run - no changes made");
         println!();
-        println!("Would write to: {}", new_dir.join("config.toml").display());
+        println!("Would write to: {}", destination.display());
 
         // Show preview
-        let toml_str = toml::to_string_pretty(&config)?;
+        let toml_str = format.serialize(&config)?;
         println!();
         println!("{}", "Preview:".bold());
         for line in toml_str.lines().take(50) {
@@ -74,22 +86,19 @@ pub fn run(ctx: &AppContext, dry_run: bool) -> Result<()> {
             println!("  ... ({} more lines)", toml_str.lines().count() - 50);
         }
     } else {
-        // Save new config
-        fs::create_dir_all(&new_dir)?;
-        let config_path = new_dir.join("config.toml");
-        let toml_str = toml::to_string_pretty(&config)?;
-        fs::write(&config_path, toml_str)?;
+        // The canonical saver propagates errors and preserves the selected format.
+        let config_path = config.save()?;
 
         ui::success(&format!("Config written to {}", config_path.display()));
 
         // Optionally backup and remove old configs
         println!();
         ui::info("Old configs preserved at:");
-        if has_refs {
-            println!("  {}", refs_path.display());
+        if let Some(document) = &refs {
+            println!("  {}", document.path.display());
         }
-        if has_ws {
-            println!("  {}", ws_path.display());
+        if let Some(document) = &workspaces {
+            println!("  {}", document.path.display());
         }
     }
 
@@ -98,6 +107,7 @@ pub fn run(ctx: &AppContext, dry_run: bool) -> Result<()> {
 
 // Old refs.json format
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LegacyRefsConfig {
     root_directory: String,
     #[serde(default)]
@@ -105,6 +115,7 @@ struct LegacyRefsConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LegacyRepo {
     name: String,
     url: String,
@@ -112,12 +123,12 @@ struct LegacyRepo {
     default_branch: Option<String>,
 }
 
-fn migrate_refs(path: &PathBuf, config: &mut BossaConfig, ctx: &AppContext) -> Result<()> {
-    let content =
-        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
-
-    let legacy: LegacyRefsConfig =
-        serde_json::from_str(&content).with_context(|| "Failed to parse refs.json")?;
+fn migrate_refs(
+    document: &bossa::ConfigDocument,
+    config: &mut BossaConfig,
+    ctx: &AppContext,
+) -> Result<()> {
+    let legacy: LegacyRefsConfig = document.parse()?;
 
     // Create collection from legacy refs
     let mut repos = Vec::new();
@@ -142,11 +153,28 @@ fn migrate_refs(path: &PathBuf, config: &mut BossaConfig, ctx: &AppContext) -> R
         repos,
     };
 
-    config.collections.insert("refs".to_string(), collection);
+    if let Some(existing) = config.collections.get_mut("refs") {
+        if existing.path != collection.path {
+            anyhow::bail!(
+                "Existing refs collection has a different path; resolve the migration conflict explicitly"
+            );
+        }
+        for repo in collection.repos {
+            if let Some(current) = existing.find_repo(&repo.name) {
+                if current.url != repo.url || current.default_branch != repo.default_branch {
+                    anyhow::bail!("Conflicting legacy repository: {}", repo.name);
+                }
+            } else {
+                existing.add_repo(repo);
+            }
+        }
+    } else {
+        config.collections.insert("refs".to_string(), collection);
+    }
 
     if !ctx.quiet {
         println!(
-            "  {} Migrated {} repositories",
+            "  {} Prepared {} repositories",
             "✓".green(),
             config.collections["refs"].repos.len()
         );
@@ -157,6 +185,7 @@ fn migrate_refs(path: &PathBuf, config: &mut BossaConfig, ctx: &AppContext) -> R
 
 // Old workspaces.json format
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LegacyWorkspacesConfig {
     root_directory: String,
     #[serde(default)]
@@ -164,6 +193,7 @@ struct LegacyWorkspacesConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LegacyWorkspace {
     name: String,
     url: String,
@@ -174,39 +204,64 @@ struct LegacyWorkspace {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LegacyWorktree {
     branch: String,
     #[serde(default)]
     path: String,
 }
 
-fn migrate_workspaces(path: &PathBuf, config: &mut BossaConfig, ctx: &AppContext) -> Result<()> {
-    let content =
-        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
-
-    let legacy: LegacyWorkspacesConfig =
-        serde_json::from_str(&content).with_context(|| "Failed to parse workspaces.json")?;
-
+fn migrate_workspaces(
+    document: &bossa::ConfigDocument,
+    config: &mut BossaConfig,
+    ctx: &AppContext,
+) -> Result<()> {
+    let legacy: LegacyWorkspacesConfig = document.parse()?;
+    if !config.workspaces.repos.is_empty() && config.workspaces.root != legacy.root_directory {
+        anyhow::bail!("Existing workspace root conflicts with migration input");
+    }
     config.workspaces.root = legacy.root_directory;
-    config.workspaces.structure = "category".to_string();
-
+    config.workspaces.structure = "bare-worktree".to_string();
+    let root = config.workspaces.expanded_root()?;
     for ws in &legacy.repositories {
-        // Extract branch names from worktrees
-        let worktree_branches: Vec<String> =
-            ws.worktrees.iter().map(|wt| wt.branch.clone()).collect();
-
-        config.workspaces.repos.push(crate::schema::WorkspaceRepo {
+        let repo = crate::schema::WorkspaceRepo {
             name: ws.name.clone(),
             url: ws.url.clone(),
             category: ws.category.clone().unwrap_or_else(|| "default".to_string()),
-            worktrees: worktree_branches,
+            worktrees: ws
+                .worktrees
+                .iter()
+                .map(|worktree| worktree.branch.clone())
+                .collect(),
             description: String::new(),
-        });
+        };
+        repo.validate()?;
+        for worktree in &ws.worktrees {
+            if !worktree.path.is_empty()
+                && crate::paths::expand(&worktree.path)
+                    != repo.worktree_path(&root, &worktree.branch)
+            {
+                anyhow::bail!(
+                    "Legacy worktree path requires explicit conversion: {}",
+                    worktree.path
+                );
+            }
+        }
+        if let Some(current) = config.workspaces.find_repo(&repo.name) {
+            if current.url != repo.url
+                || current.category != repo.category
+                || current.worktrees != repo.worktrees
+            {
+                anyhow::bail!("Conflicting legacy workspace: {}", repo.name);
+            }
+        } else {
+            config.workspaces.add_repo(repo);
+        }
     }
 
     if !ctx.quiet {
         println!(
-            "  {} Migrated {} workspaces",
+            "  {} Prepared {} workspaces",
             "✓".green(),
             legacy.repositories.len()
         );

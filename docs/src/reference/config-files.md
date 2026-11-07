@@ -6,17 +6,53 @@ Reference for bossa configuration and state files.
 
 Default location: `~/.config/bossa/`
 
-Bossa currently uses fixed paths (no environment variable overrides).
+Set `BOSSA_CONFIG_DIR` to select another directory. Otherwise an existing `~/.config/bossa/`
+takes precedence over `XDG_CONFIG_HOME/bossa`, followed by the platform default. State and
+workspace roots have separate `BOSSA_STATE_DIR` and `BOSSA_WORKSPACES_DIR` overrides.
 
 ---
 
-## config.toml
+## config.toml or config.json
 
 Unified configuration for collections, workspaces, storage, packages, nova, and more.
 
 ### Location
 
 `~/.config/bossa/config.toml`
+
+### Loading and editing
+
+Nova, CRUD, status, diff, and apply use the same canonical configuration model. TOML is preferred
+when both files exist. A read or parse failure in TOML blocks the command rather than selecting
+JSON. Unknown fields in typed sections are rejected; explicitly named maps, such as macOS defaults
+or custom Git sections, retain their documented arbitrary keys.
+
+Configuration reads do not create directories or write files. Missing configuration is an
+unconfigured status; apply and Nova require a selected file even for a preview. Files must be
+regular UTF-8 files or symlinks to such files, at most 8 MiB. Unreadable files, dangling symlinks,
+unsupported shapes, and over-limit files are errors.
+
+Duplicate JSON object keys are rejected, including nested keys, so an edit cannot silently drop an
+earlier value. TOML uses its native value model, preserving floats and datetimes.
+
+CRUD and migration edits preserve the selected filename and format. Editing JSON does not create a
+higher-priority TOML file. Complete contents are staged before replacement; a staging failure leaves
+the original file intact and removes the temporary file. Existing file symlinks and basic file
+permissions are preserved. Serialization preserves modeled sections; preserving TOML comments,
+coordinating concurrent read-modify-write operations, and crash recovery are separate contracts.
+Retain a copy before manually converting formats.
+
+The former vector-shaped collections and storage sections have explicit read compatibility.
+Reading them does not convert the file. CRUD refuses to rewrite legacy input automatically.
+Duplicate resource names and legacy workspace layouts with custom paths are rejected because
+conversion could change their meaning. Review and explicitly convert such layouts before applying;
+there is no generic automatic conversion command.
+
+The historical unused workspace default (`root = ""`, `structure = ""`, no repositories) remains
+readable and editable. Configured workspaces require the `bare-worktree` layout and relative
+categories and worktree branch paths that stay within the configured root. Repository clone depth,
+single-branch selection, additional options, and default branch retain their configured meanings;
+additional options cannot override the corresponding typed fields or the argument boundary.
 
 ### Example
 
@@ -137,7 +173,8 @@ Internal state tracking for bossa operations.
 
 `~/.local/state/bossa/state.toml`
 
-Do not edit manually.
+State reads use the same regular UTF-8 file and 8 MiB limits. Malformed or unavailable state is an
+error; relocation does not replace it with an empty successful observation. Do not edit manually.
 
 ---
 

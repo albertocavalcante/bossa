@@ -359,7 +359,7 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
 
     // Load state for tracking (only if not dry run)
     let mut state = if !dry_run {
-        Some(BossaState::load().unwrap_or_default())
+        Some(BossaState::load()?)
     } else {
         None
     };
@@ -633,7 +633,7 @@ fn unlink(packages: &[String], dry_run: bool) -> Result<()> {
 
     // Load state for tracking (only if not dry run)
     let mut state = if !dry_run {
-        Some(BossaState::load().unwrap_or_default())
+        Some(BossaState::load()?)
     } else {
         None
     };

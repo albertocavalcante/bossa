@@ -4,7 +4,12 @@
 //! This boundary is intentionally small while commands migrate incrementally.
 
 mod app;
+mod configuration;
 mod process;
 
 pub use app::{AppEnvironment, AppPaths};
+pub use configuration::{
+    ConfigDocument, ConfigError, ConfigFormat, ConfigSource, FileConfigSource,
+    load_config_document, write_config_document,
+};
 pub use process::{CommandRequest, IoMode, ProcessRunner, SystemRunner};

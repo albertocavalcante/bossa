@@ -192,13 +192,13 @@ impl BossaState {
     pub fn load() -> Result<Self> {
         let path = Self::state_file()?;
 
-        if !path.exists() {
-            log::debug!("State file does not exist, using default state");
+        use bossa::ConfigSource as _;
+        let Some(content) = bossa::FileConfigSource::default()
+            .read(&path)
+            .with_context(|| format!("Failed to read state file: {}", path.display()))?
+        else {
             return Ok(Self::default());
-        }
-
-        let content = fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read state file: {}", path.display()))?;
+        };
 
         let state: Self = toml::from_str(&content)
             .with_context(|| format!("Failed to parse state file: {}", path.display()))?;

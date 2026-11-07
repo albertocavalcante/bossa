@@ -36,7 +36,7 @@ pub fn run(ctx: &AppContext, cmd: RelocateCommand) -> Result<()> {
     let shell_refs = scanner.scan_all()?;
 
     // Load state to find managed symlinks
-    let state = BossaState::load().unwrap_or_default();
+    let state = BossaState::load()?;
     let symlink_refs: Vec<&TrackedSymlink> = state.symlinks.find_by_source_prefix(&from_path);
 
     // Display findings
