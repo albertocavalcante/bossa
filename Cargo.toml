@@ -77,6 +77,11 @@ manifest = { path = "crates/manifest" }
 pintui = { git = "https://github.com/albertocavalcante/pintui", rev = "6e412905" }
 toolchain = { path = "crates/toolchain" }
 
+# Native signal delivery for cancellation of supervised jobs
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.4.6"
+rustix = { version = "1.1.3", features = ["fs", "process"] }
+
 # Windows-specific dependencies
 [target.'cfg(windows)'.dependencies]
 junction = "1"

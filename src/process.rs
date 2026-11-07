@@ -3,6 +3,11 @@ use std::ffi::OsString;
 use std::io;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
+use std::sync::Arc;
+use std::time::Duration;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix;
 
 /// OS-native command input. It is not Debug to avoid exposing secret arguments.
 pub struct CommandRequest {
@@ -17,19 +22,90 @@ pub enum IoMode {
     Inherit,
 }
 
-/// A launch error is distinct from an unsuccessful exit in the returned Output.
+/// Unsuccessful exits are returned in Output. IO errors may also occur after
+/// launch (timeout, output limits, cancellation or cleanup), and never prove
+/// that no effects occurred.
 pub trait ProcessRunner {
     fn run(&self, request: &CommandRequest, mode: IoMode) -> io::Result<Output>;
 }
 
-/// Native execution with an explicit environment, including an explicit PATH.
+/// Explicit command budgets: by default 30 minutes and 8 MiB of captured bytes.
+///
+/// The output budget combines stdout/stderr. Zero bytes is valid; zero time is
+/// rejected before launch. Kernel spawn/reap can delay supervisor cleanup.
+#[derive(Debug, Clone, Copy)]
+pub struct ProcessLimits {
+    pub timeout: Duration,
+    pub max_output_bytes: usize,
+}
+
+impl Default for ProcessLimits {
+    fn default() -> Self {
+        Self {
+            timeout: Duration::from_secs(30 * 60),
+            max_output_bytes: 8 * 1024 * 1024,
+        }
+    }
+}
+
+/// Native execution with a captured environment and bounded Linux/macOS supervision.
+///
+/// Captured jobs have an owned process group; timeout/cancellation signals that
+/// group and reaps the direct child. Inherit mode preserves terminal job control
+/// and can terminate only its direct child. This is not a sandbox or crash
+/// recovery; escaped sessions, privilege changes and external child reapers are
+/// outside this ownership contract. Other native platforms return an unsupported result.
+#[derive(Clone)]
 pub struct SystemRunner {
-    environment: BTreeMap<OsString, OsString>,
+    environment: Arc<BTreeMap<OsString, OsString>>,
+    limits: ProcessLimits,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    registry: Arc<unix::Registry>,
 }
 
 impl SystemRunner {
     pub fn new(environment: BTreeMap<OsString, OsString>) -> Self {
-        Self { environment }
+        Self {
+            environment: Arc::new(environment),
+            limits: ProcessLimits::default(),
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            registry: Arc::default(),
+        }
+    }
+
+    /// Change this clone's budgets while retaining its shared cancellation domain.
+    pub fn with_limits(mut self, limits: ProcessLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Cancel all current jobs shared by clones, and reject subsequent jobs.
+    pub fn cancel(&self) -> io::Result<()> {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            self.registry.cancel()
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Native cancellation is not implemented on this platform",
+            ))
+        }
+    }
+
+    /// Wait for registered direct children to be retired and reaped.
+    /// This is not evidence about escaped sessions or a persisted finish receipt.
+    pub fn wait_idle(&self, timeout: Duration) -> bool {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            self.registry.wait_idle(timeout)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = timeout;
+            true
+        }
     }
 }
 
@@ -48,10 +124,13 @@ impl ProcessRunner for SystemRunner {
             .args(&request.args)
             .current_dir(&request.working_dir)
             .env_clear()
-            .envs(&self.environment);
+            .envs(self.environment.as_ref());
         match mode {
             IoMode::Capture => {
-                command.stdin(Stdio::null());
+                command
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
             }
             IoMode::Inherit => {
                 command
@@ -60,11 +139,26 @@ impl ProcessRunner for SystemRunner {
                     .stderr(Stdio::inherit());
             }
         }
-        command.output()
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            unix::run(
+                &mut command,
+                matches!(mode, IoMode::Capture),
+                self.limits,
+                &self.registry,
+            )
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Bounded native execution is not implemented on this platform",
+            ))
+        }
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     use super::*;
 
@@ -118,6 +212,189 @@ mod tests {
                     IoMode::Capture,
                 )
                 .is_err()
+        );
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod supervision_tests {
+    use super::*;
+    use std::fs;
+    use std::time::Instant;
+
+    const TREE: &str = include_str!("../tests/fixtures/process-tree.sh");
+    const OUTPUT: &str = include_str!("../tests/fixtures/process-output.sh");
+
+    fn shell(root: &std::path::Path, script: &str, args: &[OsString]) -> CommandRequest {
+        let mut all = vec!["-c".into(), script.into(), "fixture".into()];
+        all.extend_from_slice(args);
+        CommandRequest {
+            program: "/bin/sh".into(),
+            args: all,
+            working_dir: root.to_path_buf(),
+        }
+    }
+    fn runner(timeout: Duration, max_output_bytes: usize) -> SystemRunner {
+        SystemRunner::new(BTreeMap::new()).with_limits(ProcessLimits {
+            timeout,
+            max_output_bytes,
+        })
+    }
+    fn assert_no_live_process(pid: &str) {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            let output = Command::new("/bin/ps")
+                .env_clear()
+                .args(["-o", "stat=", "-p", pid])
+                .output()
+                .unwrap();
+            let state = String::from_utf8(output.stdout).unwrap();
+            if (output.status.code() == Some(1) && state.is_empty() && output.stderr.is_empty())
+                || (output.status.success() && state.trim_start().starts_with('Z'))
+            {
+                return;
+            }
+            assert!(output.status.success(), "process observation failed");
+            assert!(
+                Instant::now() < deadline,
+                "fixture process remained live: {pid}: {state}"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    fn assert_tree_stopped(path: &std::path::Path) {
+        let pids = fs::read_to_string(path).unwrap();
+        assert_eq!(pids.lines().count(), 2);
+        for pid in pids.lines() {
+            assert_no_live_process(pid);
+        }
+    }
+
+    #[test]
+    fn captured_output_has_one_combined_limit_without_successful_truncation() {
+        let root = tempfile::TempDir::new().unwrap();
+        let request = shell(root.path(), OUTPUT, &["4".into(), "4".into()]);
+        let result = runner(Duration::from_secs(2), 8)
+            .run(&request, IoMode::Capture)
+            .unwrap();
+        assert!(result.status.success());
+        assert_eq!(result.stdout, [0; 4]);
+        assert_eq!(result.stderr, [0; 4]);
+        let error = runner(Duration::from_secs(2), 7)
+            .run(&request, IoMode::Capture)
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn default_capture_rejects_more_than_eight_mib() {
+        let root = tempfile::TempDir::new().unwrap();
+        let result = SystemRunner::new(BTreeMap::new()).run(
+            &CommandRequest {
+                program: "/usr/bin/head".into(),
+                args: ["-c", "8388609", "/dev/zero"]
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
+                working_dir: root.path().to_path_buf(),
+            },
+            IoMode::Capture,
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn large_legitimate_output_on_both_pipes_does_not_deadlock() {
+        let root = tempfile::TempDir::new().unwrap();
+        let request = shell(root.path(), OUTPUT, &["1048576".into(), "1048576".into()]);
+        let output = runner(Duration::from_secs(5), 2 * 1024 * 1024)
+            .run(&request, IoMode::Capture)
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout.len(), 1024 * 1024);
+        assert_eq!(output.stderr.len(), 1024 * 1024);
+    }
+
+    #[test]
+    fn timeout_stops_captured_children_and_reaps_the_direct_child() {
+        let root = tempfile::TempDir::new().unwrap();
+        let pids = root.path().join("pids");
+        let runner = runner(Duration::from_millis(500), 1024);
+        let result = runner.run(
+            &shell(root.path(), TREE, &[pids.clone().into_os_string()]),
+            IoMode::Capture,
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        assert!(runner.wait_idle(Duration::ZERO));
+        assert_tree_stopped(&pids);
+    }
+
+    #[test]
+    fn successful_exit_does_not_leave_a_captured_background_child_or_open_pipe() {
+        let root = tempfile::TempDir::new().unwrap();
+        let pids = root.path().join("pids");
+        let runner = runner(Duration::from_secs(2), 1024);
+        let result = runner
+            .run(
+                &shell(
+                    root.path(),
+                    TREE,
+                    &[pids.clone().into_os_string(), "leave".into()],
+                ),
+                IoMode::Capture,
+            )
+            .unwrap();
+        assert!(result.status.success());
+        assert!(runner.wait_idle(Duration::ZERO));
+        assert_tree_stopped(&pids);
+    }
+
+    #[test]
+    fn cancellation_is_shared_by_clones_and_rejects_future_jobs() {
+        let root = tempfile::TempDir::new().unwrap();
+        let pids = root.path().join("pids");
+        let runner = runner(Duration::from_secs(2), 1024);
+        let worker_runner = runner.clone();
+        let request = shell(root.path(), TREE, &[pids.clone().into_os_string()]);
+        let worker = std::thread::spawn(move || worker_runner.run(&request, IoMode::Capture));
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !fs::read_to_string(&pids).is_ok_and(|contents| contents.lines().count() == 2) {
+            assert!(Instant::now() < deadline, "fixture failed to start");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        runner.cancel().unwrap();
+        assert_eq!(
+            worker.join().unwrap().unwrap_err().kind(),
+            io::ErrorKind::Interrupted
+        );
+        assert!(runner.wait_idle(Duration::from_secs(1)));
+        assert_tree_stopped(&pids);
+        assert_eq!(
+            runner
+                .run(&shell(root.path(), "exit 0", &[]), IoMode::Capture)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Interrupted
+        );
+    }
+
+    #[test]
+    fn zero_output_is_valid_but_zero_time_fails_before_a_command_starts() {
+        let root = tempfile::TempDir::new().unwrap();
+        let request = shell(root.path(), "exit 0", &[]);
+        assert!(
+            runner(Duration::from_secs(1), 0)
+                .run(&request, IoMode::Capture)
+                .unwrap()
+                .status
+                .success()
+        );
+        assert_eq!(
+            runner(Duration::ZERO, 1024)
+                .run(&request, IoMode::Capture)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
         );
     }
 }

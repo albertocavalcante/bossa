@@ -29,6 +29,8 @@ pub struct Context {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let _ = paths::environment();
+    #[cfg(unix)]
+    let _signals = runner::install_signal_handler()?;
 
     // Initialize logging based on verbosity
     let log_level = match cli.verbose {

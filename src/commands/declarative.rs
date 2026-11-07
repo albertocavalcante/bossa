@@ -1382,8 +1382,8 @@ fn clone_repo(
     repo: &Repository,
     settings: &crate::schema::CloneSettings,
 ) -> Result<()> {
-    let runner = bossa::SystemRunner::new(crate::paths::environment().variables().clone());
-    clone_repo_using(root, repo, settings, &runner)
+    let runner = crate::runner::native_runner();
+    clone_repo_using(root, repo, settings, runner)
 }
 
 fn clone_repo_using(

@@ -10,6 +10,7 @@ APP_SRCS = [
     "src/configuration.rs",
     "src/lib.rs",
     "src/process.rs",
+    "src/process/unix.rs",
 ]
 
 rust_library(
@@ -29,11 +30,19 @@ rust_library(
         "@crates//:tempfile",
         "@crates//:thiserror",
         "@crates//:toml",
-    ],
+    ] + select({
+        "@platforms//os:linux": ["@crates//:rustix"],
+        "@platforms//os:osx": ["@crates//:rustix"],
+        "//conditions:default": [],
+    }),
 )
 
 rust_test(
     name = "bossa_app_test",
+    compile_data = [
+        "tests/fixtures/process-output.sh",
+        "tests/fixtures/process-tree.sh",
+    ],
     crate = ":bossa_app",
     deps = ["@crates//:tempfile"],
 )
@@ -89,6 +98,10 @@ rust_doc(
 rust_test(
     name = "app_cli_test",
     srcs = ["tests/app_cli.rs"],
+    compile_data = [
+        "tests/fixtures/defaults-state.sh",
+        "tests/fixtures/process-tree.sh",
+    ],
     crate_root = "tests/app_cli.rs",
     data = [":bossa"],
     edition = "2024",

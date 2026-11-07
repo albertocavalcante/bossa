@@ -64,6 +64,12 @@ Reports separate execution, possible effects and verification. A command can fai
 changes; preserve those effects and reobserve before retrying. The report is not a persisted
 finish receipt and does not authorize automatic cleanup.
 
-Native resource adapters and process bounds remain under review in the next modernization
-slice. The executor cannot reconstruct an error that an adapter has already discarded, so
-successful preview is not evidence that every adapter has complete observation coverage.
+The native runner now limits captured output to 8 MiB and command lifetime to 30 minutes by
+default. Its Linux/macOS captured jobs are cancelled on interrupt/termination, with no rollback
+claim for prior effects. Inherited terminal jobs keep foreground behavior and supervise only
+the direct child. Kernel cleanup can delay termination; escaped sessions and credential changes
+are outside this ownership contract.
+
+Native resource adapters are still being migrated: calls that directly use system commands do
+not yet receive these runner guarantees. Their observation/error coverage remains required
+modernization work. Successful preview does not prove complete native adapter coverage.
