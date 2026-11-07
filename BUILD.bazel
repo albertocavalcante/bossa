@@ -91,7 +91,10 @@ rust_test(
     data = [":bossa"],
     edition = "2024",
     env = {"BOSSA_TEST_BINARY": "$(rootpath :bossa)"},
-    deps = ["@crates//:tempfile"],
+    deps = [
+        "@crates//:tempfile",
+        "@crates//:toml",
+    ],
 )
 
 # ==============================================================================
