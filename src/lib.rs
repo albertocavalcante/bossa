@@ -9,6 +9,7 @@ mod configuration;
 mod filesystem;
 mod json;
 mod process;
+pub mod setup;
 
 pub use app::{AppEnvironment, AppPaths};
 pub use application::{ResourceApplyOptions, apply_resources, confirm_apply};

@@ -13,6 +13,8 @@ APP_SRCS = [
     "src/lib.rs",
     "src/process.rs",
     "src/process/unix.rs",
+    "src/setup.rs",
+    "src/setup/git.rs",
 ]
 
 rust_library(
@@ -109,12 +111,14 @@ rust_test(
         "tests/fixtures/native-snapshot.sh",
         "tests/fixtures/process-tree.sh",
         "tests/fixtures/sudo-state.sh",
+        "tests/fixtures/setup-git.sh",
     ],
     crate_root = "tests/app_cli.rs",
     data = [":bossa"],
     edition = "2024",
     env = {"BOSSA_TEST_BINARY": "$(rootpath :bossa)"},
     deps = [
+        ":bossa_app",
         "@crates//:tempfile",
         "@crates//:toml",
     ],
