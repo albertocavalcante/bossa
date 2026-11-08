@@ -4,7 +4,6 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::paths;
@@ -15,6 +14,7 @@ use crate::paths;
 
 /// A tracked symlink with metadata about its origin
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct TrackedSymlink {
     /// What the symlink points to (source/target of the link)
     pub source: String,
@@ -28,6 +28,7 @@ pub struct TrackedSymlink {
 
 /// Inventory of all tracked symlinks
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct SymlinkInventory {
     pub entries: Vec<TrackedSymlink>,
 }
@@ -78,7 +79,10 @@ impl SymlinkInventory {
 
 /// Main state structure tracking all bossa operations
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct BossaState {
+    #[serde(skip)]
+    store_revision: Option<(bossa::DocumentStore, bossa::StoreRevision)>,
     /// State for each collection (refs collections)
     #[serde(default)]
     pub collections: HashMap<String, CollectionState>,
@@ -105,6 +109,7 @@ pub struct BossaState {
 
 /// State for a single refs collection
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct CollectionState {
     /// Last time this collection was synced
     pub last_sync: Option<DateTime<Utc>>,
@@ -124,6 +129,7 @@ pub struct CollectionState {
 
 /// State for workspaces
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspacesState {
     /// Last time workspaces were synced
     pub last_sync: Option<DateTime<Utc>>,
@@ -139,6 +145,7 @@ pub struct WorkspacesState {
 
 /// State for a storage volume
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct StorageState {
     /// Last time the volume was seen mounted
     pub last_seen: Option<DateTime<Utc>>,
@@ -154,6 +161,7 @@ pub struct StorageState {
 
 /// State for the dotfiles repository
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct DotfilesState {
     /// Whether the repo has been cloned
     #[serde(default)]
@@ -190,37 +198,60 @@ impl BossaState {
 
     /// Load state from disk, or return default if file doesn't exist
     pub fn load() -> Result<Self> {
-        let path = Self::state_file()?;
-
-        use bossa::ConfigSource as _;
-        let Some(content) = bossa::FileConfigSource::default()
-            .read(&path)
-            .with_context(|| format!("Failed to read state file: {}", path.display()))?
-        else {
-            return Ok(Self::default());
-        };
-
-        let state: Self = toml::from_str(&content)
-            .with_context(|| format!("Failed to parse state file: {}", path.display()))?;
-
-        log::debug!("Loaded state from {}", path.display());
+        let store = Self::store()?;
+        let snapshot = store.read().context("Could not read legacy state")?;
+        let mut state = Self::decode(&snapshot)?;
+        state.store_revision = Some((store, snapshot.revision));
         Ok(state)
     }
 
+    fn store() -> Result<bossa::DocumentStore> {
+        Ok(bossa::DocumentStore::file(
+            &std::path::absolute(Self::state_file()?)?,
+            bossa::ConfigFormat::Toml,
+        )?)
+    }
+    fn decode(snapshot: &bossa::StoreSnapshot) -> Result<Self> {
+        match &snapshot.document {
+            Some(document) => Ok(document.parse()?),
+            None => Ok(Self::default()),
+        }
+    }
+
     /// Save state to disk
-    pub fn save(&self) -> Result<()> {
-        let dir = Self::state_dir()?;
-        fs::create_dir_all(&dir)
-            .with_context(|| format!("Failed to create state directory: {}", dir.display()))?;
-
-        let path = Self::state_file()?;
+    pub fn save(&mut self) -> Result<()> {
+        let store = Self::store()?;
+        let guard = store.lock()?;
+        let current = guard.read()?;
+        if let Some((bound, expected)) = &self.store_revision {
+            if bound != &store || expected != &current.revision {
+                anyhow::bail!(bossa::StoreError::Conflict);
+            }
+        } else if current.document.is_some() {
+            anyhow::bail!(
+                "Unbound legacy state cannot overwrite an existing document; reload first"
+            );
+        }
+        Self::decode(&current)?;
         let content = toml::to_string_pretty(&self).context("Failed to serialize state to TOML")?;
-
-        fs::write(&path, &content)
-            .with_context(|| format!("Failed to write state file: {}", path.display()))?;
-
-        log::debug!("Saved state to {}", path.display());
+        let revision = guard
+            .commit(&current.revision, &content)
+            .context("State update incomplete; earlier filesystem effects may remain")?;
+        self.store_revision = Some((store, revision));
         Ok(())
+    }
+
+    pub fn update<T>(mutate: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        let store = Self::store()?;
+        let guard = store.lock()?;
+        let snapshot = guard.read()?;
+        let mut state = Self::decode(&snapshot)?;
+        let result = mutate(&mut state)?;
+        let content = toml::to_string_pretty(&state)?;
+        guard
+            .commit(&snapshot.revision, &content)
+            .context("State update incomplete; earlier filesystem effects may remain")?;
+        Ok(result)
     }
 
     /// Update the last_updated timestamp and save
@@ -387,6 +418,7 @@ impl BossaState {
 impl Default for BossaState {
     fn default() -> Self {
         Self {
+            store_revision: None,
             collections: HashMap::new(),
             workspaces: WorkspacesState::default(),
             storage: HashMap::new(),
@@ -411,6 +443,93 @@ impl Default for BossaState {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn limited_write_child() {
+        if std::env::var_os("BOSSA_LIMITED_WRITE_CHILD").is_none() {
+            return;
+        }
+        let mut state = super::BossaState::load().unwrap();
+        // The parent deliberately limits this owned child's file size.
+        let error = state.save().expect_err("limited write must fail");
+        assert!(
+            error.chain().any(|cause| cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.raw_os_error() == Some(libc::EFBIG))),
+            "wrong injected failure: {error:#}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_state_write_preserves_original_document() {
+        let root = tempfile::TempDir::new().unwrap();
+        let mut state = super::BossaState::default();
+        for i in 0..100 {
+            state.symlinks.add(super::TrackedSymlink {
+                source: format!("/owned/source-{i}"),
+                target: format!("/owned/target-{i}"),
+                subsystem: "fixture".into(),
+                created_at: chrono::Utc::now(),
+            });
+        }
+        let original = toml::to_string_pretty(&state).unwrap();
+        assert!(original.len() > 2048);
+        let path = root.path().join("state.toml");
+        std::fs::write(&path, &original).unwrap();
+        use bossa::ProcessRunner as _;
+        let mut args: Vec<std::ffi::OsString> = [
+            "-c",
+            r#"trap '' XFSZ
+ulimit -f 1
+exec "$@""#,
+            "fixture",
+        ]
+        .into_iter()
+        .map(Into::into)
+        .collect();
+        args.push(std::env::current_exe().unwrap().into_os_string());
+        args.extend(
+            [
+                "--exact",
+                "state::tests::limited_write_child",
+                "--nocapture",
+            ]
+            .into_iter()
+            .map(Into::into),
+        );
+        let environment = std::collections::BTreeMap::from([
+            ("HOME".into(), root.path().as_os_str().to_os_string()),
+            (
+                "BOSSA_STATE_DIR".into(),
+                root.path().as_os_str().to_os_string(),
+            ),
+            ("BOSSA_LIMITED_WRITE_CHILD".into(), "1".into()),
+        ]);
+        let output = bossa::SystemRunner::new(environment)
+            .with_limits(bossa::ProcessLimits {
+                timeout: std::time::Duration::from_secs(15),
+                max_output_bytes: 64 * 1024,
+            })
+            .run(
+                &bossa::CommandRequest {
+                    program: "/bin/sh".into(),
+                    args,
+                    working_dir: root.path().into(),
+                },
+                bossa::IoMode::Capture,
+            )
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            std::fs::read(&path).unwrap() == original.as_bytes(),
+            "failed state write destroyed the previous document"
+        );
+    }
+
     use super::*;
 
     #[test]

@@ -262,6 +262,13 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
         .filter(|op| matches!(op.state, SymlinkState::Blocked))
         .collect();
 
+    // Load state for tracking (only if not dry run)
+    let mut state = if !dry_run {
+        Some(BossaState::load()?)
+    } else {
+        None
+    };
+
     // Handle missing package directories
     if !missing_packages.is_empty() {
         if dry_run {
@@ -357,13 +364,6 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
     println!("{} {} symlinks...", mode, to_create.len() + to_fix.len());
     println!();
 
-    // Load state for tracking (only if not dry run)
-    let mut state = if !dry_run {
-        Some(BossaState::load()?)
-    } else {
-        None
-    };
-
     // Create missing symlinks
     for op in &to_create {
         println!(
@@ -452,10 +452,10 @@ fn sync(packages: &[String], dry_run: bool, force: bool) -> Result<()> {
     }
 
     // Save state if we made changes
-    if let Some(s) = state
-        && let Err(e) = s.save()
-    {
-        log::warn!("Failed to save state: {e}");
+    if let Some(mut state) = state {
+        state
+            .save()
+            .context("State recording failed; earlier symlink effects may remain")?;
     }
 
     println!();
@@ -660,10 +660,10 @@ fn unlink(packages: &[String], dry_run: bool) -> Result<()> {
     }
 
     // Save state if we made changes
-    if let Some(s) = state
-        && let Err(e) = s.save()
-    {
-        log::warn!("Failed to save state: {e}");
+    if let Some(mut state) = state {
+        state
+            .save()
+            .context("State recording failed; earlier symlink effects may remain")?;
     }
 
     println!();

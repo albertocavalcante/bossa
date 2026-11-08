@@ -32,7 +32,9 @@ pub fn run(ctx: &AppContext, dry_run: bool) -> Result<()> {
         None => read_legacy(&legacy_refs_path)?,
     };
     let workspaces = read_legacy(&ws_path)?;
-    let selected = config::bossa_document()?;
+    let store = config::main_store()?;
+    let snapshot = store.read()?;
+    let selected = snapshot.document;
     let (mut config, legacy_main) = match selected.as_ref() {
         Some(document) => config::parse_bossa_document(document)?,
         None => (BossaConfig::default(), false),
@@ -42,6 +44,7 @@ pub fn run(ctx: &AppContext, dry_run: bool) -> Result<()> {
             "Explicitly convert the vector-shaped main configuration before merging legacy files"
         );
     }
+    config.store_revision = Some((store, snapshot.revision));
     if refs.is_none() && workspaces.is_none() {
         ui::info("No legacy configs found to migrate");
         return Ok(());

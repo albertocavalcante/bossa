@@ -36,11 +36,45 @@ Duplicate JSON object keys are rejected, including nested keys, so an edit canno
 earlier value. TOML uses its native value model, preserving floats and datetimes.
 
 CRUD and migration edits preserve the selected filename and format. Editing JSON does not create a
-higher-priority TOML file. Complete contents are staged before replacement; a staging failure leaves
-the original file intact and removes the temporary file. Existing file symlinks and basic file
-permissions are preserved. Serialization preserves modeled sections; preserving TOML comments,
-coordinating concurrent read-modify-write operations, and crash recovery are separate contracts.
-Retain a copy before manually converting formats.
+higher-priority TOML file. CRUD reads fresh configuration under a native writer guard; saving an
+older loaded snapshot instead rejects a changed revision and asks for a reload. An unchanged CRUD
+request preserves the original bytes, including comments. Other edits serialize modeled sections
+and do not preserve comments. Retain a copy before manually converting formats.
+
+### Coordinated document writes
+
+Main configuration, cache initialization and legacy `state.toml` writes use a shared native document
+store on macOS and Linux. Other files, including `tools.toml`, generated shell/build configuration
+and manifest databases, have separate persistence contracts.
+
+The store holds stable `.bossa-store.lock` files in the physical configuration directory and, for a
+file symlink, its target directory. These private sidecars serialize participating writers on one
+host, including format selection and file aliases. They remain after a command finishes; do not
+delete them to clear a busy writer. The acquisition deadline is five seconds. Reads and dry runs
+create neither locks nor directories. The lock filename is reserved and cannot be a document target.
+
+Contents are bounded to 8 MiB, staged on the target filesystem, synchronized and promoted before the
+parent directory is synchronized. Newly created parent directories are synchronized through the
+first existing ancestor. Expected-absence creation does not overwrite an existing file. Existing
+file symlinks retain their spelling and referent relationship.
+
+Replacement requires an owned, owner-writable, single-link file without special permission bits.
+It preserves owner/group, mode and readable extended attributes (at most 64 KiB of names, 1,024
+attributes and 8 MiB of values). macOS ACLs are copied and compared through live file descriptors;
+nonzero macOS file flags are rejected. Linux requires inode-flag inspection and accepts only no
+flags or the structural extents bit. Unknown flags, unsupported inspection/copy operations and
+metadata mismatches fail before promotion. This contract does not attest inaccessible privileged
+metadata on arbitrary filesystems, or preserve timestamps and inode identity.
+
+A failure before promotion retains the previous document; newly created parent/lock artifacts can
+remain. A failure synchronizing the directory after promotion reports that the document was
+promoted with uncertain durability. Inspect the current document before deciding what to do next.
+Do not treat that outcome as an unapplied write or blindly retry a filesystem effect.
+
+Locks coordinate Bossa writers. Revision checks detect observed external edits and alias changes,
+but an editor that ignores the guards can still race between the final check and promotion. Network
+filesystems and actual power-cut recovery are not qualified by the process-level tests. These
+document writes do not provide a durable setup journal, automatic rollback or cleanup authority.
 
 The former vector-shaped collections and storage sections have explicit read compatibility.
 Reading them does not convert the file. CRUD refuses to rewrite legacy input automatically.
@@ -173,8 +207,10 @@ Internal state tracking for bossa operations.
 
 `~/.local/state/bossa/state.toml`
 
-State reads use the same regular UTF-8 file and 8 MiB limits. Malformed or unavailable state is an
-error; relocation does not replace it with an empty successful observation. Do not edit manually.
+State reads use the same regular UTF-8 file and 8 MiB limits. Unknown fields, malformed or unavailable
+state are errors. Stow and cache apply check required state before changing files; subsequent
+recording failures report an incomplete command with possibly retained effects. State is legacy
+inventory, not proof that setup, review, backup or cleanup completed. Do not edit manually.
 
 ---
 

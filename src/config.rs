@@ -2,7 +2,6 @@
 
 use anyhow::{Context, Result};
 use serde::{Serialize, de::DeserializeOwned};
-use std::fs;
 use std::path::PathBuf;
 
 use crate::paths;
@@ -92,6 +91,13 @@ pub fn bossa_document() -> Result<Option<bossa::ConfigDocument>> {
     )?)
 }
 
+pub fn main_store() -> Result<bossa::DocumentStore> {
+    Ok(bossa::DocumentStore::config(
+        &std::path::absolute(config_dir()?)?,
+        "config",
+    )?)
+}
+
 pub fn parse_bossa_document(
     document: &bossa::ConfigDocument,
 ) -> Result<(crate::schema::BossaConfig, bool)> {
@@ -103,27 +109,17 @@ pub fn parse_bossa_document(
 }
 
 pub fn load_bossa_config(required: bool) -> Result<crate::schema::BossaConfig> {
-    match bossa_document()? {
-        Some(document) => Ok(parse_bossa_document(&document)?.0),
+    let store = main_store()?;
+    let snapshot = store.read()?;
+    let mut config = match &snapshot.document {
+        Some(document) => parse_bossa_document(document)?.0,
         None if required => anyhow::bail!(
             "No Bossa configuration found; select or create config.toml/config.json before applying"
         ),
-        None => Ok(crate::schema::BossaConfig::default()),
-    }
-}
-
-/// Save a config file in the specified format
-pub fn save_config<T: Serialize>(
-    dir: &std::path::Path,
-    base_name: &str,
-    config: &T,
-    format: ConfigFormat,
-) -> Result<PathBuf> {
-    fs::create_dir_all(dir)?;
-    let path = dir.join(format!("{}.{}", base_name, format.extension()));
-    let content = format.serialize(config)?;
-    fs::write(&path, &content)?;
-    Ok(path)
+        None => crate::schema::BossaConfig::default(),
+    };
+    config.store_revision = Some((store, snapshot.revision));
+    Ok(config)
 }
 
 /// Get the bossa config directory path
@@ -222,11 +218,21 @@ impl CachesConfig {
         }
     }
 
-    /// Save caches config in specific format
-    pub fn save_as(&self, format: ConfigFormat) -> Result<()> {
-        let dir = config_dir()?;
-        save_config(&dir, "caches", self, format)?;
-        Ok(())
+    /// Explicit whole-document initialization, bound to fresh source selection.
+    pub fn initialize(force: bool) -> Result<Option<PathBuf>> {
+        let store = bossa::DocumentStore::config(&std::path::absolute(config_dir()?)?, "caches")?;
+        let guard = store.lock()?;
+        let snapshot = guard.read()?;
+        if snapshot.document.is_some() && !force {
+            return Ok(None);
+        }
+        let (path, format) = snapshot.document.as_ref().map_or(
+            (store.default_path(), bossa::ConfigFormat::Toml),
+            |document| (document.path.clone(), document.format),
+        );
+        let contents = ConfigFormat::from(format).serialize(&Self::default_config())?;
+        guard.commit(&snapshot.revision, &contents)?;
+        Ok(Some(path))
     }
 
     /// Get the full path to the external drive cache directory

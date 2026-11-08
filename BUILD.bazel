@@ -15,6 +15,9 @@ APP_SRCS = [
     "src/process/unix.rs",
     "src/setup.rs",
     "src/setup/git.rs",
+    "src/store.rs",
+    "src/store/metadata.rs",
+    "src/store/metadata/mac_acl.rs",
 ]
 
 rust_library(
@@ -27,6 +30,7 @@ rust_library(
     deps = [
         "//crates/declarative",
         "@crates//:anyhow",
+        "@crates//:blake3",
         "@crates//:dirs",
         "@crates//:serde",
         "@crates//:serde_json",
