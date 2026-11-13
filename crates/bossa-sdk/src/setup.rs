@@ -108,14 +108,18 @@ pub fn git_runner(runner: SystemRunner) -> SystemRunner {
         ])
 }
 
-/// Validate physical destination separation before building the existing executor plan.
-/// All selected observations still run before any effects. No path is reserved here.
+/// A validated selected scope whose underlying plan cannot be mutated by callers.
+pub struct SetupPlan(ExecutionPlan);
+
+/// Validate physical destination separation before building the execution plan.
+///
+/// All selected observations run before effects. No path is reserved here.
 pub fn plan(
     specs: Vec<NamedSetup>,
     observer: Arc<dyn ProcessRunner + Send + Sync>,
     mutator: Arc<dyn ProcessRunner + Send + Sync>,
     working_dir: PathBuf,
-) -> Result<ExecutionPlan> {
+) -> Result<SetupPlan> {
     ensure!(
         working_dir.is_absolute() && working_dir.is_dir(),
         "Setup needs an existing absolute working directory"
@@ -175,15 +179,60 @@ pub fn plan(
             .into_iter()
             .map(|path| Ok((path.to_path_buf(), destination_location(path)?)))
             .collect::<Result<Vec<_>>>()?;
+        let sources = match &spec.setup {
+            Setup::Storage(storage) => storage
+                .links
+                .iter()
+                .map(|link| Ok((link.source.clone(), resolve_location(&link.source)?)))
+                .collect::<Result<Vec<_>>>()?,
+            _ => Vec::new(),
+        };
+        for (_, source) in &sources {
+            ensure!(
+                !destinations
+                    .iter()
+                    .any(|path| source.starts_with(path) || path.starts_with(source)),
+                "A selected destination overlaps a storage source"
+            );
+        }
         plan.add_resource_explicit(Box::new(SetupResource {
             spec,
             locations,
+            sources,
             #[cfg(unix)]
             mount_identity: std::sync::Mutex::new(None),
+            #[cfg(unix)]
+            source_identities: std::sync::Mutex::new(None),
             git: Arc::clone(&git),
         }));
     }
-    Ok(plan)
+    Ok(SetupPlan(plan))
+}
+
+/// Apply the validated scope through the shared executor and explicit adapters.
+pub fn apply<S, P, C>(
+    plan: SetupPlan,
+    options: crate::ResourceApplyOptions,
+    runner: &dyn ProcessRunner,
+    working_dir: &Path,
+    sudo_provider: impl FnOnce() -> Result<S>,
+    progress: &mut P,
+    confirm: &mut C,
+) -> Result<declarative::ExecuteSummary>
+where
+    S: declarative::SudoProvider,
+    P: declarative::ProgressCallback,
+    C: declarative::ConfirmCallback,
+{
+    crate::apply_resources(
+        plan.0,
+        options,
+        runner,
+        working_dir,
+        sudo_provider,
+        progress,
+        confirm,
+    )
 }
 
 /// One selected resource observation; an error means unavailable, not absent.
@@ -193,10 +242,11 @@ pub struct SetupObservation {
 }
 
 /// Observe each selected resource without attempting effects.
-pub fn observe(plan: &ExecutionPlan) -> Vec<SetupObservation> {
-    plan.unprivileged
+pub fn observe(plan: &SetupPlan) -> Vec<SetupObservation> {
+    plan.0
+        .unprivileged
         .iter()
-        .chain(plan.privileged.iter())
+        .chain(plan.0.privileged.iter())
         .map(|resource| SetupObservation {
             id: resource.id(),
             state: resource.current_state(),
@@ -341,8 +391,11 @@ fn create_parent(path: &Path) -> Result<()> {
 struct SetupResource {
     spec: NamedSetup,
     locations: Vec<(PathBuf, PathBuf)>,
+    sources: Vec<(PathBuf, PathBuf)>,
     #[cfg(unix)]
     mount_identity: std::sync::Mutex<Option<(u64, u64)>>,
+    #[cfg(unix)]
+    source_identities: std::sync::Mutex<Option<Vec<(u64, u64)>>>,
     git: Arc<Git>,
 }
 impl std::fmt::Debug for SetupResource {
@@ -373,6 +426,12 @@ impl Resource for SetupResource {
             ensure!(
                 &destination_location(path)? == expected,
                 "Destination parent resolves differently; preserved"
+            );
+        }
+        for (path, expected) in &self.sources {
+            ensure!(
+                &resolve_location(path)? == expected,
+                "Storage source resolves differently; preserved"
             );
         }
         let missing = match &self.spec.setup {
@@ -635,6 +694,31 @@ impl SetupResource {
         if !matches!(storage.kind, StorageKind::Internal) {
             anyhow::bail!("Mount observation unsupported on this platform");
         }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let identities = storage
+                .links
+                .iter()
+                .map(|link| {
+                    let metadata =
+                        fs::metadata(&link.source).context("Storage link source unavailable")?;
+                    Ok((metadata.dev(), metadata.ino()))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let mut observed = self
+                .source_identities
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Storage source observation lock unavailable"))?;
+            if let Some(previous) = observed.as_ref() {
+                ensure!(
+                    *previous == identities,
+                    "Storage link source changed during selected setup"
+                );
+            } else {
+                *observed = Some(identities);
+            }
+        }
         let mut missing = Vec::new();
         for link in &storage.links {
             let source = link
@@ -664,7 +748,7 @@ impl SetupResource {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use crate::{ResourceApplyOptions, apply_resources};
+    use crate::ResourceApplyOptions;
     use declarative::{CommandOutput, ConfirmCallback, EffectStatus, NoProgress, SudoProvider};
 
     struct Unavailable;
@@ -721,7 +805,7 @@ mod tests {
             root.clone(),
         )
         .unwrap();
-        let report = apply_resources(
+        let report = apply(
             plan,
             ResourceApplyOptions::default(),
             &Unavailable,
@@ -778,7 +862,7 @@ mod tests {
             root.clone(),
         )
         .unwrap();
-        let report = apply_resources(
+        let report = apply(
             plan,
             ResourceApplyOptions {
                 yes: true,
@@ -843,5 +927,521 @@ mod tests {
             .map(|n| make(n.to_string(), root.join(n.to_string())))
             .collect();
         assert!(plan(specs, runner.clone(), runner, root).is_err());
+    }
+
+    #[test]
+    fn satisfied_link_disappearing_during_preview_blocks_other_effects() {
+        use declarative::{ApplyResult, ProgressCallback, ResourceDiff};
+        struct RemoveOnPlan(PathBuf);
+        impl ProgressCallback for RemoveOnPlan {
+            fn on_plan(&mut self, _: &[ResourceDiff]) {
+                fs::remove_file(&self.0).unwrap();
+            }
+            fn on_batch_start(&mut self, _: usize, _: bool) {}
+            fn on_resource_start(&mut self, _: &str, _: &str) {}
+            fn on_resource_complete(&mut self, _: &str, _: &ApplyResult) {}
+            fn on_batch_complete(&mut self) {}
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let mount = root.join("mount");
+        fs::create_dir(&mount).unwrap();
+        let source = mount.join("source");
+        fs::write(&source, "owner content").unwrap();
+        let existing = root.join("existing");
+        let missing = root.join("missing");
+        std::os::unix::fs::symlink(&source, &existing).unwrap();
+        let runner = Arc::new(Unavailable);
+        let make = |name: &str, target: PathBuf| NamedSetup {
+            name: name.into(),
+            setup: Setup::Storage(Storage {
+                mount: mount.clone(),
+                kind: StorageKind::Internal,
+                links: vec![Link {
+                    source: source.clone(),
+                    target,
+                }],
+            }),
+        };
+        let plan = plan(
+            vec![
+                make("satisfied", existing.clone()),
+                make("missing", missing.clone()),
+            ],
+            runner.clone(),
+            runner,
+            root.clone(),
+        )
+        .unwrap();
+        let result = apply(
+            plan,
+            ResourceApplyOptions {
+                yes: true,
+                ..Default::default()
+            },
+            &Unavailable,
+            &root,
+            || Ok(NoPrivilege),
+            &mut RemoveOnPlan(existing.clone()),
+            &mut declarative::AutoDecline,
+        )
+        .unwrap();
+        assert!(!result.is_success());
+        assert!(!existing.exists());
+        assert!(!missing.exists());
+        assert_eq!(fs::read_to_string(source).unwrap(), "owner content");
+        assert!(
+            result
+                .outcomes
+                .iter()
+                .all(|row| row.effects == EffectStatus::None)
+        );
+    }
+
+    #[test]
+    fn changed_storage_source_symlink_is_blocked_before_creation() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let mount = root.join("mount");
+        fs::create_dir(&mount).unwrap();
+        fs::write(mount.join("one"), "one").unwrap();
+        fs::write(mount.join("two"), "two").unwrap();
+        let source = mount.join("source");
+        std::os::unix::fs::symlink("one", &source).unwrap();
+        let target = root.join("target");
+        let runner = Arc::new(Unavailable);
+        let plan = plan(
+            vec![NamedSetup {
+                name: "disk".into(),
+                setup: Setup::Storage(Storage {
+                    mount: mount.clone(),
+                    kind: StorageKind::Internal,
+                    links: vec![Link {
+                        source: source.clone(),
+                        target: target.clone(),
+                    }],
+                }),
+            }],
+            runner.clone(),
+            runner,
+            root.clone(),
+        )
+        .unwrap();
+        fs::remove_file(&source).unwrap();
+        std::os::unix::fs::symlink("two", &source).unwrap();
+        let report = apply(
+            plan,
+            ResourceApplyOptions {
+                yes: true,
+                ..Default::default()
+            },
+            &Unavailable,
+            &root,
+            || Ok(NoPrivilege),
+            &mut NoProgress,
+            &mut declarative::AutoDecline,
+        )
+        .unwrap();
+        assert!(!report.is_success());
+        assert!(!target.exists());
+        assert_eq!(fs::read_to_string(mount.join("two")).unwrap(), "two");
+        assert_eq!(report.outcomes[0].effects, EffectStatus::None);
+    }
+
+    #[test]
+    fn failed_mutation_reports_possible_effects_for_timeout_cancel_and_output_limit() {
+        use std::os::unix::process::ExitStatusExt as _;
+        struct Version;
+        impl ProcessRunner for Version {
+            fn run(
+                &self,
+                _: &crate::CommandRequest,
+                _: crate::IoMode,
+            ) -> std::io::Result<std::process::Output> {
+                Ok(std::process::Output {
+                    status: std::process::ExitStatus::from_raw(0),
+                    stdout: b"git version fixture\n".to_vec(),
+                    stderr: vec![],
+                })
+            }
+        }
+        struct Partial {
+            path: PathBuf,
+            kind: std::io::ErrorKind,
+        }
+        impl ProcessRunner for Partial {
+            fn run(
+                &self,
+                _: &crate::CommandRequest,
+                _: crate::IoMode,
+            ) -> std::io::Result<std::process::Output> {
+                fs::write(self.path.join("partial"), "retained")?;
+                Err(std::io::Error::new(
+                    self.kind,
+                    "injected supervisor failure",
+                ))
+            }
+        }
+        for kind in [
+            std::io::ErrorKind::TimedOut,
+            std::io::ErrorKind::Interrupted,
+            std::io::ErrorKind::Other,
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().canonicalize().unwrap();
+            let destination = root.join("checkout");
+            let runner = Arc::new(Partial {
+                path: destination.clone(),
+                kind,
+            });
+            let plan = plan(
+                vec![NamedSetup {
+                    name: "repo".into(),
+                    setup: Setup::Checkout(Checkout {
+                        url: "https://example.invalid/repo".into(),
+                        path: destination.clone(),
+                        branch: "main".into(),
+                        depth: 0,
+                        single_branch: false,
+                        options: vec![],
+                    }),
+                }],
+                Arc::new(Version),
+                runner,
+                root.clone(),
+            )
+            .unwrap();
+            let report = apply(
+                plan,
+                ResourceApplyOptions {
+                    yes: true,
+                    ..Default::default()
+                },
+                &Unavailable,
+                &root,
+                || Ok(NoPrivilege),
+                &mut NoProgress,
+                &mut declarative::AutoDecline,
+            )
+            .unwrap();
+            assert!(!report.is_success());
+            assert_eq!(report.outcomes[0].effects, EffectStatus::Unknown);
+            assert_eq!(
+                fs::read_to_string(destination.join("partial")).unwrap(),
+                "retained"
+            );
+        }
+    }
+
+    #[test]
+    fn storage_link_paths_preserve_literal_native_bytes() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let mount = root.join("mount");
+        fs::create_dir(&mount).unwrap();
+        // Exercise the full selected path on every Unix filesystem, including
+        // filesystems that do not accept arbitrary non-UTF-8 component bytes.
+        for (source_bytes, target_bytes) in [
+            (b"$source-literal".as_slice(), b"$link-literal".as_slice()),
+            (b"$source-\xff".as_slice(), b"$link-\xff".as_slice()),
+        ] {
+            let source = mount.join(std::ffi::OsString::from_vec(source_bytes.to_vec()));
+            let target = root.join(std::ffi::OsString::from_vec(target_bytes.to_vec()));
+            assert_eq!(source.file_name().unwrap().as_bytes(), source_bytes);
+            assert_eq!(target.file_name().unwrap().as_bytes(), target_bytes);
+            if let Err(error) = fs::write(&source, "fixture") {
+                // APFS can reject non-UTF-8 names with EILSEQ. Only this
+                // explicit filesystem limitation permits skipping that case.
+                if cfg!(target_os = "macos")
+                    && source_bytes.contains(&0xff)
+                    && error.raw_os_error() == Some(92)
+                {
+                    continue;
+                }
+                panic!("fixture source creation failed: {error}");
+            }
+            let runner = Arc::new(Unavailable);
+            let plan = plan(
+                vec![NamedSetup {
+                    name: "disk".into(),
+                    setup: Setup::Storage(Storage {
+                        mount: mount.clone(),
+                        kind: StorageKind::Internal,
+                        links: vec![Link {
+                            source: source.clone(),
+                            target: target.clone(),
+                        }],
+                    }),
+                }],
+                runner.clone(),
+                runner,
+                root.clone(),
+            )
+            .unwrap();
+            let report = apply(
+                plan,
+                ResourceApplyOptions {
+                    yes: true,
+                    ..Default::default()
+                },
+                &Unavailable,
+                &root,
+                || Ok(NoPrivilege),
+                &mut NoProgress,
+                &mut declarative::AutoDecline,
+            )
+            .unwrap();
+            assert!(report.is_success());
+            assert_eq!(fs::read_link(target).unwrap(), source);
+        }
+    }
+
+    #[test]
+    fn native_git_timeout_output_limit_and_cancel_retain_partial_destination() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{Duration, Instant};
+        for mode in ["timeout", "output", "cancel"] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().canonicalize().unwrap();
+            let git = root.join("git");
+            let script = format!(
+                "#!/bin/sh\nfor last do :; done\nif [ \"$last\" = --version ]; then printf 'git version fixture\\n'; exit 0; fi\nprintf retained > \"$last/partial\"\n{}\n",
+                if mode == "output" {
+                    "while :; do printf 012345678901234567890123456789; done"
+                } else {
+                    "exec /bin/sleep 10"
+                }
+            );
+            fs::write(&git, script).unwrap();
+            fs::set_permissions(&git, fs::Permissions::from_mode(0o700)).unwrap();
+            let destination = root.join("checkout");
+            let env = std::iter::once(("PATH".into(), root.clone().into_os_string())).collect();
+            let runner = git_runner(SystemRunner::new(env).with_limits(crate::ProcessLimits {
+                timeout: if mode == "timeout" {
+                    Duration::from_millis(500)
+                } else {
+                    Duration::from_secs(5)
+                },
+                max_output_bytes: 1024,
+            }));
+            let plan = plan(
+                vec![NamedSetup {
+                    name: "repo".into(),
+                    setup: Setup::Checkout(Checkout {
+                        url: "https://example.invalid/repo".into(),
+                        path: destination.clone(),
+                        branch: "main".into(),
+                        depth: 0,
+                        single_branch: false,
+                        options: vec![],
+                    }),
+                }],
+                Arc::new(runner.clone()),
+                Arc::new(runner.clone()),
+                root.clone(),
+            )
+            .unwrap();
+            let cancel = if mode == "cancel" {
+                let clone = runner.clone();
+                let marker = destination.join("partial");
+                Some(std::thread::spawn(move || {
+                    let deadline = Instant::now() + Duration::from_secs(4);
+                    while !marker.exists() && Instant::now() < deadline {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    assert!(marker.exists());
+                    clone.cancel().unwrap();
+                }))
+            } else {
+                None
+            };
+            let report = apply(
+                plan,
+                ResourceApplyOptions {
+                    yes: true,
+                    ..Default::default()
+                },
+                &runner,
+                &root,
+                || Ok(NoPrivilege),
+                &mut NoProgress,
+                &mut declarative::AutoDecline,
+            )
+            .unwrap();
+            if let Some(thread) = cancel {
+                thread.join().unwrap();
+            }
+            assert!(!report.is_success(), "{mode}");
+            assert_eq!(report.outcomes[0].effects, EffectStatus::Unknown, "{mode}");
+            assert_eq!(
+                fs::read_to_string(destination.join("partial")).unwrap(),
+                "retained"
+            );
+        }
+    }
+
+    #[test]
+    fn changed_destination_parent_symlink_blocks_before_link_creation() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let mount = root.join("mount");
+        let first = root.join("first");
+        let second = root.join("second");
+        for dir in [&mount, &first, &second] {
+            fs::create_dir(dir).unwrap();
+        }
+        let source = mount.join("source");
+        fs::write(&source, "fixture").unwrap();
+        let parent = root.join("parent");
+        std::os::unix::fs::symlink(&first, &parent).unwrap();
+        let runner = Arc::new(Unavailable);
+        let plan = plan(
+            vec![NamedSetup {
+                name: "disk".into(),
+                setup: Setup::Storage(Storage {
+                    mount,
+                    kind: StorageKind::Internal,
+                    links: vec![Link {
+                        source,
+                        target: parent.join("link"),
+                    }],
+                }),
+            }],
+            runner.clone(),
+            runner,
+            root.clone(),
+        )
+        .unwrap();
+        fs::remove_file(&parent).unwrap();
+        std::os::unix::fs::symlink(&second, &parent).unwrap();
+        let report = apply(
+            plan,
+            ResourceApplyOptions {
+                yes: true,
+                ..Default::default()
+            },
+            &Unavailable,
+            &root,
+            || Ok(NoPrivilege),
+            &mut NoProgress,
+            &mut declarative::AutoDecline,
+        )
+        .unwrap();
+        assert!(!report.is_success());
+        assert!(!first.join("link").exists());
+        assert!(!second.join("link").exists());
+        assert_eq!(report.outcomes[0].effects, EffectStatus::None);
+    }
+
+    #[test]
+    fn successful_process_without_postcondition_is_never_success() {
+        use std::os::unix::process::ExitStatusExt as _;
+        struct FakeSuccess;
+        impl ProcessRunner for FakeSuccess {
+            fn run(
+                &self,
+                _: &crate::CommandRequest,
+                _: crate::IoMode,
+            ) -> std::io::Result<std::process::Output> {
+                Ok(std::process::Output {
+                    status: std::process::ExitStatus::from_raw(0),
+                    stdout: b"git version fixture\n".to_vec(),
+                    stderr: vec![],
+                })
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let destination = root.join("checkout");
+        let runner = Arc::new(FakeSuccess);
+        let plan = plan(
+            vec![NamedSetup {
+                name: "repo".into(),
+                setup: Setup::Checkout(Checkout {
+                    url: "https://example.invalid/repo".into(),
+                    path: destination.clone(),
+                    branch: "main".into(),
+                    depth: 0,
+                    single_branch: false,
+                    options: vec![],
+                }),
+            }],
+            runner.clone(),
+            runner,
+            root.clone(),
+        )
+        .unwrap();
+        let report = apply(
+            plan,
+            ResourceApplyOptions {
+                yes: true,
+                ..Default::default()
+            },
+            &Unavailable,
+            &root,
+            || Ok(NoPrivilege),
+            &mut NoProgress,
+            &mut declarative::AutoDecline,
+        )
+        .unwrap();
+        assert!(!report.is_success());
+        assert_eq!(report.outcomes[0].effects, EffectStatus::Unknown);
+        assert!(destination.is_dir());
+    }
+
+    #[test]
+    fn source_replacement_during_consent_blocks_link_creation() {
+        struct ReplaceSource(PathBuf);
+        impl ConfirmCallback for ReplaceSource {
+            fn confirm(&mut self, _: &str) -> Result<bool> {
+                fs::rename(&self.0, self.0.with_extension("old"))?;
+                fs::write(&self.0, "replacement")?;
+                Ok(true)
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let mount = root.join("mount");
+        fs::create_dir(&mount).unwrap();
+        let source = mount.join("source");
+        fs::write(&source, "original").unwrap();
+        let target = root.join("target");
+        let runner = Arc::new(Unavailable);
+        let plan = plan(
+            vec![NamedSetup {
+                name: "disk".into(),
+                setup: Setup::Storage(Storage {
+                    mount,
+                    kind: StorageKind::Internal,
+                    links: vec![Link {
+                        source: source.clone(),
+                        target: target.clone(),
+                    }],
+                }),
+            }],
+            runner.clone(),
+            runner,
+            root.clone(),
+        )
+        .unwrap();
+        let report = apply(
+            plan,
+            ResourceApplyOptions::default(),
+            &Unavailable,
+            &root,
+            || Ok(NoPrivilege),
+            &mut NoProgress,
+            &mut ReplaceSource(source.clone()),
+        )
+        .unwrap();
+        assert!(!report.is_success());
+        assert_eq!(report.outcomes[0].effects, EffectStatus::None);
+        assert!(!target.exists());
+        assert_eq!(fs::read_to_string(&source).unwrap(), "replacement");
+        assert_eq!(
+            fs::read_to_string(source.with_extension("old")).unwrap(),
+            "original"
+        );
     }
 }

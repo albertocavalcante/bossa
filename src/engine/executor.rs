@@ -60,6 +60,29 @@ pub fn execute(
         &mut TerminalProgress { quiet },
         &mut crate::ui::TerminalConfirm,
     )?;
+    Ok(render(summary, quiet))
+}
+
+/// Execute a validated setup scope without exposing its mutable generic plan.
+pub fn execute_setup(
+    plan: bossa::setup::SetupPlan,
+    options: ExecuteOptions,
+    quiet: bool,
+) -> Result<ExecuteSummary> {
+    let runner = crate::runner::native_runner();
+    let summary = bossa::setup::apply(
+        plan,
+        options,
+        runner,
+        &std::env::current_dir()?,
+        || SudoContext::acquire("Apply selected privileged configuration"),
+        &mut TerminalProgress { quiet },
+        &mut crate::ui::TerminalConfirm,
+    )?;
+    Ok(render(summary, quiet))
+}
+
+fn render(summary: ExecuteSummary, quiet: bool) -> ExecuteSummary {
     for row in &summary.outcomes {
         if let Some(diagnostic) = &row.diagnostic
             && (!quiet
@@ -90,5 +113,5 @@ pub fn execute(
             summary.failed, summary.blocked, summary.cancelled
         );
     }
-    Ok(summary)
+    summary
 }

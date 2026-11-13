@@ -2423,7 +2423,7 @@ fn missing_dock_and_restart_capabilities_block_before_other_selected_effects() {
 fn configured_sdk_and_cli_share_fixture_selection_and_outcomes() {
     use bossa::{
         AppEnvironment, ConfigFormat, IoMode, ProcessRunner, ResourceApplyOptions, SystemRunner,
-        apply_resources, decode_bossa_config, setup,
+        decode_bossa_config, setup,
     };
     use declarative::{
         AutoDecline, CommandOutput, ConfirmCallback, NoProgress, ResourceState, SudoProvider,
@@ -2504,7 +2504,7 @@ fn configured_sdk_and_cli_share_fixture_selection_and_outcomes() {
         assert!(output.contains(&row.id), "{output}");
     }
     fixture.assert_command(&["diff"], true);
-    let preview = apply_resources(
+    let preview = setup::apply(
         plan(),
         ResourceApplyOptions {
             dry_run: true,
@@ -2518,7 +2518,7 @@ fn configured_sdk_and_cli_share_fixture_selection_and_outcomes() {
     )
     .unwrap();
     assert!(preview.is_success());
-    let declined = apply_resources(
+    let declined = setup::apply(
         plan(),
         ResourceApplyOptions::default(),
         &runner,
@@ -2529,7 +2529,7 @@ fn configured_sdk_and_cli_share_fixture_selection_and_outcomes() {
     )
     .unwrap();
     assert!(!declined.is_success());
-    let unavailable = apply_resources(
+    let unavailable = setup::apply(
         plan(),
         ResourceApplyOptions::default(),
         &runner,
@@ -2575,7 +2575,7 @@ fn configured_sdk_and_cli_share_fixture_selection_and_outcomes() {
             .iter()
             .all(|row| matches!(&row.state, Ok(ResourceState::Present { .. })))
     );
-    let repeat = apply_resources(
+    let repeat = setup::apply(
         plan(),
         ResourceApplyOptions {
             yes: true,

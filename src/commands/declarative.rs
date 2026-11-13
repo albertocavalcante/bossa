@@ -2,7 +2,7 @@
 
 use anyhow::{Result, ensure};
 use bossa::setup::{self, Setup};
-use declarative::{ExecutionPlan, ResourceState};
+use declarative::ResourceState;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,7 +18,7 @@ fn selected(target: Option<&str>, required: bool) -> Result<setup::SelectedSetup
     )
 }
 
-fn plan(selected: setup::SelectedSetup) -> Result<ExecutionPlan> {
+fn plan(selected: setup::SelectedSetup) -> Result<setup::SetupPlan> {
     if selected
         .specs
         .iter()
@@ -106,7 +106,7 @@ fn run_apply(
             println!("  {group}");
         }
     }
-    let summary = crate::engine::executor::execute(
+    let summary = crate::engine::executor::execute_setup(
         plan(selected)?,
         bossa::ResourceApplyOptions {
             dry_run,

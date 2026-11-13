@@ -2,7 +2,7 @@
 use anyhow::{Context, Result, bail};
 use bossa_sdk::{
     AppEnvironment, ConfigFormat, ProcessLimits, ResourceApplyOptions, SystemRunner,
-    apply_resources, decode_bossa_config, setup,
+    decode_bossa_config, setup,
 };
 use declarative::{AutoDecline, CommandOutput, NoProgress, SudoProvider};
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -43,7 +43,7 @@ fn main() -> Result<()> {
     for observation in setup::observe(&plan) {
         println!("{}: {:?}", observation.id, observation.state?);
     }
-    let report = apply_resources(
+    let report = setup::apply(
         plan,
         ResourceApplyOptions {
             dry_run: !apply,
