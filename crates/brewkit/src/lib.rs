@@ -108,9 +108,7 @@ impl Client {
 
     /// Install a package with retry logic.
     pub fn install_with_retry(&self, package: &Package, config: &RetryConfig) -> Result<()> {
-        retry::with_retry(config, Some(&retry::PrintCallback), || {
-            self.backend.install(package)
-        })
+        retry::with_retry(config, None, || self.backend.install(package))
     }
 
     /// Install a package with retry and custom callback.
