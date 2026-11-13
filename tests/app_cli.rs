@@ -127,6 +127,83 @@ impl Fixture {
 
 #[test]
 #[cfg(unix)]
+fn collections_failed_clone_stays_visible_to_status_sync_and_add() {
+    let fixture = Fixture::new();
+    fixture.real_git();
+    let root = fixture.root.path();
+    let collection = root.join("collection");
+    let missing = root.join("missing.git");
+    let records = root.join("state/collection-clones");
+    fs::write(root.join("config/config.toml"), format!(
+        "[collections.fixture]\npath='{}'\n[[collections.fixture.repos]]\nname='repo'\nurl='{}'\n",
+        collection.display(), missing.display()
+    )).unwrap();
+    fixture.assert_command(&["collections", "sync", "fixture"], false);
+    assert_eq!(fs::read_dir(&records).unwrap().count(), 1);
+    fixture.assert_command(&["collections", "status", "fixture"], false);
+    fixture.assert_command(&["collections", "sync", "fixture"], false);
+    fixture.assert_command(
+        &[
+            "collections",
+            "add",
+            "fixture",
+            missing.to_str().unwrap(),
+            "--name",
+            "repo",
+            "--clone",
+        ],
+        false,
+    );
+    assert_eq!(fs::read_dir(&records).unwrap().count(), 1);
+}
+
+#[test]
+#[cfg(unix)]
+fn collections_add_reaches_clone_and_retains_pending_failure() {
+    let fixture = Fixture::new();
+    fixture.real_git();
+    let root = fixture.root.path();
+    let collection = root.join("collection");
+    let missing = root.join("missing.git");
+    fs::write(
+        root.join("config/config.toml"),
+        format!("[collections.fixture]\npath='{}'\n", collection.display()),
+    )
+    .unwrap();
+    let output = fixture.assert_command(
+        &[
+            "collections",
+            "add",
+            "fixture",
+            missing.to_str().unwrap(),
+            "--name",
+            "newrepo",
+            "--clone",
+        ],
+        false,
+    );
+    let diagnostic = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(diagnostic.contains("pending"), "{diagnostic}");
+    assert!(collection.join("newrepo").is_dir());
+    assert_eq!(
+        fs::read_dir(root.join("state/collection-clones"))
+            .unwrap()
+            .count(),
+        1
+    );
+    assert!(
+        fs::read_to_string(root.join("config/config.toml"))
+            .unwrap()
+            .contains("newrepo")
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn verified_setup_normalizes_local_locators_and_requires_read_only_git_capability() {
     for locator in [
         "./source with spaces/",
