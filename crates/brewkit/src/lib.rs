@@ -61,7 +61,8 @@ pub mod types;
 
 pub use error::{Error, ErrorCategory, Result};
 pub use types::{
-    AuditResult, Brewfile, BundleResult, InstalledPackage, Package, PackageType, RetryConfig,
+    AuditResult, Brewfile, BundleResult, InstalledPackage, OptionValue, Package, PackageType,
+    RetryConfig, ScalarNumber, ScalarOption,
 };
 
 use backend::{Backend, brew::BrewBackend};
