@@ -90,6 +90,8 @@ rust_test(
     env = {"BOSSA_TEST_BINARY": "$(rootpath :bossa)"},
     deps = [
         ":bossa_app",
+        "//crates/declarative",
+        "@crates//:anyhow",
         "@crates//:tempfile",
         "@crates//:toml",
     ],
