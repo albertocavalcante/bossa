@@ -8,20 +8,7 @@ use std::path::{Component, Path, PathBuf};
 
 const DEFAULT_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConfigFormat {
-    Toml,
-    Json,
-}
-
-impl ConfigFormat {
-    pub fn extension(self) -> &'static str {
-        match self {
-            Self::Toml => "toml",
-            Self::Json => "json",
-        }
-    }
-}
+use crate::ConfigFormat;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {

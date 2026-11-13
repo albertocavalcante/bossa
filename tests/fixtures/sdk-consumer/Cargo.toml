@@ -1,0 +1,20 @@
+[package]
+name = "bossa-consumer-preparation"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Preparation only: P05b replaces both paths with the same immutable revision.
+[workspace]
+
+[features]
+default = []
+native = ["bossa-sdk/native"]
+
+[dependencies]
+anyhow = "1"
+bossa-sdk = { path = "../../../crates/bossa-sdk", default-features = false }
+declarative = { path = "../../../crates/declarative" }
+
+[dev-dependencies]
+tempfile = "3"

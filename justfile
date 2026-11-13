@@ -48,6 +48,8 @@ doc-check:
 # Verify the declared minimum supported Rust version
 msrv:
     cargo +1.90.0 check --workspace --all-targets --locked
+    cargo +1.90.0 check --manifest-path tests/fixtures/sdk-consumer/Cargo.toml --all-targets --locked
+    cargo +1.90.0 check --manifest-path tests/fixtures/sdk-consumer/Cargo.toml --all-targets --features native --locked
 
 # Verify tagged action pins and upstream history for documented untagged pins
 workflow-check:
@@ -69,8 +71,18 @@ bazel-build:
 bazel-test:
     bazel test //...
 
+# Qualify the lean SDK and path-based consumer preparation.
+sdk-consumer-check:
+    cargo test -p bossa-sdk --no-default-features --lib --locked
+    cargo clippy -p bossa-sdk --no-default-features --lib --locked -- -D warnings
+    cargo fmt --manifest-path tests/fixtures/sdk-consumer/Cargo.toml --all -- --check
+    cargo run --manifest-path tests/fixtures/sdk-consumer/Cargo.toml --locked
+    cargo test --manifest-path tests/fixtures/sdk-consumer/Cargo.toml --features native --locked
+    bash -o pipefail -c 'output=$(cargo tree --manifest-path tests/fixtures/sdk-consumer/Cargo.toml -p bossa-sdk --locked -e normal --prefix none --format "{p}") || exit; if printf "%s\n" "$output" | grep -E "^(bossa-process|declarative|dirs|rustix|blake3|tempfile|crossterm|rusqlite|reqwest|ureq|zip|tar|brewkit) v"; then echo "Unexpected lean SDK dependency" >&2; exit 1; fi'
+    bash -o pipefail -c 'output=$(cargo tree --manifest-path tests/fixtures/sdk-consumer/Cargo.toml --no-default-features --locked -e normal --prefix none --format "{p}") || exit; if printf "%s\n" "$output" | grep -E "^(bossa-process|dirs|rustix|blake3|tempfile|crossterm|rusqlite|reqwest|ureq|zip|tar|brewkit) v"; then echo "Unexpected lean consumer dependency" >&2; exit 1; fi'
+
 # Run all checks (CI-style)
-ci: check test doc-check
+ci: check test doc-check sdk-consumer-check
 
 # Serve mdBook docs locally
 docs-serve:
