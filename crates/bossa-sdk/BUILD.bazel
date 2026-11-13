@@ -13,6 +13,7 @@ rust_library(
     edition = "2024",
     proc_macro_deps = all_crate_deps(proc_macro = True),
     deps = [
+        "//crates/bossa-process",
         "//crates/declarative",
         "@crates//:anyhow",
         "@crates//:blake3",
@@ -32,7 +33,6 @@ rust_library(
 
 rust_test(
     name = "bossa_sdk_test",
-    compile_data = glob(["fixtures/*.sh"]),
     crate = ":bossa-sdk",
 )
 

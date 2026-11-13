@@ -1,0 +1,27 @@
+load("@rules_rust//rust:defs.bzl", "rust_clippy", "rust_doc", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+exports_files(["Cargo.toml"])
+
+rust_library(
+    name = "bossa-process",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "bossa_process",
+    crate_root = "src/lib.rs",
+    edition = "2024",
+    deps = select({
+        "@platforms//os:linux": ["@crates//:rustix"],
+        "@platforms//os:osx": ["@crates//:rustix"],
+        "//conditions:default": [],
+    }),
+)
+
+rust_test(
+    name = "bossa_process_test",
+    crate = ":bossa-process",
+    compile_data = glob(["fixtures/*.sh"]),
+    deps = ["@crates//:tempfile"],
+)
+
+rust_clippy(name = "bossa_process_clippy", deps = [":bossa-process"])
+rust_doc(name = "bossa_process_doc", crate = ":bossa-process")

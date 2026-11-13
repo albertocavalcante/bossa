@@ -15,6 +15,7 @@ rust_library(
     aliases = aliases(),
     proc_macro_deps = all_crate_deps(proc_macro = True),
     deps = [
+        "//crates/bossa-process",
         "@crates//:serde",
         "@crates//:serde_json",
         "@crates//:thiserror",

@@ -183,22 +183,6 @@ impl Error {
     pub fn from_brew_output(stderr: &str, package_name: Option<&str>) -> Self {
         let stderr_lower = stderr.to_lowercase();
 
-        // Network errors
-        if stderr_lower.contains("curl")
-            || stderr_lower.contains("could not resolve")
-            || stderr_lower.contains("connection refused")
-            || stderr_lower.contains("timed out")
-            || stderr_lower.contains("network")
-            || stderr_lower.contains("ssl")
-            || stderr_lower.contains("certificate")
-            || stderr_lower.contains("failed to download")
-            || stderr_lower.contains("error: sha256 mismatch")
-        {
-            return Error::Network {
-                message: stderr.trim().to_string(),
-            };
-        }
-
         // Not found errors
         if stderr_lower.contains("no available formula")
             || stderr_lower.contains("no formulae found")
@@ -243,6 +227,32 @@ impl Error {
             };
         }
 
+        // Only clear network evidence is retryable. Package names such as
+        // `curl` and authentication failures do not prove a transient error.
+        let auth_failure = stderr_lower.contains("authentication failed")
+            || stderr_lower.contains("unauthorized")
+            || stderr_lower.contains("http 401")
+            || stderr_lower.contains("http 403");
+        if !auth_failure
+            && (stderr_lower.contains("could not resolve")
+                || stderr_lower.contains("connection refused")
+                || stderr_lower.contains("connection reset")
+                || stderr_lower.contains("timed out")
+                || [
+                    "curl: (5)",
+                    "curl: (6)",
+                    "curl: (7)",
+                    "curl: (28)",
+                    "curl: (35)",
+                ]
+                .iter()
+                .any(|pattern| stderr_lower.contains(pattern)))
+        {
+            return Error::Network {
+                message: stderr.trim().to_string(),
+            };
+        }
+
         // Default to command failed
         Error::CommandFailed {
             message: format!(
@@ -282,6 +292,25 @@ mod tests {
         let err = Error::from_brew_output("curl: (6) Could not resolve host", Some("wget"));
         assert_eq!(err.category(), ErrorCategory::Network);
         assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn curl_name_does_not_make_permission_or_not_found_retryable() {
+        let permission = Error::from_brew_output("Error: curl: permission denied", Some("curl"));
+        assert_eq!(permission.category(), ErrorCategory::Permission);
+        assert!(!permission.is_retryable());
+        let missing = Error::from_brew_output(
+            "Error: No available formula with the name curl",
+            Some("curl"),
+        );
+        assert_eq!(missing.category(), ErrorCategory::NotFound);
+        assert!(!missing.is_retryable());
+        let auth = Error::from_brew_output("curl: (7) authentication failed", Some("curl"));
+        assert!(!auth.is_retryable());
+        assert!(
+            Error::from_brew_output("curl: (6) Could not resolve host", Some("curl"))
+                .is_retryable()
+        );
     }
 
     #[test]

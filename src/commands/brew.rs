@@ -99,6 +99,14 @@ fn essential_brewfile_in(
     Ok(temporary)
 }
 
+fn bundle_status(result: &brewkit::BundleResult) -> Result<()> {
+    if result.is_success() {
+        Ok(())
+    } else {
+        anyhow::bail!("Brew bundle failed; some changes may have completed")
+    }
+}
+
 fn apply(essential: bool, dry_run: bool, file: Option<String>) -> Result<()> {
     if essential {
         ui::header("Installing Essential Packages");
@@ -191,7 +199,11 @@ fn apply(essential: bool, dry_run: bool, file: Option<String>) -> Result<()> {
     let pb = progress::spinner("Running brew bundle...");
     let result = client.bundle(bundle_path)?;
 
-    progress::finish_success(&pb, "Bundle complete");
+    if result.is_success() {
+        progress::finish_success(&pb, "Bundle complete");
+    } else {
+        progress::finish_error(&pb, "Bundle failed");
+    }
 
     // Report results
     println!();
@@ -263,8 +275,7 @@ fn apply(essential: bool, dry_run: bool, file: Option<String>) -> Result<()> {
         println!();
         ui::success("Brew apply complete!");
     }
-
-    Ok(())
+    bundle_status(&result)
 }
 
 fn capture(output: Option<String>) -> Result<()> {
@@ -611,6 +622,16 @@ mod optional_list_tests {
         drop(first);
         assert!(!first_path.exists());
         assert!(second.path().exists());
+    }
+
+    #[test]
+    fn partial_bundle_failure_propagates_to_cli_exit() {
+        let mut result = brewkit::BundleResult::default();
+        result.installed.push("git".to_owned());
+        result
+            .failed
+            .push(("bundle".to_owned(), "failed".to_owned()));
+        assert!(bundle_status(&result).is_err());
     }
 
     #[test]

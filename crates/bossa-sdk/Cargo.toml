@@ -11,6 +11,7 @@ description = "Application and setup libraries for Bossa"
 [dependencies]
 anyhow = "1"
 blake3 = "1"
+bossa-process = { path = "../bossa-process" }
 declarative = { path = "../declarative" }
 dirs = "6"
 serde = { version = "1", features = ["derive"] }

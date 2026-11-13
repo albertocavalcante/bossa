@@ -93,8 +93,8 @@ impl Client {
         Self { backend }
     }
 
-    /// Check if Homebrew is available.
-    pub fn is_available(&self) -> bool {
+    /// Check Homebrew availability; observation failures are errors.
+    pub fn is_available(&self) -> Result<bool> {
         self.backend.is_available()
     }
 
