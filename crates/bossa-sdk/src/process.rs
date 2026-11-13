@@ -301,8 +301,8 @@ mod supervision_tests {
     use std::fs;
     use std::time::Instant;
 
-    const TREE: &str = include_str!("../tests/fixtures/process-tree.sh");
-    const OUTPUT: &str = include_str!("../tests/fixtures/process-output.sh");
+    const TREE: &str = include_str!("../fixtures/process-tree.sh");
+    const OUTPUT: &str = include_str!("../fixtures/process-output.sh");
 
     fn shell(root: &std::path::Path, script: &str, args: &[OsString]) -> CommandRequest {
         let mut all = vec!["-c".into(), script.into(), "fixture".into()];

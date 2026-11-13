@@ -622,10 +622,11 @@ mod tests {
         fs::write(&path, "value=1").unwrap();
         let file = metadata::open_regular(&path).unwrap();
         // Linux UAPI posix_acl{,_xattr}.h: version2 and little-endian entries
-        // (tag, permissions, ID). A named UID keeps the ACL nontrivial; the
+        // (tag, permissions, ID). Use a mapped UID even in a single-user
+        // namespace. The explicit named entry keeps the ACL nontrivial; the
         // private fixture directory prevents granting access outside this test.
         let mut acl = 2u32.to_le_bytes().to_vec();
-        let named = rustix::process::geteuid().as_raw().checked_add(1).unwrap();
+        let named = rustix::process::geteuid().as_raw();
         for (tag, permissions, id) in [
             (1u16, 6u16, u32::MAX),
             (2, 4, named),
