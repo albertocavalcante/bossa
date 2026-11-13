@@ -464,6 +464,32 @@ where
             return Ok(summary);
         }
     }
+    // Recheck the entire selected scope before starting any effects. In
+    // particular, a previously satisfied row may have drifted while the
+    // preview or consent callback ran, without having been part of the diff.
+    let mut changed = false;
+    for (index, observation) in observations.iter().enumerate() {
+        let current = observation.resource.current_state();
+        if !matches!(current, Ok(ref state) if Some(state) == observation.current.as_ref()) {
+            let row = &mut summary.outcomes[index];
+            row.execution = ExecutionStatus::Blocked;
+            row.verification = VerificationStatus::Pending;
+            row.diagnostic = Some(
+                "Selected scope changed or became unavailable since preflight; no apply attempted"
+                    .into(),
+            );
+            changed = true;
+        }
+    }
+    if changed {
+        block_pending(
+            &mut summary,
+            ExecutionStatus::Blocked,
+            "Selected scope changed; no apply attempted",
+        );
+        counts(&mut summary, &results);
+        return Ok(summary);
+    }
     let unprivileged_ok = apply_batch(
         &observations,
         false,

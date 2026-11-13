@@ -183,10 +183,7 @@ pub fn select_configured(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use crate::{
-        ConfigFormat, ResourceApplyOptions, SystemRunner, apply_resources, decode_bossa_config,
-        setup,
-    };
+    use crate::{ConfigFormat, ResourceApplyOptions, SystemRunner, decode_bossa_config, setup};
     use declarative::{AutoDecline, CommandOutput, NoProgress, SudoProvider};
     use std::{ffi::OsString, fs, process::Command, sync::Arc};
 
@@ -271,7 +268,7 @@ mod tests {
         };
         let preview = make_plan();
         assert!(setup::observe(&preview).iter().all(|row| row.state.is_ok()));
-        let report = apply_resources(
+        let report = setup::apply(
             preview,
             ResourceApplyOptions {
                 dry_run: true,
@@ -289,7 +286,7 @@ mod tests {
         assert!(!home.join("workspaces").exists());
         assert!(!home.join("link").exists());
         let execute = |plan| {
-            apply_resources(
+            setup::apply(
                 plan,
                 ResourceApplyOptions {
                     yes: true,
