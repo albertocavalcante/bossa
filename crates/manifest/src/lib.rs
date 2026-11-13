@@ -845,9 +845,33 @@ mod tests {
     fn native_paths_round_trip_and_cross_compare() {
         use std::os::unix::ffi::OsStringExt;
         let (_temp, root, db) = fixture();
-        let name = std::ffi::OsString::from_vec(b"a|\n\xff".to_vec());
-        fs::write(root.join(&name), "same").unwrap();
+        let raw_name = std::ffi::OsString::from_vec(b"raw-\xff".to_vec());
+        let identity = NativePath::from_path(Path::new(&raw_name));
+        assert_eq!(
+            NativePath::from_blob(&identity.to_blob()).unwrap(),
+            identity
+        );
+        let encoded = serde_json::to_string(&identity).unwrap();
+        assert_eq!(
+            serde_json::from_str::<NativePath>(&encoded).unwrap(),
+            identity
+        );
+        assert_eq!(
+            identity.to_path_buf().unwrap().as_os_str(),
+            raw_name.as_os_str()
+        );
+
+        // These names are always exercised, even when the filesystem rejects
+        // non-UTF-8 names. Only macOS EILSEQ qualifies that single fixture.
+        let literal_name = "a|\nname";
+        fs::write(root.join(literal_name), "same").unwrap();
         fs::write(root.join("other"), "same").unwrap();
+        let raw_created = match fs::write(root.join(&raw_name), "same") {
+            Ok(()) => true,
+            #[cfg(target_os = "macos")]
+            Err(error) if error.raw_os_error() == Some(92) => false,
+            Err(error) => panic!("could not create native-byte fixture: {error}"),
+        };
         let store = Manifest::open_for_root(&db, &root).unwrap();
         store.scan(&root, true, &mut NoProgress).unwrap();
         let group = store.find_duplicates(0).unwrap().remove(0);
@@ -855,8 +879,16 @@ mod tests {
             group
                 .paths
                 .iter()
-                .any(|p| p.to_path_buf().unwrap().as_os_str() == name.as_os_str())
+                .any(|p| p.to_path_buf().unwrap().as_os_str() == std::ffi::OsStr::new(literal_name))
         );
+        if raw_created {
+            assert!(
+                group
+                    .paths
+                    .iter()
+                    .any(|p| p.to_path_buf().unwrap().as_os_str() == raw_name.as_os_str())
+            );
+        }
         let json = serde_json::to_string(&group).unwrap();
         let decoded: DuplicateGroup = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.paths, group.paths);
@@ -864,7 +896,10 @@ mod tests {
         fs::write(root2.join("shared"), "same").unwrap();
         let other = Manifest::open_for_root(&db2, &root2).unwrap();
         other.scan(&root2, true, &mut NoProgress).unwrap();
-        assert_eq!(store.compare_with(&db2, 0).unwrap().len(), 2);
+        assert_eq!(
+            store.compare_with(&db2, 0).unwrap().len(),
+            if raw_created { 3 } else { 2 }
+        );
     }
 
     #[cfg(unix)]
