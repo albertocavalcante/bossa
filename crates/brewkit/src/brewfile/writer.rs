@@ -2,7 +2,8 @@
 //!
 //! Generates properly formatted Brewfile with optional version comments.
 
-use crate::types::{Brewfile, Package, PackageType};
+use super::parser::valid_identifier;
+use crate::types::{Brewfile, OptionValue, Package, PackageType, ScalarNumber, ScalarOption};
 use std::fmt::Write;
 use std::path::Path;
 
@@ -99,38 +100,72 @@ fn write_package(output: &mut String, package: &Package, options: &WriteOptions)
     let directive = package.package_type.directive();
 
     // Start with directive and name
-    write!(output, "{} \"{}\"", directive, package.name).unwrap();
+    write!(output, "{} {}", directive, ruby_string(&package.name)).unwrap();
 
-    // Add options
-    let mut options_written = false;
-    for (key, value) in &package.options {
-        if options_written {
-            write!(output, ", ").unwrap();
+    // Quote arbitrary public keys and symbols rather than emitting Ruby code.
+    let mut entries: Vec<_> = package.options.iter().collect();
+    entries.sort_by_key(|(key, _)| *key);
+    for (key, value) in entries {
+        let key = if valid_identifier(key) {
+            key.clone()
         } else {
-            write!(output, ", ").unwrap();
-            options_written = true;
-        }
-
-        // Determine if value should be a symbol or string
-        if is_symbol_value(value) {
-            write!(output, "{key}: :{value}").unwrap();
-        } else if value.chars().all(|c| c.is_ascii_digit()) {
-            // Numeric value
-            write!(output, "{key}: {value}").unwrap();
-        } else {
-            // String value
-            write!(output, "{key}: \"{value}\"").unwrap();
-        }
+            ruby_string(key)
+        };
+        let rendered = match value {
+            OptionValue::Typed(ScalarOption::String(value)) => ruby_string(value),
+            OptionValue::Typed(ScalarOption::Symbol(value)) => {
+                if valid_identifier(value) {
+                    format!(":{value}")
+                } else {
+                    format!(":{}", ruby_string(value))
+                }
+            }
+            OptionValue::Typed(ScalarOption::Bool(value)) => value.to_string(),
+            OptionValue::Typed(ScalarOption::Nil) => "nil".to_string(),
+            OptionValue::Typed(ScalarOption::Number(value)) => value.as_str().to_owned(),
+            OptionValue::Legacy(value) if is_symbol_value(value) => format!(":{value}"),
+            OptionValue::Legacy(value)
+                if !value.is_empty() && ScalarNumber::try_from(value.clone()).is_ok() =>
+            {
+                value.clone()
+            }
+            OptionValue::Legacy(value) => ruby_string(value),
+        };
+        write!(output, ", {key}: {rendered}").unwrap();
     }
 
     // Add version comment if present and requested
     if options.include_versions
         && let Some(version) = &package.version
     {
-        write!(output, " # {version}").unwrap();
+        let comment: String = version
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect();
+        write!(output, " # {comment}").unwrap();
     }
 
     writeln!(output).unwrap();
+}
+
+fn ruby_string(value: &str) -> String {
+    let mut result = String::from("\"");
+    for c in value.chars() {
+        match c {
+            '\\' => result.push_str("\\\\"),
+            '"' => result.push_str("\\\""),
+            '#' => result.push_str("\\#"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            c if c.is_control() => {
+                write!(result, "\\u{:04x}", u32::from(c)).unwrap();
+            }
+            c => result.push(c),
+        }
+    }
+    result.push('"');
+    result
 }
 
 /// Check if a value should be written as a Ruby symbol.
@@ -145,6 +180,25 @@ fn is_symbol_value(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arbitrary_public_values_cannot_inject_ruby() {
+        let package = Package::brew("git\"\nrun")
+            .with_typed_option("key\"\nrun", ScalarOption::Symbol("x\"\nrun".to_string()))
+            .with_version("1\nrun");
+        let mut brewfile = Brewfile::new();
+        brewfile.add(package);
+        let output = write_string(
+            &brewfile,
+            &WriteOptions {
+                include_versions: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(output.lines().count(), 1);
+        assert!(output.contains("\\n"));
+        assert!(output.contains("# 1 run"));
+    }
 
     #[test]
     fn test_write_simple_tap() {

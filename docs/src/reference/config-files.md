@@ -183,7 +183,9 @@ Default path: `~/dotfiles/Brewfile` (override with `bossa brew apply --file <pat
 
 ### Format
 
-Standard Homebrew bundle format (Ruby DSL).
+Normal `bossa brew apply` delegates the original Ruby DSL to Homebrew. Audit, dry-run, and `--essential` use a strict line-oriented subset: `tap`, `brew`, `cask`, `mas`, and `vscode` declarations with quoted names and scalar options. Unsupported Ruby syntax produces a line-numbered error. Version comments are expected-version observations for audit; they do not pin Homebrew installs.
+
+The `brewkit` Rust API uses typed scalar options. Legacy serialized string options remain readable, but their original Ruby types cannot be recovered; newly parsed typed options serialize as tagged objects.
 
 ---
 

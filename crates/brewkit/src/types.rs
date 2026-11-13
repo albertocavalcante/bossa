@@ -52,6 +52,73 @@ impl std::fmt::Display for PackageType {
     }
 }
 
+/// A Brewfile option. Legacy strings retain the historical writer interpretation.
+/// Parsed values use `Typed`; legacy strings cannot recover their original Ruby type.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum OptionValue {
+    /// Old string-valued API and serialized representation.
+    Legacy(String),
+    /// Explicit scalar value, serialized as a tagged object.
+    Typed(ScalarOption),
+}
+
+/// A scalar supported by the line-oriented Brewfile subset.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum ScalarOption {
+    /// Ruby string.
+    String(String),
+    /// Ruby symbol; writers validate its spelling before emitting it.
+    Symbol(String),
+    /// Boolean literal.
+    Bool(bool),
+    /// Nil literal.
+    Nil,
+    /// JSON-compatible numeric literal.
+    Number(ScalarNumber),
+}
+
+/// A validated JSON-compatible numeric literal, also valid as a Ruby number.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct ScalarNumber(String);
+
+impl ScalarNumber {
+    /// Return the original validated literal.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for ScalarNumber {
+    type Error = String;
+    fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
+        if !value.bytes().any(|b| b.is_ascii_whitespace())
+            && serde_json::from_str::<serde_json::Number>(&value).is_ok()
+        {
+            Ok(Self(value))
+        } else {
+            Err("invalid numeric literal".to_string())
+        }
+    }
+}
+
+impl From<ScalarNumber> for String {
+    fn from(value: ScalarNumber) -> Self {
+        value.0
+    }
+}
+
+impl OptionValue {
+    fn as_text(&self) -> Option<&str> {
+        match self {
+            Self::Legacy(value) | Self::Typed(ScalarOption::String(value)) => Some(value),
+            _ => None,
+        }
+    }
+}
+
 /// A package definition from a Brewfile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Package {
@@ -59,10 +126,10 @@ pub struct Package {
     pub name: String,
     /// Type of package
     pub package_type: PackageType,
-    /// Optional version (from comment or pin)
+    /// Expected or observed version from a comment; not a Homebrew pin.
     pub version: Option<String>,
     /// Additional options (e.g., restart_service: :changed)
-    pub options: HashMap<String, String>,
+    pub options: HashMap<String, OptionValue>,
 }
 
 impl Package {
@@ -94,7 +161,8 @@ impl Package {
     /// Create a mas app package.
     pub fn mas(name: impl Into<String>, id: impl Into<String>) -> Self {
         let mut pkg = Self::new(name, PackageType::Mas);
-        pkg.options.insert("id".to_string(), id.into());
+        pkg.options
+            .insert("id".to_string(), OptionValue::Legacy(id.into()));
         pkg
     }
 
@@ -109,16 +177,27 @@ impl Package {
         self
     }
 
-    /// Add an option.
+    /// Add a legacy string option using the historical writer heuristics.
+    /// Use `with_typed_option` to preserve a specific Ruby scalar type.
     pub fn with_option(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.options.insert(key.into(), value.into());
+        self.options
+            .insert(key.into(), OptionValue::Legacy(value.into()));
+        self
+    }
+
+    /// Add an explicitly typed scalar option.
+    pub fn with_typed_option(mut self, key: impl Into<String>, value: ScalarOption) -> Self {
+        self.options.insert(key.into(), OptionValue::Typed(value));
         self
     }
 
     /// Get the mas app ID if this is a mas package.
     pub fn mas_id(&self) -> Option<&str> {
         if self.package_type == PackageType::Mas {
-            self.options.get("id").map(String::as_str)
+            self.options.get("id").and_then(|value| match value {
+                OptionValue::Typed(ScalarOption::Number(number)) => Some(number.as_str()),
+                other => other.as_text(),
+            })
         } else {
             None
         }

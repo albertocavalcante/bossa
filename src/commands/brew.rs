@@ -2,7 +2,8 @@
 
 use anyhow::{Context, Result};
 use colored::Colorize;
-use std::path::PathBuf;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
 
 use crate::Context as AppContext;
 use crate::cli::BrewCommand;
@@ -84,6 +85,20 @@ fn create_client() -> Result<brewkit::Client, String> {
     })
 }
 
+fn essential_brewfile_in(
+    brewfile: &brewkit::Brewfile,
+    directory: &Path,
+) -> Result<tempfile::NamedTempFile> {
+    let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
+    let options = brewkit::brewfile::WriteOptions {
+        include_versions: true,
+        group_by_type: true,
+        sort_packages: true,
+    };
+    temporary.write_all(brewkit::brewfile::write_string(brewfile, &options).as_bytes())?;
+    Ok(temporary)
+}
+
 fn apply(essential: bool, dry_run: bool, file: Option<String>) -> Result<()> {
     if essential {
         ui::header("Installing Essential Packages");
@@ -119,67 +134,62 @@ fn apply(essential: bool, dry_run: bool, file: Option<String>) -> Result<()> {
         }
     };
 
-    // Parse Brewfile
-    let pb = progress::spinner("Parsing Brewfile...");
-    let mut brewfile = client
-        .parse_brewfile(&brewfile_path)
-        .context("Failed to parse Brewfile")?;
+    let temporary = if essential || dry_run {
+        // Parse only when an inventory or filtered rewrite is required.
+        let pb = progress::spinner("Parsing Brewfile...");
+        let mut brewfile = client
+            .parse_brewfile(&brewfile_path)
+            .context("Failed to parse Brewfile")?;
 
-    // Filter to essential packages if requested
-    if essential {
-        brewfile.packages.retain(|p| {
-            matches!(
-                p.package_type,
-                brewkit::PackageType::Tap | brewkit::PackageType::Brew
-            )
-        });
-    }
-
-    progress::finish_success(&pb, &format!("Found {} packages", brewfile.packages.len()));
-    print_package_summary(&brewfile);
-    println!();
-
-    if dry_run {
-        ui::info("Dry run - showing what would be installed:");
-        println!();
-
-        // Show what would be installed
-        let audit_result = client.audit(&brewfile)?;
-
-        if audit_result.missing.is_empty() {
-            ui::success("All packages are already installed!");
-        } else {
-            ui::warn(&format!(
-                "{} packages would be installed:",
-                audit_result.missing.len()
-            ));
-            println!();
-            for pkg in &audit_result.missing {
-                println!("    {} {}", colored_type(&pkg.package_type), pkg.name);
-            }
+        // Filter to essential packages if requested
+        if essential {
+            brewfile.packages.retain(|p| {
+                matches!(
+                    p.package_type,
+                    brewkit::PackageType::Tap | brewkit::PackageType::Brew
+                )
+            });
         }
 
-        return Ok(());
-    }
+        progress::finish_success(&pb, &format!("Found {} packages", brewfile.packages.len()));
+        print_package_summary(&brewfile);
+        println!();
 
-    // For essential mode, we need to write a temporary Brewfile
-    let bundle_path = if essential {
-        let temp_dir = std::env::temp_dir();
-        let temp_path = temp_dir.join("bossa_essential_brewfile");
-        client.write_brewfile(&brewfile, &temp_path)?;
-        temp_path
+        if dry_run {
+            ui::info("Dry run - showing what would be installed:");
+            println!();
+
+            // Show what would be installed
+            let audit_result = client.audit(&brewfile)?;
+
+            if audit_result.missing.is_empty() {
+                ui::success("All packages are already installed!");
+            } else {
+                ui::warn(&format!(
+                    "{} packages would be installed:",
+                    audit_result.missing.len()
+                ));
+                println!();
+                for pkg in &audit_result.missing {
+                    println!("    {} {}", colored_type(&pkg.package_type), pkg.name);
+                }
+            }
+
+            return Ok(());
+        }
+
+        // Essential mode needs a filtered temporary Brewfile.
+        Some(essential_brewfile_in(&brewfile, &std::env::temp_dir())?)
     } else {
-        brewfile_path
+        None
     };
 
-    // Run brew bundle
+    // Keep the unique temporary file alive until the child exits, including on error.
+    let bundle_path = temporary
+        .as_ref()
+        .map_or(brewfile_path.as_path(), tempfile::NamedTempFile::path);
     let pb = progress::spinner("Running brew bundle...");
-    let result = client.bundle(&bundle_path)?;
-
-    // Clean up temp file if we created one
-    if essential {
-        let _ = std::fs::remove_file(&bundle_path);
-    }
+    let result = client.bundle(bundle_path)?;
 
     progress::finish_success(&pb, "Bundle complete");
 
@@ -579,6 +589,29 @@ fn list(filter_type: Option<String>) -> Result<()> {
 #[cfg(test)]
 mod optional_list_tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn essential_rewrites_are_unique_and_do_not_follow_fixed_name_alias() {
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("victim");
+        std::fs::write(&victim, "preserve").unwrap();
+        std::os::unix::fs::symlink(&victim, dir.path().join("bossa_essential_brewfile")).unwrap();
+        let mut brewfile = brewkit::Brewfile::new();
+        brewfile.add(brewkit::Package::brew("git"));
+        let first = essential_brewfile_in(&brewfile, dir.path()).unwrap();
+        let second = essential_brewfile_in(&brewfile, dir.path()).unwrap();
+        assert_ne!(first.path(), second.path());
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "preserve");
+        assert_eq!(
+            std::fs::read_to_string(first.path()).unwrap(),
+            "# Formulae\nbrew \"git\"\n"
+        );
+        let first_path = first.path().to_path_buf();
+        drop(first);
+        assert!(!first_path.exists());
+        assert!(second.path().exists());
+    }
 
     #[test]
     fn only_unfiltered_missing_optional_tools_are_skipped() {
