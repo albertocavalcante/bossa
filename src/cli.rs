@@ -482,7 +482,7 @@ pub enum CollectionsCommand {
         #[arg(short, long, default_value = "4")]
         jobs: usize,
 
-        /// Retry attempts for failed clones
+        /// Reserved for compatibility; failed clone destinations require inspection
         #[arg(short, long, default_value = "3")]
         retries: usize,
 
