@@ -1,5 +1,5 @@
 load("@crates//:defs.bzl", "all_crate_deps")
-load("@rules_rust//rust:defs.bzl", "rust_clippy", "rust_doc", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_clippy", "rust_doc", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -44,4 +44,16 @@ rust_clippy(
 rust_doc(
     name = "bossa_sdk_doc",
     crate = ":bossa-sdk",
+)
+
+rust_binary(
+    name = "configured_setup_example",
+    srcs = ["examples/configured_setup.rs"],
+    crate_root = "examples/configured_setup.rs",
+    edition = "2024",
+    deps = [
+        ":bossa-sdk",
+        "//crates/declarative",
+        "@crates//:anyhow",
+    ],
 )

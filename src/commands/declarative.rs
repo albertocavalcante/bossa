@@ -1,189 +1,24 @@
 //! Canonical configuration projection and terminal presentation for verified setup.
 
-use anyhow::{Context as _, Result, ensure};
-use bossa::setup::{
-    self, Checkout, Link, NamedSetup, Setup, Storage, StorageKind, Workspace, Worktree,
-};
+use anyhow::{Result, ensure};
+use bossa::setup::{self, Setup};
 use declarative::{ExecutionPlan, ResourceState};
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{Context, ui};
 
-struct Selected {
-    groups: Vec<String>,
-    specs: Vec<NamedSetup>,
-}
-
-fn absolute(path: PathBuf, cwd: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path
-    } else {
-        cwd.join(path)
-    }
-}
-
-fn selected(target: Option<&str>, required: bool) -> Result<Selected> {
+fn selected(target: Option<&str>, required: bool) -> Result<setup::SelectedSetup> {
     let config = crate::config::load_bossa_config(required)?;
-    let cwd = std::env::current_dir()?;
-    let mut groups: Vec<_> = config
-        .collections
-        .keys()
-        .map(|name| ("collections", name.as_str()))
-        .chain(
-            config
-                .workspaces
-                .repos
-                .iter()
-                .map(|repo| ("workspaces", repo.name.as_str())),
-        )
-        .chain(config.storage.keys().map(|name| ("storage", name.as_str())))
-        .collect();
-    groups.sort_unstable();
-    let (domain, name) = match target {
-        None => (None, None),
-        Some(domain @ ("collections" | "workspaces" | "storage")) => (Some(domain), None),
-        Some(target) => {
-            if let Some((domain @ ("collections" | "workspaces" | "storage"), name)) =
-                target.split_once('.')
-            {
-                ensure!(
-                    !name.is_empty() && groups.contains(&(domain, name)),
-                    "Unknown setup selector: {target}"
-                );
-                (Some(domain), Some(name))
-            } else {
-                let found: Vec<_> = groups.iter().filter(|(_, name)| *name == target).collect();
-                ensure!(
-                    found.len() == 1,
-                    "Unknown or ambiguous setup selector: {target}; use collections.NAME, workspaces.NAME or storage.NAME"
-                );
-                (Some(found[0].0), Some(found[0].1))
-            }
-        }
-    };
-    let matches = |kind, id: &str| domain.is_none_or(|d| d == kind) && name.is_none_or(|n| n == id);
-    let names = groups
-        .iter()
-        .filter(|(kind, id)| matches(*kind, id))
-        .map(|(kind, id)| format!("{kind}.{id}"))
-        .collect();
-    let mut specs = Vec::new();
-    let mut collections: Vec<_> = config.collections.iter().collect();
-    collections.sort_by_key(|(name, _)| *name);
-    for (name, collection) in collections {
-        if !matches("collections", name) {
-            continue;
-        }
-        collection.clone.validate()?;
-        let root = absolute(crate::paths::expand(&collection.path), &cwd);
-        for repo in &collection.repos {
-            specs.push(NamedSetup {
-                name: format!("{name}/{}", repo.name),
-                setup: Setup::Checkout(Checkout {
-                    url: repo.url.clone(),
-                    path: root.join(&repo.name),
-                    branch: repo.default_branch.clone(),
-                    depth: collection.clone.depth,
-                    single_branch: collection.clone.single_branch,
-                    options: collection.clone.options.clone(),
-                }),
-            });
-        }
-    }
-    if config
-        .workspaces
-        .repos
-        .iter()
-        .any(|workspace| matches("workspaces", &workspace.name))
-    {
-        let root = absolute(
-            if crate::paths::environment()
-                .variable("BOSSA_WORKSPACES_DIR")
-                .is_some()
-            {
-                crate::paths::workspaces_dir()?
-            } else {
-                config
-                    .workspaces
-                    .expanded_root(crate::paths::environment())?
-            },
-            &cwd,
-        );
-        let physical_root = setup::resolve_location(&root)?;
-        for workspace in &config.workspaces.repos {
-            if !matches("workspaces", &workspace.name) {
-                continue;
-            }
-            let bare = workspace.bare_path(&root);
-            let worktrees: Vec<_> = workspace
-                .worktrees
-                .iter()
-                .map(|branch| Worktree {
-                    branch: branch.clone(),
-                    path: workspace.worktree_path(&root, branch),
-                })
-                .collect();
-            for path in std::iter::once(&bare).chain(worktrees.iter().map(|w| &w.path)) {
-                ensure!(
-                    setup::resolve_location(path)?.starts_with(&physical_root),
-                    "Workspace destination resolves outside the configured root: {}",
-                    path.display()
-                );
-            }
-            specs.push(NamedSetup {
-                name: workspace.name.clone(),
-                setup: Setup::Workspace(Workspace {
-                    url: workspace.url.clone(),
-                    bare,
-                    worktrees,
-                }),
-            });
-        }
-    }
-    let mut storages: Vec<_> = config.storage.iter().collect();
-    storages.sort_by_key(|(name, _)| *name);
-    for (name, storage) in storages {
-        if !matches("storage", name) {
-            continue;
-        }
-        let mount = absolute(storage.expanded_mount(crate::paths::environment())?, &cwd);
-        let mut links = Vec::new();
-        for link in &storage.symlinks {
-            let source = if link.to.contains("{mount}") {
-                let text = mount
-                    .to_str()
-                    .context("A storage placeholder requires a UTF-8 mount path")?;
-                crate::paths::expand(&link.to.replace("{mount}", text))
-            } else {
-                crate::paths::expand(&link.to)
-            };
-            links.push(Link {
-                source: absolute(source, &cwd),
-                target: absolute(crate::paths::expand(&link.from), &cwd),
-            });
-        }
-        specs.push(NamedSetup {
-            name: name.clone(),
-            setup: Setup::Storage(Storage {
-                mount,
-                links,
-                kind: match storage.storage_type {
-                    crate::schema::StorageType::Internal => StorageKind::Internal,
-                    crate::schema::StorageType::External => StorageKind::External,
-                    crate::schema::StorageType::Network => StorageKind::Network,
-                },
-            }),
-        });
-    }
-    Ok(Selected {
-        groups: names,
-        specs,
-    })
+    setup::select_configured(
+        &config,
+        target,
+        crate::paths::environment(),
+        &std::env::current_dir()?,
+    )
 }
 
-fn plan(selected: Selected) -> Result<ExecutionPlan> {
+fn plan(selected: setup::SelectedSetup) -> Result<ExecutionPlan> {
     if selected
         .specs
         .iter()
@@ -215,18 +50,18 @@ pub fn status(ctx: &Context, target: Option<&str>) -> Result<()> {
     }
     let plan = plan(selected)?;
     let mut unavailable = false;
-    for resource in &plan.unprivileged {
-        match resource.current_state() {
+    for observation in setup::observe(&plan) {
+        match observation.state {
             Ok(ResourceState::Present { .. }) => {
-                println!("  ✓ {}: selected postconditions verified", resource.id());
+                println!("  ✓ {}: selected postconditions verified", observation.id);
             }
             Ok(state) => {
                 if !ctx.quiet {
-                    println!("  → {}: {state:?}", resource.id());
+                    println!("  → {}: {state:?}", observation.id);
                 }
             }
             Err(error) => {
-                eprintln!("  Unavailable {}: {error:#}", resource.id());
+                eprintln!("  Unavailable {}: {error:#}", observation.id);
                 unavailable = true;
             }
         }

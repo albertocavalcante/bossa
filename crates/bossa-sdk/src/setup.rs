@@ -1,6 +1,8 @@
 //! Verified setup resources. Observations are ephemeral and grant no cleanup authority.
 
+mod configured;
 mod git;
+pub use configured::{SelectedSetup, select_configured};
 
 use anyhow::{Context, Result, ensure};
 use declarative::{ApplyContext, ApplyResult, ExecutionPlan, Resource, ResourceState};
@@ -182,6 +184,24 @@ pub fn plan(
         }));
     }
     Ok(plan)
+}
+
+/// One selected resource observation; an error means unavailable, not absent.
+pub struct SetupObservation {
+    pub id: String,
+    pub state: Result<ResourceState>,
+}
+
+/// Observe each selected resource without attempting effects.
+pub fn observe(plan: &ExecutionPlan) -> Vec<SetupObservation> {
+    plan.unprivileged
+        .iter()
+        .chain(plan.privileged.iter())
+        .map(|resource| SetupObservation {
+            id: resource.id(),
+            state: resource.current_state(),
+        })
+        .collect()
 }
 
 impl NamedSetup {

@@ -2417,3 +2417,185 @@ fn missing_dock_and_restart_capabilities_block_before_other_selected_effects() {
             .success()
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn configured_sdk_and_cli_share_fixture_selection_and_outcomes() {
+    use bossa::{
+        AppEnvironment, ConfigFormat, IoMode, ProcessRunner, ResourceApplyOptions, SystemRunner,
+        apply_resources, decode_bossa_config, setup,
+    };
+    use declarative::{
+        AutoDecline, CommandOutput, ConfirmCallback, NoProgress, ResourceState, SudoProvider,
+    };
+    use std::{collections::BTreeMap, ffi::OsString, sync::Arc};
+
+    struct NoSudo;
+    impl SudoProvider for NoSudo {
+        fn run(&self, _: &str, _: &[&str]) -> anyhow::Result<CommandOutput> {
+            anyhow::bail!("unexpected sudo")
+        }
+    }
+    struct UnavailableConsent;
+    impl ConfirmCallback for UnavailableConsent {
+        fn confirm(&mut self, _: &str) -> anyhow::Result<bool> {
+            anyhow::bail!("fixture input unavailable")
+        }
+    }
+    struct MissingGit;
+    impl ProcessRunner for MissingGit {
+        fn run(&self, _: &bossa::CommandRequest, _: IoMode) -> io::Result<Output> {
+            Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "fixture Git unavailable",
+            ))
+        }
+    }
+    let fixture = Fixture::new();
+    let source = fixture.seed_repository();
+    let root = fixture.root.path().canonicalize().unwrap();
+    let home = root.join("home");
+    let mount = home.join("mount");
+    fs::create_dir(&mount).unwrap();
+    fs::write(mount.join("content"), "fixture").unwrap();
+    let text = format!(
+        "[collections.refs]\npath='~/collection'\n[[collections.refs.repos]]\nname='repo'\nurl='{}'\ndefault_branch='main'\n[workspaces]\nroot='~/ignored-root'\n[[workspaces.repos]]\nname='workspace'\ncategory='work'\nurl='{}'\nworktrees=['dev']\n[storage.disk]\nmount='~/mount'\ntype='internal'\n[[storage.disk.symlinks]]\nfrom='~/link'\nto='{{mount}}/content'\n",
+        source.display(),
+        source.display()
+    );
+    fs::write(root.join("config/config.toml"), &text).unwrap();
+    let config = decode_bossa_config(ConfigFormat::Toml, text.as_bytes())
+        .unwrap()
+        .desired;
+    let vars = BTreeMap::<OsString, OsString>::from([
+        ("HOME".into(), home.clone().into_os_string()),
+        ("PATH".into(), root.join("bin").into_os_string()),
+        (
+            "BOSSA_WORKSPACES_DIR".into(),
+            root.join("workspaces").into_os_string(),
+        ),
+        ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+        (
+            "GIT_CONFIG_GLOBAL".into(),
+            home.join("unused-gitconfig").into_os_string(),
+        ),
+    ]);
+    let environment = AppEnvironment::new(Some(home.clone()), vars.clone());
+    let runner = setup::git_runner(SystemRunner::new(vars));
+    let plan = || {
+        let selected = setup::select_configured(&config, None, &environment, &root).unwrap();
+        assert_eq!(
+            selected.groups,
+            ["collections.refs", "storage.disk", "workspaces.workspace"]
+        );
+        setup::plan(
+            selected.specs,
+            Arc::new(runner.clone()),
+            Arc::new(runner.clone()),
+            root.clone(),
+        )
+        .unwrap()
+    };
+    let observations = setup::observe(&plan());
+    let cli = fixture.assert_command(&["status"], true);
+    let output = String::from_utf8_lossy(&cli.stdout);
+    for row in &observations {
+        assert!(row.state.is_ok());
+        assert!(output.contains(&row.id), "{output}");
+    }
+    fixture.assert_command(&["diff"], true);
+    let preview = apply_resources(
+        plan(),
+        ResourceApplyOptions {
+            dry_run: true,
+            ..Default::default()
+        },
+        &runner,
+        &root,
+        || Ok(NoSudo),
+        &mut NoProgress,
+        &mut AutoDecline,
+    )
+    .unwrap();
+    assert!(preview.is_success());
+    let declined = apply_resources(
+        plan(),
+        ResourceApplyOptions::default(),
+        &runner,
+        &root,
+        || Ok(NoSudo),
+        &mut NoProgress,
+        &mut AutoDecline,
+    )
+    .unwrap();
+    assert!(!declined.is_success());
+    let unavailable = apply_resources(
+        plan(),
+        ResourceApplyOptions::default(),
+        &runner,
+        &root,
+        || Ok(NoSudo),
+        &mut NoProgress,
+        &mut UnavailableConsent,
+    )
+    .unwrap();
+    assert!(!unavailable.is_success());
+    assert!(!home.join("collection").exists());
+    assert!(!home.join("link").exists());
+    let selected =
+        setup::select_configured(&config, Some("collections"), &environment, &root).unwrap();
+    let missing = setup::plan(
+        selected.specs,
+        Arc::new(MissingGit),
+        Arc::new(MissingGit),
+        root.clone(),
+    )
+    .unwrap();
+    assert!(
+        setup::observe(&missing)
+            .iter()
+            .any(|row| row.state.is_err())
+    );
+    let empty_bin = root.join("empty-bin");
+    fs::create_dir(&empty_bin).unwrap();
+    assert!(
+        !fixture
+            .command_with_env(
+                &["status", "collections"],
+                &[("PATH", Some(empty_bin.to_str().unwrap()))]
+            )
+            .unwrap()
+            .status
+            .success()
+    );
+    fixture.assert_command(&["apply", "--yes"], true);
+    let observed = setup::observe(&plan());
+    assert!(
+        observed
+            .iter()
+            .all(|row| matches!(&row.state, Ok(ResourceState::Present { .. })))
+    );
+    let repeat = apply_resources(
+        plan(),
+        ResourceApplyOptions {
+            yes: true,
+            ..Default::default()
+        },
+        &runner,
+        &root,
+        || Ok(NoSudo),
+        &mut NoProgress,
+        &mut AutoDecline,
+    )
+    .unwrap();
+    assert!(repeat.is_success());
+    assert_eq!(repeat.total_changes(), 0);
+    assert!(root.join("workspaces/work/workspace/dev").is_dir());
+    assert!(!home.join("ignored-root").exists());
+    assert!(
+        fs::symlink_metadata(home.join("link"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+}
