@@ -111,6 +111,13 @@ pub enum Error {
     #[error("Homebrew not found. Install it from https://brew.sh")]
     BrewNotFound,
 
+    /// An optional command could not be found in the executable search path.
+    #[error("executable not found: {program}")]
+    ExecutableNotFound {
+        /// Name of the missing executable.
+        program: String,
+    },
+
     /// Brewfile not found at the specified path
     #[error("Brewfile not found: {0}")]
     BrewfileNotFound(PathBuf),

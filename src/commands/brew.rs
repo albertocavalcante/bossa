@@ -451,6 +451,20 @@ fn audit(file: Option<String>) -> Result<()> {
     Ok(())
 }
 
+fn skip_missing_optional_tool(
+    error: &brewkit::Error,
+    package_type: brewkit::PackageType,
+    filtered: bool,
+) -> bool {
+    if filtered {
+        return false;
+    }
+    matches!((package_type, error),
+        (brewkit::PackageType::Mas, brewkit::Error::ExecutableNotFound { program }) if program == "mas")
+        || matches!((package_type, error),
+        (brewkit::PackageType::Vscode, brewkit::Error::ExecutableNotFound { program }) if program == "code")
+}
+
 fn list(filter_type: Option<String>) -> Result<()> {
     ui::header("Installed Homebrew Packages");
 
@@ -502,11 +516,12 @@ fn list(filter_type: Option<String>) -> Result<()> {
                     by_type.push((pkg_type, packages));
                 }
             }
+            Err(e) if skip_missing_optional_tool(&e, pkg_type, filter_type.is_some()) => {
+                ui::dim(&format!("Skipping {pkg_type}: {e}"));
+            }
             Err(e) => {
-                // Silently skip if the tool isn't available (e.g., mas, code)
-                if !matches!(e, brewkit::Error::Other(_)) {
-                    ui::warn(&format!("Could not list {pkg_type}: {e}"));
-                }
+                progress::finish_error(&pb, &format!("Could not list {pkg_type}"));
+                return Err(anyhow::anyhow!("Could not list {pkg_type}: {e}"));
             }
         }
     }
@@ -559,4 +574,64 @@ fn list(filter_type: Option<String>) -> Result<()> {
     println!("  Total: {} ({})", total, summary_parts.join(", "));
 
     Ok(())
+}
+
+#[cfg(test)]
+mod optional_list_tests {
+    use super::*;
+
+    #[test]
+    fn only_unfiltered_missing_optional_tools_are_skipped() {
+        let missing = brewkit::Error::ExecutableNotFound {
+            program: "mas".into(),
+        };
+        let failed = brewkit::Error::CommandFailed {
+            message: "query failed".into(),
+            stderr: String::new(),
+        };
+        let invalid = brewkit::Error::Other("invalid output".into());
+        assert!(skip_missing_optional_tool(
+            &missing,
+            brewkit::PackageType::Mas,
+            false
+        ));
+        assert!(!skip_missing_optional_tool(
+            &missing,
+            brewkit::PackageType::Mas,
+            true
+        ));
+        assert!(!skip_missing_optional_tool(
+            &missing,
+            brewkit::PackageType::Vscode,
+            false
+        ));
+        assert!(!skip_missing_optional_tool(
+            &missing,
+            brewkit::PackageType::Brew,
+            false
+        ));
+        assert!(!skip_missing_optional_tool(
+            &failed,
+            brewkit::PackageType::Mas,
+            false
+        ));
+        assert!(!skip_missing_optional_tool(
+            &invalid,
+            brewkit::PackageType::Mas,
+            false
+        ));
+        let missing_code = brewkit::Error::ExecutableNotFound {
+            program: "code".into(),
+        };
+        assert!(skip_missing_optional_tool(
+            &missing_code,
+            brewkit::PackageType::Vscode,
+            false
+        ));
+        assert!(!skip_missing_optional_tool(
+            &missing_code,
+            brewkit::PackageType::Vscode,
+            true
+        ));
+    }
 }
