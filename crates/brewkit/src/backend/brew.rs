@@ -3,62 +3,264 @@
 use crate::backend::Backend;
 use crate::error::{Error, Result};
 use crate::types::{BundleResult, InstalledPackage, Package, PackageType};
-use std::path::Path;
-use std::process::Command;
+use bossa_process::{CommandRequest, IoMode, ProcessLimits, ProcessRunner, SystemRunner};
+use std::collections::BTreeMap;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
+use std::process::Output;
+use std::time::Duration;
 
-/// Backend that executes real `brew` commands.
+/// Query and mutation budgets. Both cap combined stdout and stderr at 32 MiB.
+#[derive(Clone, Copy, Debug)]
+pub struct BrewLimits {
+    /// Inventory observations default to 60 seconds.
+    pub query: ProcessLimits,
+    /// Mutations default to 30 minutes; timeout does not undo effects.
+    pub mutation: ProcessLimits,
+}
+impl Default for BrewLimits {
+    fn default() -> Self {
+        Self {
+            query: ProcessLimits {
+                timeout: Duration::from_secs(60),
+                max_output_bytes: 32 * 1024 * 1024,
+            },
+            mutation: ProcessLimits {
+                timeout: Duration::from_secs(30 * 60),
+                max_output_bytes: 32 * 1024 * 1024,
+            },
+        }
+    }
+}
+
+/// Backend using a captured environment and explicitly bounded native execution.
 pub struct BrewBackend {
-    /// Path to the brew executable
-    brew_path: String,
+    brew_path: PathBuf,
+    cwd: PathBuf,
+    environment: BTreeMap<OsString, OsString>,
+    runner: SystemRunner,
+    limits: BrewLimits,
 }
 
 impl BrewBackend {
-    /// Create a new BrewBackend.
-    ///
-    /// Returns an error if Homebrew is not installed.
+    /// Capture environment and working directory once; find Homebrew in standard locations or PATH.
     pub fn new() -> Result<Self> {
-        let brew_path = find_brew()?;
-        Ok(Self { brew_path })
+        let cwd = std::env::current_dir()?;
+        let environment = std::env::vars_os().collect();
+        let mut found = None;
+        for path in [
+            "/opt/homebrew/bin/brew",
+            "/usr/local/bin/brew",
+            "/home/linuxbrew/.linuxbrew/bin/brew",
+        ] {
+            match std::fs::symlink_metadata(path) {
+                Ok(_) => {
+                    found = Some(PathBuf::from(path));
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(Error::Io(error)),
+            }
+        }
+        let brew_path = match found {
+            Some(path) => path,
+            None => {
+                resolve_program(OsStr::new("brew"), &cwd, &environment).map_err(
+                    |error| match error {
+                        Error::ExecutableNotFound { .. } => Error::BrewNotFound,
+                        other => other,
+                    },
+                )?
+            }
+        };
+        Ok(Self::with_context(brew_path, cwd, environment))
     }
 
-    /// Run a brew command and return output.
-    fn run_brew(&self, args: &[&str]) -> Result<std::process::Output> {
-        let output = Command::new(&self.brew_path)
-            .args(args)
-            .output()
-            .map_err(|e| Error::CommandFailed {
-                message: format!("failed to execute brew: {e}"),
+    /// Supply an executable, working directory and environment without reading process globals.
+    pub fn with_context(
+        brew_path: PathBuf,
+        cwd: PathBuf,
+        environment: BTreeMap<OsString, OsString>,
+    ) -> Self {
+        let runner = SystemRunner::new(environment.clone());
+        Self {
+            brew_path,
+            cwd,
+            environment,
+            runner,
+            limits: BrewLimits::default(),
+        }
+    }
+
+    /// Override execution budgets. Failures after launch may leave partial mutations.
+    pub fn with_limits(mut self, limits: BrewLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Share the runner cancellation domain with a caller.
+    pub fn runner(&self) -> SystemRunner {
+        self.runner.clone()
+    }
+
+    fn execute(&self, program: &OsStr, args: &[OsString], limits: ProcessLimits) -> Result<Output> {
+        if !self.cwd.is_absolute() {
+            return Err(Error::Other(
+                "working directory must be absolute".to_owned(),
+            ));
+        }
+        let path = resolve_program(program, &self.cwd, &self.environment)?;
+        let request = CommandRequest {
+            program: path.into_os_string(),
+            args: args.to_vec(),
+            working_dir: self.cwd.clone(),
+        };
+        self.runner.clone().with_limits(limits).run(&request, IoMode::Capture)
+            .map_err(|error| Error::CommandFailed {
+                message: format!("process execution failed: {error}; any started mutation may have partially completed"),
                 stderr: String::new(),
-            })?;
-        Ok(output)
+            })
     }
 
-    /// Check command status without interpreting output from mutations.
-    fn run_brew_success(
-        &self,
-        args: &[&str],
-        package_name: Option<&str>,
-    ) -> Result<std::process::Output> {
-        let output = self.run_brew(args)?;
+    fn run_brew(&self, args: &[&str], limits: ProcessLimits) -> Result<Output> {
+        self.execute(
+            self.brew_path.as_os_str(),
+            &args.iter().map(OsString::from).collect::<Vec<_>>(),
+            limits,
+        )
+    }
+
+    fn run_brew_success(&self, args: &[&str], package_name: Option<&str>) -> Result<Output> {
+        let output = self.run_brew(args, self.limits.mutation)?;
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::from_brew_output(&stderr, package_name));
+            return Err(Error::from_brew_output(
+                &String::from_utf8_lossy(&output.stderr),
+                package_name,
+            ));
         }
         Ok(output)
     }
 
-    /// Decode successful observation output strictly.
     fn run_brew_checked(&self, args: &[&str], package_name: Option<&str>) -> Result<String> {
-        let output = self.run_brew_success(args, package_name)?;
+        let output = self.run_brew(args, self.limits.query)?;
+        if !output.status.success() {
+            return Err(Error::from_brew_output(
+                &String::from_utf8_lossy(&output.stderr),
+                package_name,
+            ));
+        }
         String::from_utf8(output.stdout)
             .map_err(|e| Error::Other(format!("invalid UTF-8 in brew output: {e}")))
     }
+
+    fn run_query(&self, program: &str, args: &[&str]) -> Result<String> {
+        let output = self.execute(
+            OsStr::new(program),
+            &args.iter().map(OsString::from).collect::<Vec<_>>(),
+            self.limits.query,
+        )?;
+        if !output.status.success() {
+            return Err(Error::CommandFailed {
+                message: format!("{program} query failed ({})", output.status),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            });
+        }
+        String::from_utf8(output.stdout)
+            .map_err(|e| Error::Other(format!("invalid UTF-8 in {program} output: {e}")))
+    }
+
+    fn mutate_aux(&self, program: &str, args: &[&str]) -> Result<()> {
+        let output = self.execute(
+            OsStr::new(program),
+            &args.iter().map(OsString::from).collect::<Vec<_>>(),
+            self.limits.mutation,
+        )?;
+        if !output.status.success() {
+            return Err(Error::CommandFailed {
+                message: format!("{program} command failed ({})", output.status),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
+// Resolve against only the captured PATH and working directory. A present but
+// broken candidate is never treated as proof that the tool is absent.
+fn candidate_exists(candidate: &Path) -> std::io::Result<bool> {
+    match std::fs::symlink_metadata(candidate) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // A missing entry is not proof of absence if an ancestor is a
+            // dangling symlink or cannot be inspected.
+            for ancestor in candidate.ancestors().skip(1) {
+                match std::fs::symlink_metadata(ancestor) {
+                    Ok(metadata) if metadata.file_type().is_symlink() => {
+                        std::fs::metadata(ancestor)?;
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn resolve_program(
+    program: &OsStr,
+    cwd: &Path,
+    environment: &BTreeMap<OsString, OsString>,
+) -> Result<PathBuf> {
+    let path = Path::new(program);
+    if path.components().count() > 1 || path.is_absolute() {
+        let candidate = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            cwd.join(path)
+        };
+        return if candidate_exists(&candidate)? {
+            Ok(candidate)
+        } else {
+            Err(Error::ExecutableNotFound {
+                program: program.to_string_lossy().into_owned(),
+            })
+        };
+    }
+    let search = environment
+        .get(OsStr::new("PATH"))
+        .ok_or_else(|| Error::Other("executable search requires an explicit PATH".to_owned()))?;
+    let mut uncertain = None;
+    for dir in std::env::split_paths(search) {
+        let dir = if dir.is_absolute() {
+            dir
+        } else {
+            cwd.join(dir)
+        };
+        let candidate = dir.join(path);
+        match candidate_exists(&candidate) {
+            Ok(true) => return Ok(candidate),
+            Ok(false) => {}
+            Err(error) => uncertain = Some(error),
+        }
+    }
+    if let Some(error) = uncertain {
+        return Err(Error::Io(error));
+    }
+    Err(Error::ExecutableNotFound {
+        program: program.to_string_lossy().into_owned(),
+    })
 }
 
 impl Backend for BrewBackend {
-    fn is_available(&self) -> bool {
-        self.run_brew(&["--version"])
-            .is_ok_and(|output| output.status.success())
+    fn is_available(&self) -> Result<bool> {
+        match self.run_brew_checked(&["--version"], None) {
+            Ok(_) => Ok(true),
+            Err(Error::ExecutableNotFound { .. }) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     fn install(&self, package: &Package) -> Result<()> {
@@ -71,11 +273,11 @@ impl Backend for BrewBackend {
                 let id = package
                     .mas_id()
                     .ok_or_else(|| Error::Other("mas package missing id".to_string()))?;
-                return run_mas_install(id);
+                return self.mutate_aux("mas", &["install", id]);
             }
             PackageType::Vscode => {
                 // code --install-extension <ext_id>
-                return run_vscode_install(&package.name);
+                return self.mutate_aux("code", &["--install-extension", &package.name]);
             }
         };
 
@@ -92,7 +294,7 @@ impl Backend for BrewBackend {
                 return Err(Error::Other("mas uninstall not supported".to_string()));
             }
             PackageType::Vscode => {
-                return run_vscode_uninstall(&package.name);
+                return self.mutate_aux("code", &["--uninstall-extension", &package.name]);
             }
         };
 
@@ -111,9 +313,9 @@ impl Backend for BrewBackend {
                 let id = package
                     .mas_id()
                     .ok_or_else(|| Error::Other("mas package missing id".to_string()))?;
-                is_mas_installed(id)
+                self.is_mas_installed(id)
             }
-            PackageType::Vscode => is_vscode_installed(&package.name),
+            PackageType::Vscode => self.is_vscode_installed(&package.name),
         }
     }
 
@@ -143,8 +345,8 @@ impl Backend for BrewBackend {
                 let json: serde_json::Value = serde_json::from_str(&output)?;
                 parse_installed_casks(&json)
             }
-            PackageType::Mas => list_mas_installed(),
-            PackageType::Vscode => list_vscode_installed(),
+            PackageType::Mas => self.list_mas_installed(),
+            PackageType::Vscode => self.list_vscode_installed(),
         }
     }
 
@@ -171,12 +373,15 @@ impl Backend for BrewBackend {
     }
 
     fn bundle(&self, brewfile_path: &Path, verbose: bool) -> Result<BundleResult> {
-        let mut args = vec!["bundle", "--file", brewfile_path.to_str().unwrap_or("")];
+        let mut args = vec![
+            OsString::from("bundle"),
+            OsString::from("--file"),
+            brewfile_path.as_os_str().to_os_string(),
+        ];
         if verbose {
-            args.push("--verbose");
+            args.push("--verbose".into());
         }
-
-        let output = self.run_brew(&args)?;
+        let output = self.execute(self.brew_path.as_os_str(), &args, self.limits.mutation)?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -201,37 +406,6 @@ impl Backend for BrewBackend {
         self.run_brew_success(&args, package.map(|p| p.name.as_str()))?;
         Ok(())
     }
-}
-
-/// Find the brew executable path.
-fn find_brew() -> Result<String> {
-    // Check common locations
-    let paths = [
-        "/opt/homebrew/bin/brew",              // Apple Silicon
-        "/usr/local/bin/brew",                 // Intel
-        "/home/linuxbrew/.linuxbrew/bin/brew", // Linux
-    ];
-
-    for path in &paths {
-        if std::path::Path::new(path).exists() {
-            return Ok((*path).to_string());
-        }
-    }
-
-    // Try which
-    let output = Command::new("which")
-        .arg("brew")
-        .output()
-        .map_err(|_| Error::BrewNotFound)?;
-
-    if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
-            return Ok(path);
-        }
-    }
-
-    Err(Error::BrewNotFound)
 }
 
 fn field_array<'a>(
@@ -363,8 +537,8 @@ fn parse_bundle_output(stdout: &str, stderr: &str, success: bool) -> Result<Bund
         }
     }
 
-    // If we couldn't parse anything but the command failed, report generic error
-    if !success && result.failed.is_empty() && result.installed.is_empty() {
+    // A nonzero exit is a failure even after success-looking output.
+    if !success && result.failed.is_empty() {
         result
             .failed
             .push(("bundle".to_string(), stderr.to_string()));
@@ -393,82 +567,31 @@ fn extract_package_name(line: &str) -> Option<String> {
     None
 }
 
-fn run_query(program: &str, args: &[&str]) -> Result<String> {
-    let output = Command::new(program).args(args).output().map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound && !executable_may_exist(program) {
-            Error::ExecutableNotFound {
-                program: program.to_owned(),
-            }
-        } else {
-            Error::CommandFailed {
-                message: format!("failed to execute {program}: {e}"),
-                stderr: String::new(),
-            }
-        }
-    })?;
-    if !output.status.success() {
-        return Err(Error::CommandFailed {
-            message: format!("{program} query failed ({})", output.status),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        });
+impl BrewBackend {
+    fn is_mas_installed(&self, app_id: &str) -> Result<bool> {
+        Ok(parse_mas_list(&self.run_query("mas", &["list"])?)?
+            .iter()
+            .any(|(id, _)| id == app_id))
     }
-    String::from_utf8(output.stdout)
-        .map_err(|e| Error::Other(format!("invalid UTF-8 in {program} output: {e}")))
-}
-
-// ENOENT can also mean a present script has a missing interpreter. If PATH
-// cannot be inspected, retain the failure rather than claiming absence.
-fn executable_may_exist(program: &str) -> bool {
-    fn may_exist(path: &Path) -> bool {
-        match std::fs::symlink_metadata(path) {
-            Ok(_) => true,
-            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
-        }
+    fn list_mas_installed(&self) -> Result<Vec<InstalledPackage>> {
+        Ok(parse_mas_list(&self.run_query("mas", &["list"])?)?
+            .into_iter()
+            .map(|(_, package)| package)
+            .collect())
     }
-    if Path::new(program).components().count() > 1 {
-        return may_exist(Path::new(program));
+    fn is_vscode_installed(&self, extension: &str) -> Result<bool> {
+        Ok(
+            parse_vscode_list(&self.run_query("code", &["--list-extensions"])?, false)?
+                .iter()
+                .any(|p| p.name.eq_ignore_ascii_case(extension)),
+        )
     }
-    let Some(path) = std::env::var_os("PATH") else {
-        return true;
-    };
-    std::env::split_paths(&path).any(|dir| may_exist(&dir.join(program)))
-}
-
-// =============================================================================
-// mas (Mac App Store) helpers
-// =============================================================================
-
-fn run_mas_install(app_id: &str) -> Result<()> {
-    let output = Command::new("mas")
-        .args(["install", app_id])
-        .output()
-        .map_err(|e| Error::CommandFailed {
-            message: format!("failed to execute mas: {e}"),
-            stderr: String::new(),
-        })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(Error::CommandFailed {
-            message: format!("mas install failed for {app_id}"),
-            stderr: stderr.to_string(),
-        });
+    fn list_vscode_installed(&self) -> Result<Vec<InstalledPackage>> {
+        parse_vscode_list(
+            &self.run_query("code", &["--list-extensions", "--show-versions"])?,
+            true,
+        )
     }
-
-    Ok(())
-}
-
-fn is_mas_installed(app_id: &str) -> Result<bool> {
-    let output = run_query("mas", &["list"])?;
-    Ok(parse_mas_list(&output)?.iter().any(|(id, _)| id == app_id))
-}
-
-fn list_mas_installed() -> Result<Vec<InstalledPackage>> {
-    let output = run_query("mas", &["list"])?;
-    Ok(parse_mas_list(&output)?
-        .into_iter()
-        .map(|(_, package)| package)
-        .collect())
 }
 
 fn parse_mas_list(output: &str) -> Result<Vec<(String, InstalledPackage)>> {
@@ -512,58 +635,6 @@ fn parse_mas_list(output: &str) -> Result<Vec<(String, InstalledPackage)>> {
 // VS Code extension helpers
 // =============================================================================
 
-fn run_vscode_install(extension: &str) -> Result<()> {
-    let output = Command::new("code")
-        .args(["--install-extension", extension])
-        .output()
-        .map_err(|e| Error::CommandFailed {
-            message: format!("failed to execute code: {e}"),
-            stderr: String::new(),
-        })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(Error::CommandFailed {
-            message: format!("vscode install failed for {extension}"),
-            stderr: stderr.to_string(),
-        });
-    }
-
-    Ok(())
-}
-
-fn run_vscode_uninstall(extension: &str) -> Result<()> {
-    let output = Command::new("code")
-        .args(["--uninstall-extension", extension])
-        .output()
-        .map_err(|e| Error::CommandFailed {
-            message: format!("failed to execute code: {e}"),
-            stderr: String::new(),
-        })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(Error::CommandFailed {
-            message: format!("vscode uninstall failed for {extension}"),
-            stderr: stderr.to_string(),
-        });
-    }
-
-    Ok(())
-}
-
-fn is_vscode_installed(extension: &str) -> Result<bool> {
-    let output = run_query("code", &["--list-extensions"])?;
-    Ok(parse_vscode_list(&output, false)?
-        .iter()
-        .any(|p| p.name.eq_ignore_ascii_case(extension)))
-}
-
-fn list_vscode_installed() -> Result<Vec<InstalledPackage>> {
-    let output = run_query("code", &["--list-extensions", "--show-versions"])?;
-    parse_vscode_list(&output, true)
-}
-
 fn parse_vscode_list(output: &str, with_versions: bool) -> Result<Vec<InstalledPackage>> {
     let mut installed = Vec::new();
     for line in output.lines() {
@@ -596,6 +667,16 @@ fn parse_vscode_list(output: &str, with_versions: bool) -> Result<Vec<InstalledP
 mod tests {
     use super::*;
 
+    // Another test can fork while a fixture is being written. The forked
+    // child temporarily inherits the writable descriptor until exec, causing
+    // ETXTBSY if a sibling test executes that inode in the meantime.
+    #[cfg(unix)]
+    fn process_fixture_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     #[cfg(unix)]
     fn fake_brew(script: &str) -> (tempfile::TempDir, BrewBackend) {
         use std::os::unix::fs::PermissionsExt;
@@ -603,15 +684,120 @@ mod tests {
         let path = dir.path().join("brew");
         std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let backend = BrewBackend {
-            brew_path: path.to_str().unwrap().to_owned(),
-        };
+        let environment =
+            BTreeMap::from([(OsString::from("PATH"), OsString::from("/usr/bin:/bin"))]);
+        let backend = BrewBackend::with_context(path, dir.path().to_path_buf(), environment);
         (dir, backend)
     }
 
     #[cfg(unix)]
     #[test]
+    fn injected_context_uses_only_its_path_and_working_directory() {
+        let _guard = process_fixture_guard();
+        use std::os::unix::fs::PermissionsExt;
+        let (dir, _) = fake_brew("exit 0");
+        let code = dir.path().join("code");
+        std::fs::write(&code, "#!/bin/sh\nprintf '%s' \"$PWD\"\n").unwrap();
+        std::fs::set_permissions(&code, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let backend = BrewBackend::with_context(
+            dir.path().join("brew"),
+            dir.path().to_path_buf(),
+            BTreeMap::from([("PATH".into(), ".".into())]),
+        );
+        assert_eq!(
+            std::fs::canonicalize(backend.run_query("code", &[]).unwrap()).unwrap(),
+            std::fs::canonicalize(dir.path()).unwrap()
+        );
+        assert!(matches!(
+            backend.run_query("mas", &[]),
+            Err(Error::ExecutableNotFound { .. })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_path_is_not_optional_tool_absence() {
+        let _guard = process_fixture_guard();
+        use std::os::unix::fs::PermissionsExt;
+        let (dir, _) = fake_brew("exit 0");
+        let broken = dir.path().join("broken");
+        std::os::unix::fs::symlink(dir.path().join("missing"), &broken).unwrap();
+        let environment = BTreeMap::from([("PATH".into(), broken.clone().into_os_string())]);
+        let backend = BrewBackend::with_context(
+            dir.path().join("brew"),
+            dir.path().to_path_buf(),
+            environment,
+        );
+        assert!(matches!(backend.run_query("mas", &[]), Err(Error::Io(_))));
+        let tool = dir.path().join("mas");
+        std::fs::write(&tool, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let path = std::env::join_paths([broken.as_path(), dir.path()]).unwrap();
+        let backend = BrewBackend::with_context(
+            dir.path().join("brew"),
+            dir.path().to_path_buf(),
+            BTreeMap::from([("PATH".into(), path)]),
+        );
+        assert_eq!(backend.run_query("mas", &[]).unwrap(), "");
+        let absent = BrewBackend::with_context(
+            dir.path().join("missing-brew"),
+            dir.path().to_path_buf(),
+            BTreeMap::new(),
+        );
+        assert!(!absent.is_available().unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn query_and_mutation_limits_and_cancellation_are_errors() {
+        let _guard = process_fixture_guard();
+        let (_dir, backend) = fake_brew("/bin/sleep 3");
+        let short = ProcessLimits {
+            timeout: Duration::from_millis(100),
+            max_output_bytes: 32,
+        };
+        let backend = backend.with_limits(BrewLimits {
+            query: short,
+            mutation: short,
+        });
+        assert!(backend.is_installed(&Package::tap("org/tap")).is_err());
+        assert!(backend.install(&Package::brew("git")).is_err());
+        let runner = backend.runner();
+        runner.cancel().unwrap();
+        assert!(backend.install(&Package::brew("git")).is_err());
+        let (_dir, backend) = fake_brew("printf 1234; printf 5678 >&2");
+        let small = ProcessLimits {
+            timeout: Duration::from_secs(3),
+            max_output_bytes: 7,
+        };
+        let backend = backend.with_limits(BrewLimits {
+            query: small,
+            mutation: small,
+        });
+        assert!(backend.is_installed(&Package::tap("org/tap")).is_err());
+        assert!(backend.install(&Package::brew("git")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bundle_preserves_native_non_utf8_path() {
+        let _guard = process_fixture_guard();
+        use std::os::unix::ffi::OsStringExt;
+        let (dir, mut backend) = fake_brew("printf '%s' \"$3\" > marker");
+        let path = dir.path().join(OsString::from_vec(vec![b'f', 0xff]));
+        backend.cwd = dir.path().to_path_buf();
+        backend.bundle(&path, false).unwrap();
+        use std::os::unix::ffi::OsStrExt;
+        assert_eq!(
+            std::fs::read(dir.path().join("marker")).unwrap(),
+            path.as_os_str().as_bytes()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn observation_failures_do_not_mean_absent() {
+        let _guard = process_fixture_guard();
         let (dir, backend) = fake_brew("echo permission-denied >&2; exit 1");
         for package in [
             Package::brew("git"),
@@ -624,13 +810,13 @@ mod tests {
             assert!(backend.list_installed(kind).is_err());
         }
         assert!(backend.get_version(&Package::brew("git")).is_err());
-        assert!(!backend.is_available());
+        assert!(backend.is_available().is_err());
         assert!(matches!(
-            run_query("/usr/bin/false", &[]),
+            backend.run_query("/usr/bin/false", &[]),
             Err(Error::CommandFailed { .. })
         ));
         assert!(matches!(
-            run_query("/bossa-test-missing-executable", &[]),
+            backend.run_query("bossa-test-missing-executable", &[]),
             Err(Error::ExecutableNotFound { .. })
         ));
         let (broken_dir, broken) = fake_brew("exit 0");
@@ -640,22 +826,21 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            run_query(&broken.brew_path, &[]),
+            broken.run_query(broken.brew_path.to_str().unwrap(), &[]),
             Err(Error::CommandFailed { .. })
         ));
         use std::os::unix::fs::PermissionsExt;
         let no_exec = dir.path().join("no-exec");
         std::fs::write(&no_exec, "not executable").unwrap();
         std::fs::set_permissions(&no_exec, std::fs::Permissions::from_mode(0o600)).unwrap();
-        let denied = BrewBackend {
-            brew_path: no_exec.to_str().unwrap().to_owned(),
-        };
+        let denied = BrewBackend::with_context(no_exec, dir.path().to_path_buf(), BTreeMap::new());
         assert!(denied.is_installed(&Package::brew("git")).is_err());
     }
 
     #[cfg(unix)]
     #[test]
     fn decode_errors_do_not_mean_absent() {
+        let _guard = process_fixture_guard();
         let (_dir, backend) = fake_brew("printf '\\377'");
         assert!(backend.is_installed(&Package::tap("org/tap")).is_err());
         assert!(backend.is_installed(&Package::brew("git")).is_err());
@@ -670,6 +855,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn successful_mutations_ignore_non_utf8_stdout() {
+        let _guard = process_fixture_guard();
         let (_dir, backend) = fake_brew("printf '\\377'");
         let package = Package::brew("git");
         assert!(backend.install(&package).is_ok());
@@ -681,6 +867,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn valid_absent_and_installed_observations_are_distinct() {
+        let _guard = process_fixture_guard();
         let (_dir, absent) = fake_brew("printf '%s' '{\"formulae\":[{\"installed\":[]}]}'");
         assert!(!absent.is_installed(&Package::brew("git")).unwrap());
         let (_dir, present) =
@@ -745,6 +932,14 @@ mod tests {
         assert_eq!(result.installed, vec!["git", "curl"]);
         assert_eq!(result.skipped, vec!["wget"]);
         assert_eq!(result.failed.len(), 0);
+    }
+
+    #[test]
+    fn failed_bundle_after_install_output_is_not_success() {
+        let result = parse_bundle_output("Installing git", "unrecognized failure", false).unwrap();
+        assert_eq!(result.installed, ["git"]);
+        assert!(!result.is_success());
+        assert_eq!(result.failed.len(), 1);
     }
 
     #[test]

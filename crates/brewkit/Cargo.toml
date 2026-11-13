@@ -10,6 +10,7 @@ rust-version = "1.90"
 description = "Pure Rust library for Homebrew package management"
 
 [dependencies]
+bossa-process = { path = "../bossa-process" }
 # Error handling
 thiserror = "2"
 

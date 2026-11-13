@@ -16,8 +16,8 @@ use std::path::Path;
 /// - Mock implementations for testing
 /// - Potential future native integrations
 pub trait Backend: Send + Sync {
-    /// Check if Homebrew is available.
-    fn is_available(&self) -> bool;
+    /// Check Homebrew availability; false means the executable is proven absent.
+    fn is_available(&self) -> Result<bool>;
 
     /// Install a package.
     fn install(&self, package: &Package) -> Result<()>;

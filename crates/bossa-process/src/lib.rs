@@ -9,6 +9,26 @@ use std::time::Duration;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod unix;
 
+fn lookup_variable<'a>(
+    variables: &'a BTreeMap<OsString, OsString>,
+    name: &str,
+) -> Option<&'a std::ffi::OsStr> {
+    #[cfg(windows)]
+    {
+        variables.iter().find_map(|(key, value)| {
+            key.to_str()
+                .is_some_and(|key| key.eq_ignore_ascii_case(name))
+                .then_some(value.as_os_str())
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        variables
+            .get(std::ffi::OsStr::new(name))
+            .map(OsString::as_os_str)
+    }
+}
+
 /// OS-native command input. It is not Debug to avoid exposing secret arguments.
 pub struct CommandRequest {
     pub program: OsString,
@@ -137,7 +157,7 @@ impl SystemRunner {
 impl ProcessRunner for SystemRunner {
     fn run(&self, request: &CommandRequest, mode: IoMode) -> io::Result<Output> {
         if std::path::Path::new(&request.program).components().count() == 1
-            && crate::app::lookup_variable(&self.environment, "PATH").is_none()
+            && lookup_variable(&self.environment, "PATH").is_none()
         {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,

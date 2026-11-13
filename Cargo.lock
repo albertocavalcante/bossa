@@ -204,11 +204,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bossa-process"
+version = "0.1.0"
+dependencies = [
+ "rustix",
+ "tempfile",
+]
+
+[[package]]
 name = "bossa-sdk"
 version = "0.1.2"
 dependencies = [
  "anyhow",
  "blake3",
+ "bossa-process",
  "declarative",
  "dirs",
  "rustix",
@@ -224,6 +233,7 @@ dependencies = [
 name = "brewkit"
 version = "0.1.0"
 dependencies = [
+ "bossa-process",
  "serde",
  "serde_json",
  "tempfile",
