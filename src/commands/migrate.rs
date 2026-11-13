@@ -32,32 +32,24 @@ pub fn run(ctx: &AppContext, dry_run: bool) -> Result<()> {
         None => read_legacy(&legacy_refs_path)?,
     };
     let workspaces = read_legacy(&ws_path)?;
-    let store = config::main_store()?;
-    let snapshot = store.read()?;
-    let selected = snapshot.document;
-    let (mut config, legacy_main) = match selected.as_ref() {
-        Some(document) => config::parse_bossa_document(document)?,
-        None => (BossaConfig::default(), false),
-    };
-    if legacy_main {
+    let loaded = bossa::LoadedBossaConfig::load(config::main_store()?, false)?;
+    if loaded.is_legacy() {
         anyhow::bail!(
             "Explicitly convert the vector-shaped main configuration before merging legacy files"
         );
     }
-    config.store_revision = Some((store, snapshot.revision));
+    let destination = loaded.selected().map_or_else(
+        || new_dir.join("config.toml"),
+        |(path, _)| path.to_path_buf(),
+    );
+    let format = loaded
+        .selected()
+        .map_or(config::ConfigFormat::Toml, |(_, format)| format.into());
+    let mut config = BossaConfig::from_loaded(loaded);
     if refs.is_none() && workspaces.is_none() {
         ui::info("No legacy configs found to migrate");
         return Ok(());
     }
-    let destination = selected.as_ref().map_or_else(
-        || new_dir.join("config.toml"),
-        |document| document.path.clone(),
-    );
-    let format = selected
-        .as_ref()
-        .map_or(config::ConfigFormat::Toml, |document| {
-            document.format.into()
-        });
     ui::info(&format!("Migration destination: {}", destination.display()));
 
     // Migrate refs.json
@@ -225,7 +217,9 @@ fn migrate_workspaces(
     }
     config.workspaces.root = legacy.root_directory;
     config.workspaces.structure = "bare-worktree".to_string();
-    let root = config.workspaces.expanded_root()?;
+    let root = config
+        .workspaces
+        .expanded_root(crate::paths::environment())?;
     for ws in &legacy.repositories {
         let repo = crate::schema::WorkspaceRepo {
             name: ws.name.clone(),

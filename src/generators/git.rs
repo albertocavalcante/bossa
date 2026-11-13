@@ -84,7 +84,7 @@ fn write_section(
     items.sort_by_key(|(k, _)| *k);
 
     for (key, value) in items {
-        let formatted = format_value(value, locations);
+        let formatted = format_value(value, locations)?;
         output.push_str(&format!("    {key} = {formatted}\n"));
     }
     output.push('\n');
@@ -92,12 +92,15 @@ fn write_section(
     Ok(())
 }
 
-fn format_value(value: &toml::Value, locations: &crate::schema::LocationsConfig) -> String {
-    match value {
+fn format_value(value: &toml::Value, locations: &crate::schema::LocationsConfig) -> Result<String> {
+    Ok(match value {
         toml::Value::String(s) => {
             // Resolve location references and expand paths
-            let resolved = paths::resolve(s, locations);
-            resolved.to_string_lossy().to_string()
+            let resolved = paths::resolve(s, locations)?;
+            resolved
+                .to_str()
+                .context("Resolved path is not UTF-8")?
+                .to_owned()
         }
         toml::Value::Boolean(b) => b.to_string(),
         toml::Value::Integer(i) => i.to_string(),
@@ -106,15 +109,18 @@ fn format_value(value: &toml::Value, locations: &crate::schema::LocationsConfig)
             // Git config doesn't really support arrays, join with space
             arr.iter()
                 .map(|v| format_value(v, locations))
-                .collect::<Vec<_>>()
+                .collect::<Result<Vec<_>>>()?
                 .join(" ")
         }
         _ => value.to_string(),
-    }
+    })
 }
 
 /// Get the target path for the git config file
-pub fn target_path(config: &GitConfig, locations: &crate::schema::LocationsConfig) -> PathBuf {
+pub fn target_path(
+    config: &GitConfig,
+    locations: &crate::schema::LocationsConfig,
+) -> Result<PathBuf> {
     paths::resolve(&config.target, locations)
 }
 
@@ -123,7 +129,7 @@ pub fn diff(
     config: &GitConfig,
     locations: &crate::schema::LocationsConfig,
 ) -> Result<Option<String>> {
-    let target = target_path(config, locations);
+    let target = target_path(config, locations)?;
     let generated = generate(config, locations)?;
 
     if !target.exists() {

@@ -96,10 +96,10 @@ pub fn expand(path: &str) -> PathBuf {
 /// let mut paths_map = HashMap::new();
 /// paths_map.insert("dev".to_string(), "/Volumes/T9/dev".to_string());
 /// let locations = LocationsConfig { paths: paths_map, ..Default::default() };
-/// let resolved = paths::resolve("${locations.dev}/ws/myproject", &locations);
+/// let resolved = paths::resolve("${locations.dev}/ws/myproject", &locations).unwrap();
 /// // Returns: /Volumes/T9/dev/ws/myproject
 /// ```
-pub fn resolve(path: &str, locations: &LocationsConfig) -> PathBuf {
+pub fn resolve(path: &str, locations: &LocationsConfig) -> Result<PathBuf> {
     resolve_with_environment(path, locations, environment())
 }
 
@@ -107,23 +107,8 @@ fn resolve_with_environment(
     path: &str,
     locations: &LocationsConfig,
     environment: &bossa::AppEnvironment,
-) -> PathBuf {
-    // First expand ${locations.xxx} references
-    let mut result = path.to_string();
-
-    // Use simple string replacement to find ${locations.name} patterns
-    // For each match, look up the location and substitute
-    for (name, location_path) in &locations.paths {
-        let pattern = format!("${{locations.{name}}}");
-        if result.contains(&pattern) {
-            // Recursively resolve the location path itself (it might reference other locations)
-            let expanded_location = resolve_with_environment(location_path, locations, environment);
-            result = result.replace(&pattern, &expanded_location.to_string_lossy());
-        }
-    }
-
-    // Then expand ~ and env vars using the existing expand function
-    environment.expand(&result)
+) -> Result<PathBuf> {
+    bossa::resolve_location_path(path, locations, environment)
 }
 
 /// Identify which location (if any) a path belongs to.
@@ -188,7 +173,7 @@ mod tests {
     fn test_resolve_simple_location() {
         let locations = make_locations_config(vec![("dev", "/Volumes/T9/dev")]);
 
-        let result = resolve("${locations.dev}/ws/myproject", &locations);
+        let result = resolve("${locations.dev}/ws/myproject", &locations).unwrap();
         assert_eq!(result, PathBuf::from("/Volumes/T9/dev/ws/myproject"));
     }
 
@@ -199,10 +184,10 @@ mod tests {
             ("home", "/Users/testuser"),
         ]);
 
-        let result = resolve("${locations.dev}/ws", &locations);
+        let result = resolve("${locations.dev}/ws", &locations).unwrap();
         assert_eq!(result, PathBuf::from("/Volumes/T9/dev/ws"));
 
-        let result2 = resolve("${locations.home}/dotfiles", &locations);
+        let result2 = resolve("${locations.home}/dotfiles", &locations).unwrap();
         assert_eq!(result2, PathBuf::from("/Users/testuser/dotfiles"));
     }
 
@@ -213,7 +198,7 @@ mod tests {
             ("workspaces", "${locations.dev}/ws"),
         ]);
 
-        let result = resolve("${locations.workspaces}/myproject", &locations);
+        let result = resolve("${locations.workspaces}/myproject", &locations).unwrap();
         assert_eq!(result, PathBuf::from("/Volumes/T9/dev/ws/myproject"));
     }
 
@@ -221,7 +206,7 @@ mod tests {
     fn test_resolve_with_tilde() {
         let locations = make_locations_config(vec![("dotfiles", "~/dotfiles")]);
 
-        let result = resolve("${locations.dotfiles}/vim", &locations);
+        let result = resolve("${locations.dotfiles}/vim", &locations).unwrap();
         let home = dirs::home_dir().unwrap();
         assert_eq!(result, home.join("dotfiles").join("vim"));
     }
@@ -232,7 +217,8 @@ mod tests {
             bossa::AppEnvironment::new(None, [("BOSSA_TEST_LOCATION".into(), "/test/path".into())]);
         let locations = make_locations_config(vec![("test", "$BOSSA_TEST_LOCATION/data")]);
         let result =
-            resolve_with_environment("${locations.test}/file.txt", &locations, &environment);
+            resolve_with_environment("${locations.test}/file.txt", &locations, &environment)
+                .unwrap();
         assert_eq!(result, PathBuf::from("/test/path/data/file.txt"));
     }
 
@@ -241,10 +227,10 @@ mod tests {
         let locations = make_locations_config(vec![("dev", "/Volumes/T9/dev")]);
 
         // Path without location reference should just be expanded normally
-        let result = resolve("/absolute/path", &locations);
+        let result = resolve("/absolute/path", &locations).unwrap();
         assert_eq!(result, PathBuf::from("/absolute/path"));
 
-        let result2 = resolve("~/relative/path", &locations);
+        let result2 = resolve("~/relative/path", &locations).unwrap();
         let home = dirs::home_dir().unwrap();
         assert_eq!(result2, home.join("relative").join("path"));
     }
@@ -254,7 +240,7 @@ mod tests {
         let locations = make_locations_config(vec![("dev", "/Volumes/T9/dev")]);
 
         // Unknown location reference should be left as-is (then expanded by shellexpand)
-        let result = resolve("${locations.unknown}/path", &locations);
+        let result = resolve("${locations.unknown}/path", &locations).unwrap();
         // shellexpand doesn't know about ${locations.xxx}, so it's left as-is
         assert_eq!(result, PathBuf::from("${locations.unknown}/path"));
     }
@@ -263,7 +249,7 @@ mod tests {
     fn test_resolve_empty_locations() {
         let locations = LocationsConfig::default();
 
-        let result = resolve("/some/path", &locations);
+        let result = resolve("/some/path", &locations).unwrap();
         assert_eq!(result, PathBuf::from("/some/path"));
     }
 
@@ -271,7 +257,7 @@ mod tests {
     fn test_resolve_multiple_references_same_location() {
         let locations = make_locations_config(vec![("dev", "/Volumes/T9/dev")]);
 
-        let result = resolve("${locations.dev}/a:${locations.dev}/b", &locations);
+        let result = resolve("${locations.dev}/a:${locations.dev}/b", &locations).unwrap();
         assert_eq!(result, PathBuf::from("/Volumes/T9/dev/a:/Volumes/T9/dev/b"));
     }
 

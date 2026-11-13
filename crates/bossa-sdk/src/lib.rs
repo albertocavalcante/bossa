@@ -8,9 +8,13 @@ mod application;
 mod configuration;
 mod filesystem;
 mod json;
+mod legacy_config;
+mod location;
 mod process;
+pub mod schema;
 pub mod setup;
 mod store;
+mod typed_config;
 
 pub use app::{AppEnvironment, AppPaths};
 pub use application::{ResourceApplyOptions, apply_resources, confirm_apply};
@@ -20,5 +24,9 @@ pub use configuration::{
 };
 pub use filesystem::confirm_missing_parent;
 pub use json::decode_unique_json;
+pub use location::resolve_location_path;
 pub use process::{CommandRequest, IoMode, ProcessLimits, ProcessRunner, SystemRunner};
 pub use store::{DocumentStore, StoreError, StoreGuard, StoreRevision, StoreSnapshot};
+pub use typed_config::{
+    DecodedBossaConfig, LoadedBossaConfig, decode_bossa_config, update_bossa_config,
+};

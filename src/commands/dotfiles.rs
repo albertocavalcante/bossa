@@ -77,7 +77,7 @@ pub fn run(ctx: &AppContext, cmd: DotfilesCommand) -> Result<()> {
 // ============================================================================
 
 fn status(_ctx: &AppContext, config: &DotfilesConfig) -> Result<()> {
-    let path = config.expanded_path()?;
+    let path = config.expanded_path(crate::paths::environment())?;
     let state = BossaState::load()?;
 
     ui::header("Dotfiles");
@@ -282,7 +282,7 @@ fn sync(
     full_config: &BossaConfig,
     args: DotfilesSyncArgs,
 ) -> Result<()> {
-    let path = config.expanded_path()?;
+    let path = config.expanded_path(crate::paths::environment())?;
     let mut state = BossaState::load()?;
     let total_steps = 4 + usize::from(!args.no_stow);
     let mut step_num = 0;
@@ -521,7 +521,7 @@ fn diff(ctx: &AppContext, config: &DotfilesConfig, full_config: &BossaConfig) ->
 // ============================================================================
 
 fn clone_repo(config: &DotfilesConfig) -> Result<()> {
-    let path = config.expanded_path()?;
+    let path = config.expanded_path(crate::paths::environment())?;
 
     ui::info(&format!("Cloning {} → {}", config.repo, path.display()));
 
