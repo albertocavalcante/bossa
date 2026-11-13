@@ -644,6 +644,8 @@ pub enum DiskCommand {
     ///
     /// Copies files while skipping system files (.DS_Store, .Spotlight-V100, etc.).
     /// Shows a progress bar and validates destination has enough space.
+    /// Keep the destination tree stable during backup: path checks do not
+    /// protect against concurrent changes. This is not a filesystem snapshot.
     ///
     /// Examples:
     ///   bossa disk backup /Volumes/T9/photos /Volumes/Backup/photos
