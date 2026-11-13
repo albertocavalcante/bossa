@@ -29,6 +29,21 @@ pub enum Error {
     /// Invalid path (e.g., cannot determine manifest name)
     #[error("invalid path: {0}")]
     InvalidPath(String),
+    /// An unversioned store cannot establish its root or native path identity.
+    #[error("legacy unqualified manifest; preserve it and perform a fresh scan")]
+    Legacy,
+    /// A manifest schema is not supported by this version.
+    #[error("unsupported manifest schema {0}")]
+    UnsupportedSchema(i64),
+    /// The store belongs to a different declared or canonical root.
+    #[error("manifest root differs from the requested root")]
+    RootMismatch,
+    /// Historical evidence must not be used for filesystem changes.
+    #[error("manifest is stale or has no completed scan; rescan required")]
+    Stale,
+    /// Complete traversal is required for publishing a generation.
+    #[error("scan failed: {0}")]
+    Scan(String),
 }
 
 /// Result type for manifest operations

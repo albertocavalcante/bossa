@@ -83,20 +83,16 @@ fn is_hidden_file(entry: &walkdir::DirEntry) -> bool {
 pub fn collect_manifest_stats() -> Result<Vec<ManifestInfo>> {
     let manifest_dir = config::config_dir()?.join("manifests");
 
-    if !manifest_dir.exists() {
-        return Ok(Vec::new());
-    }
-
+    let entries = match fs::read_dir(&manifest_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
     let mut manifests = Vec::new();
-
-    if let Ok(entries) = fs::read_dir(&manifest_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if is_manifest_db(&path)
-                && let Some(info) = load_manifest_info(&path)
-            {
-                manifests.push(info);
-            }
+    for entry in entries {
+        let path = entry?.path();
+        if is_manifest_db(&path) {
+            manifests.push(load_manifest_info(&path)?);
         }
     }
 
@@ -105,30 +101,33 @@ pub fn collect_manifest_stats() -> Result<Vec<ManifestInfo>> {
 
 /// Collect manifest entries (name + path) from a directory
 pub fn collect_manifest_entries(manifest_dir: &Path) -> Result<Vec<ManifestEntry>> {
-    let mut manifests: Vec<ManifestEntry> = fs::read_dir(manifest_dir)?
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let path = entry.path();
-            if is_manifest_db(&path) {
-                let name = get_manifest_name(&path);
-                Some(ManifestEntry { name, path })
-            } else {
-                None
-            }
-        })
-        .collect();
+    let mut manifests = Vec::new();
+    for entry in fs::read_dir(manifest_dir)? {
+        let path = entry?.path();
+        if is_manifest_db(&path) {
+            manifests.push(ManifestEntry {
+                name: get_manifest_name(&path),
+                path,
+            });
+        }
+    }
 
     manifests.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(manifests)
 }
 
 /// Load detailed manifest info from a database file
-fn load_manifest_info(db_path: &Path) -> Option<ManifestInfo> {
-    let manifest = manifest::Manifest::open(db_path).ok()?;
-    let stats = manifest.stats().ok()?;
-
-    Some(ManifestInfo {
-        name: get_manifest_name(db_path),
+fn load_manifest_info(db_path: &Path) -> Result<ManifestInfo> {
+    let manifest = manifest::Manifest::open(db_path)?;
+    let stats = manifest.stats()?;
+    let name = get_manifest_name(db_path);
+    let name = if manifest.is_legacy() {
+        format!("{name} (legacy unqualified)")
+    } else {
+        name
+    };
+    Ok(ManifestInfo {
+        name,
         file_count: stats.file_count,
         total_size: stats.total_size,
         duplicate_groups: stats.duplicates.duplicate_groups,
@@ -146,5 +145,7 @@ fn get_manifest_name(path: &Path) -> String {
     path.file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("unknown")
-        .to_string()
+        .chars()
+        .flat_map(char::escape_default)
+        .collect()
 }

@@ -164,15 +164,32 @@ pub fn show_manifest_list(manifests: &[ManifestEntry]) {
             if let Ok(stats) = m.stats() {
                 println!(
                     "  {} {} files ({})",
-                    format!("{:>12}", entry.name).cyan(),
+                    format!(
+                        "{:>12}{}",
+                        entry.name,
+                        if m.is_legacy() {
+                            " (legacy unqualified)"
+                        } else {
+                            ""
+                        }
+                    )
+                    .cyan(),
                     stats.file_count,
                     ui::format_size(stats.total_size)
                 );
             } else {
-                println!("  {}", entry.name.cyan());
+                println!(
+                    "  {} {}",
+                    entry.name.cyan(),
+                    "(manifest unavailable or stale)".red()
+                );
             }
         } else {
-            println!("  {} {}", entry.name.cyan(), "(error opening)".red());
+            println!(
+                "  {} {}",
+                entry.name.cyan(),
+                "(error opening manifest)".red()
+            );
         }
     }
 }

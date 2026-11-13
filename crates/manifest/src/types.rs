@@ -1,5 +1,6 @@
 //! Data types for the manifest crate
 
+use crate::NativePath;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -9,7 +10,7 @@ pub struct DuplicateGroup {
     /// BLAKE3 hash of the file content
     pub hash: String,
     /// Paths to all files with this hash (relative to scan root)
-    pub paths: Vec<String>,
+    pub paths: Vec<NativePath>,
     /// Size of each file in bytes
     pub size_each: u64,
     /// Number of copies
@@ -28,9 +29,9 @@ pub struct CrossManifestDuplicate {
     /// Size of the file in bytes
     pub size: u64,
     /// Path in the calling manifest (relative to its scan root)
-    pub source_path: String,
+    pub source_path: NativePath,
     /// Path in the compared manifest (relative to its scan root)
-    pub other_path: String,
+    pub other_path: NativePath,
 }
 
 impl DuplicateGroup {
@@ -58,6 +59,8 @@ pub struct ManifestStats {
     pub file_count: u64,
     /// Total size of all files in bytes
     pub total_size: u64,
+    /// Last completed scan time in Unix seconds, if available.
+    pub last_scanned_at: Option<i64>,
     /// Duplicate statistics
     pub duplicates: DuplicateStats,
 }
@@ -101,6 +104,10 @@ pub struct ScanProgress {
 
 /// Callback trait for scan progress updates
 pub trait ProgressCallback: Send {
+    /// Return true to abort the scan before publication.
+    fn is_cancelled(&self) -> bool {
+        false
+    }
     /// Called when starting the scan with totals
     fn on_start(&mut self, total_files: u64, total_size: u64);
 

@@ -17,7 +17,7 @@ use manifest::{Manifest, NoProgress};
 use std::path::Path;
 
 // Open or create a manifest database
-let manifest = Manifest::open(Path::new("/path/to/manifest.db"))?;
+let manifest = Manifest::open_for_root(Path::new("/path/to/manifest.db"), Path::new("/Volumes/MyDrive"))?;
 
 // Scan a directory
 let base_path = Path::new("/Volumes/MyDrive");
@@ -75,11 +75,13 @@ impl ProgressCallback for MyProgress {
 
 ### `Manifest`
 
-- `open(db_path)` - Open or create a manifest database
+- `open(db_path)` - Read an existing manifest without creating it
+- `open_for_root(db_path, root)` - Create or open a root-bound versioned store
+- `open_existing(db_path, root)` - Read a root-bound store without requiring the root online
 - `scan(base_path, force, progress)` - Scan directory and update manifest
 - `stats()` - Get manifest statistics
 - `find_duplicates(min_size)` - Find duplicate file groups
-- `delete_entry(path)` - Remove an entry from the manifest
+- `delete_duplicates(root, groups)` - Verify and delete duplicates, leaving inventory stale until a full rescan
 
 ### Types
 
@@ -96,3 +98,11 @@ impl ProgressCallback for MyProgress {
 ## License
 
 MIT
+
+## Storage and compatibility
+
+New scans use a versioned store bound to the declared root and observed canonical root. A failed scan keeps the prior completed generation. Non-forced scans may reuse hashes when size and timestamps match; this is not a filesystem snapshot. Use `force` to rehash.
+
+Legacy unversioned databases are preserved. Read-only statistics can be viewed as historical and unqualified; duplicate paths and deletion require a fresh scan in a new versioned database. Read-only opens do not create or migrate files; they reject WAL-mode SQLite files because opening them can create sidecars. Concurrent external changes to journal mode between the header check and opening are outside this guarantee. A successful duplicate deletion marks the inventory stale until another complete scan. Deletion verifies current root identity, keeper and candidate content and containment; it cannot prevent adversarial replacement between checks and filesystem operations.
+
+The public duplicate path API uses `NativePath`, serialized as platform-tagged Unix bytes or Windows UTF-16 units; this changes the former string-based Rust and JSON format. Display formatting escapes control characters and is not an address for deletion. Native duplicate deletion is currently supported on Unix only.
