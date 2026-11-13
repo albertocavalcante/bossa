@@ -29,6 +29,7 @@ rust_test(
     name = "manifest_test",
     crate = ":manifest",
     deps = [
+        "@crates//:serde_json",
         "@crates//:tempfile",
     ],
 )

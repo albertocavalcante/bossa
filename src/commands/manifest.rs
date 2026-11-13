@@ -9,7 +9,6 @@ use anyhow::Result;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use manifest::{DuplicateGroup, Manifest, ProgressCallback, ScanResult};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::config;
@@ -95,7 +94,11 @@ impl ProgressCallback for IndicatifProgress {
     }
 
     fn on_file(&mut self, path: &Path, _size: u64) {
-        let path_str = path.to_string_lossy();
+        let path_str: String = path
+            .to_string_lossy()
+            .chars()
+            .flat_map(char::escape_default)
+            .collect();
         self.pb.set_message(ui::truncate_path(&path_str, 30));
     }
 
@@ -114,29 +117,21 @@ impl ProgressCallback for IndicatifProgress {
 
 fn scan(path_str: &str, force: bool) -> Result<()> {
     let path = crate::paths::expand(path_str);
-    let name = manifest::path_to_name(&path);
 
-    ui::header(&format!("Scanning: {}", path.display()));
+    ui::header(&format!(
+        "Scanning: {}",
+        manifest::NativePath::from_path(&path)
+    ));
 
     if !path.exists() {
-        anyhow::bail!("Path does not exist: {}", path.display());
+        anyhow::bail!(
+            "Path does not exist: {}",
+            manifest::NativePath::from_path(&path)
+        );
     }
 
-    let db_path = manifest_db_path(&name)?;
-    let manifest_db = Manifest::open(&db_path)?;
-
-    // Count files first
-    ui::info("Counting files...");
-    let (file_count, total_size) = count_files(&path);
-
-    ui::kv("Files found", &file_count.to_string());
-    ui::kv("Total size", &manifest::format_size(total_size));
-    println!();
-
-    if file_count == 0 {
-        ui::info("No files to scan.");
-        return Ok(());
-    }
+    let db_path = manifest_db_path(&path)?;
+    let manifest_db = Manifest::open_for_root(&db_path, &path)?;
 
     // Scan with progress
     let mut progress = IndicatifProgress::new();
@@ -172,18 +167,28 @@ fn scan(path_str: &str, force: bool) -> Result<()> {
 
 fn stats(path_str: &str) -> Result<()> {
     let path = crate::paths::expand(path_str);
-    let name = manifest::path_to_name(&path);
 
-    ui::header(&format!("Manifest Stats: {}", path.display()));
+    ui::header(&format!(
+        "Manifest Stats: {}",
+        manifest::NativePath::from_path(&path)
+    ));
 
-    let db_path = manifest_db_path(&name)?;
-    let manifest_db = Manifest::open(&db_path)?;
+    let db_path = existing_manifest_path(&path)?;
+    let manifest_db = Manifest::open_existing(&db_path, &path)?;
+    if manifest_db.is_legacy() {
+        ui::warn(
+            "Legacy unqualified historical inventory; root and native paths are not verified.",
+        );
+    }
 
     let stats = manifest_db.stats()?;
 
     println!();
     ui::kv("Total files", &stats.file_count.to_string());
     ui::kv("Total size", &manifest::format_size(stats.total_size));
+    if let Some(timestamp) = stats.last_scanned_at {
+        ui::kv("Last scan (Unix seconds)", &timestamp.to_string());
+    }
     println!();
     ui::kv(
         "Duplicate groups",
@@ -214,12 +219,19 @@ fn stats(path_str: &str) -> Result<()> {
 
 fn duplicates(path_str: &str, min_size: u64, delete: bool) -> Result<()> {
     let path = crate::paths::expand(path_str);
-    let name = manifest::path_to_name(&path);
 
-    ui::header(&format!("Duplicates: {}", path.display()));
+    ui::header(&format!(
+        "Duplicates: {}",
+        manifest::NativePath::from_path(&path)
+    ));
 
-    let db_path = manifest_db_path(&name)?;
-    let manifest_db = Manifest::open(&db_path)?;
+    let db_path = existing_manifest_path(&path)?;
+    let manifest_db = Manifest::open_existing(&db_path, &path)?;
+    if manifest_db.is_legacy() {
+        ui::warn(
+            "Legacy unqualified historical inventory; root and native paths are not verified.",
+        );
+    }
 
     let groups = manifest_db.find_duplicates(min_size)?;
 
@@ -228,13 +240,10 @@ fn duplicates(path_str: &str, min_size: u64, delete: bool) -> Result<()> {
         return Ok(());
     }
 
-    let mut total_wasted: u64 = 0;
+    let total_wasted: u64 = groups.iter().map(DuplicateGroup::wasted_space).sum();
 
     println!();
     for (i, group) in groups.iter().enumerate() {
-        let wasted = group.wasted_space();
-        total_wasted += wasted;
-
         print_duplicate_group(i + 1, group);
 
         // Limit output
@@ -278,7 +287,7 @@ fn print_duplicate_group(index: usize, group: &DuplicateGroup) {
         if color == "green" {
             println!("  {} {}", prefix.green(), file_path);
         } else {
-            println!("  {} {}", prefix.red(), file_path.dimmed());
+            println!("  {} {}", prefix.red(), file_path.to_string().dimmed());
         }
     }
     println!();
@@ -306,33 +315,14 @@ fn delete_duplicates(
     }
 
     println!();
-    let mut deleted_count = 0u64;
-    let mut deleted_size = 0u64;
-
-    for group in groups {
-        // Keep first, delete rest
-        for file_path in group.paths.iter().skip(1) {
-            let full_path = base_path.join(file_path);
-            match fs::remove_file(&full_path) {
-                Ok(()) => {
-                    manifest_db.delete_entry(file_path)?;
-                    deleted_count += 1;
-                    deleted_size += group.size_each;
-                    println!("  {} Deleted: {}", "✓".green(), file_path);
-                }
-                Err(e) => {
-                    println!("  {} Failed: {} ({})", "✗".red(), file_path, e);
-                }
-            }
-        }
-    }
-
+    let (deleted_count, deleted_size) = manifest_db.delete_duplicates(base_path, groups)?;
     println!();
     ui::success(&format!(
         "Deleted {} files, freed {}",
         deleted_count,
         manifest::format_size(deleted_size)
     ));
+    ui::warn("Manifest is stale; run a complete scan before using it again.");
 
     Ok(())
 }
@@ -341,33 +331,27 @@ fn delete_duplicates(
 // Helpers
 // ============================================================================
 
-/// Get the path to the manifest database for a given name
-fn manifest_db_path(name: &str) -> Result<PathBuf> {
-    let manifest_dir = config::config_dir()?.join("manifests");
-    fs::create_dir_all(&manifest_dir)?;
-    Ok(manifest_dir.join(format!("{name}.db")))
+/// Compute the v2 location without creating directories or reading the root.
+fn manifest_db_path(root: &Path) -> Result<PathBuf> {
+    Ok(config::config_dir()?
+        .join("manifests")
+        .join(format!("{}.db", manifest::manifest_name(root)?)))
 }
 
-/// Count files in a directory
-fn count_files(path: &Path) -> (u64, u64) {
-    use walkdir::WalkDir;
-
-    let mut file_count = 0u64;
-    let mut total_size = 0u64;
-
-    for entry in WalkDir::new(path)
-        .into_iter()
-        .filter_map(std::result::Result::ok)
-    {
-        if entry.file_type().is_file() {
-            file_count += 1;
-            if let Ok(meta) = entry.metadata() {
-                total_size += meta.len();
-            }
-        }
+/// Prefer v2; fall back to explicitly unqualified historical data.
+fn existing_manifest_path(root: &Path) -> Result<PathBuf> {
+    let path = manifest_db_path(root)?;
+    if path.try_exists()? {
+        return Ok(path);
     }
-
-    (file_count, total_size)
+    let legacy = config::config_dir()?
+        .join("manifests")
+        .join(format!("{}.db", manifest::path_to_name(root)));
+    if legacy.try_exists()? {
+        Ok(legacy)
+    } else {
+        Ok(path)
+    }
 }
 
 #[cfg(test)]

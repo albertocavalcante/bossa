@@ -1,734 +1,914 @@
-//! # Manifest
+//! Root-bound content manifests with atomic scan publication.
 //!
-//! Content hashing and duplicate detection for storage volumes.
-//!
-//! This crate provides functionality to:
-//! - Scan directories and compute BLAKE3 hashes for all files
-//! - Store file metadata in a SQLite database
-//! - Find duplicate files by content hash
-//! - Track storage statistics and wasted space
-//!
-//! ## Example
-//!
-//! ```no_run
-//! use manifest::Manifest;
-//! use std::path::Path;
-//!
-//! // Open or create a manifest database
-//! let manifest = Manifest::open(Path::new("/path/to/manifest.db"))?;
-//!
-//! // Scan a directory
-//! let base_path = Path::new("/Volumes/MyDrive");
-//! let result = manifest.scan(base_path, false, &mut manifest::NoProgress)?;
-//!
-//! // Get statistics
-//! let stats = manifest.stats()?;
-//! println!("Files: {}, Duplicates: {}", stats.file_count, stats.duplicates.duplicate_groups);
-//!
-//! // Find duplicates larger than 1MB
-//! let duplicates = manifest.find_duplicates(1024 * 1024)?;
-//! for group in duplicates {
-//!     println!("{} copies of {} bytes each", group.count, group.size_each);
-//! }
-//! # Ok::<(), manifest::Error>(())
-//! ```
+//! A successful generation describes a traversal, not a filesystem snapshot.
+//! Legacy unversioned databases remain untouched; create a new store and scan.
 
 mod error;
+mod native_path;
 mod types;
 
 pub use error::{Error, Result};
+pub use native_path::NativePath;
 pub use types::{
     CrossManifestDuplicate, DuplicateGroup, DuplicateStats, ManifestStats, NoProgress,
     ProgressCallback, ScanProgress, ScanResult,
 };
 
 use blake3::Hasher;
-use rusqlite::{Connection, params};
-use std::fs::File;
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use std::collections::HashMap;
+use std::fs::{self, File};
 use std::io::{BufReader, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-/// A content manifest database for tracking file hashes
+const SCHEMA: i64 = 2;
+
+/// A versioned manifest; read-only opens do not create or migrate databases.
 pub struct Manifest {
     conn: Connection,
+    db_path: PathBuf,
+    legacy: bool,
+}
+
+fn absolute(path: &Path) -> Result<PathBuf> {
+    let path = std::path::absolute(path)?;
+    NativePath::from_path(&path).to_path_buf()?;
+    Ok(path)
+}
+
+// SQLite may create sidecar shared-memory files even with READ_ONLY. Refuse
+// WAL-mode headers before opening; immutable mode could ignore committed WAL.
+fn check_read_only_header(path: &Path) -> Result<()> {
+    let mut file = File::open(path)?;
+    let mut header = [0u8; 100];
+    file.read_exact(&mut header)?;
+    if &header[..16] != b"SQLite format 3\0" {
+        return Err(Error::Scan("invalid SQLite header".into()));
+    }
+    if header[18] != 1 || header[19] != 1 {
+        return Err(Error::Scan(
+            "WAL-mode manifest cannot be inspected without possible sidecar writes".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn schema(conn: &Connection) -> Result<()> {
+    let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    match version {
+        SCHEMA => Ok(()),
+        0 => Err(Error::Legacy),
+        n => Err(Error::UnsupportedSchema(n)),
+    }
 }
 
 impl Manifest {
-    /// Open or create a manifest database at the given path
-    ///
-    /// Creates the database file and necessary tables if they don't exist.
+    /// Open an existing versioned store without creating or migrating it.
     pub fn open(db_path: &Path) -> Result<Self> {
-        // Ensure parent directory exists
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)?;
+        check_read_only_header(db_path)?;
+        let conn = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        if version != 0 && version != SCHEMA {
+            return Err(Error::UnsupportedSchema(version));
         }
-
-        let conn = Connection::open(db_path)?;
-
-        // Create tables
-        conn.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS files (
-                id INTEGER PRIMARY KEY,
-                path TEXT NOT NULL UNIQUE,
-                hash TEXT NOT NULL,
-                size INTEGER NOT NULL,
-                mtime INTEGER NOT NULL,
-                scanned_at INTEGER NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_hash ON files(hash);
-            CREATE INDEX IF NOT EXISTS idx_size ON files(size);
-            ",
-        )?;
-
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            db_path: db_path.to_path_buf(),
+            legacy: version == 0,
+        })
     }
 
-    /// Scan a directory and update the manifest
-    ///
-    /// # Arguments
-    /// * `base_path` - The root directory to scan
-    /// * `force` - If true, re-hash all files even if unchanged
-    /// * `progress` - Callback for progress updates
-    ///
-    /// # Returns
-    /// A `ScanResult` with statistics about the scan
+    /// Read a root-bound store without checking whether its root is online.
+    pub fn open_existing(db_path: &Path, root: &Path) -> Result<Self> {
+        let manifest = Self::open(db_path)?;
+        let root = absolute(root)?;
+        if !manifest.legacy {
+            manifest.check_declared(&root)?;
+        }
+        Ok(manifest)
+    }
+
+    /// Create a fresh store or open an existing versioned store for this root.
+    /// Existing unversioned files are never initialized or modified.
+    pub fn open_for_root(db_path: &Path, root: &Path) -> Result<Self> {
+        let root = absolute(root)?;
+        if let Some(parent) = db_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(db_path)
+        {
+            Ok(file) => {
+                drop(file);
+                let conn = Connection::open(db_path)?;
+                conn.execute_batch("PRAGMA synchronous=FULL; BEGIN IMMEDIATE;
+                    CREATE TABLE meta (declared BLOB NOT NULL, canonical BLOB, root_dev INTEGER, root_ino INTEGER, generation INTEGER NOT NULL, stale INTEGER NOT NULL, last_scanned_at INTEGER);
+                    CREATE TABLE files (path BLOB PRIMARY KEY, hash TEXT NOT NULL, size INTEGER NOT NULL, mtime_sec INTEGER NOT NULL, mtime_nsec INTEGER NOT NULL);
+                    CREATE INDEX files_hash ON files(hash, size);
+                    PRAGMA user_version=2;")?;
+                conn.execute(
+                    "INSERT INTO meta VALUES (?1, NULL, NULL, NULL, 0, 1, NULL)",
+                    [NativePath::from_path(&root).to_blob()],
+                )?;
+                conn.execute_batch("COMMIT;")?;
+                Ok(Self {
+                    conn,
+                    db_path: db_path.to_path_buf(),
+                    legacy: false,
+                })
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                let checked = Self::open_existing(db_path, &root)?;
+                if checked.legacy {
+                    return Err(Error::Legacy);
+                }
+                drop(checked);
+                let conn = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+                schema(&conn)?;
+                let manifest = Self {
+                    conn,
+                    db_path: db_path.to_path_buf(),
+                    legacy: false,
+                };
+                manifest.check_declared(&root)?;
+                Ok(manifest)
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn check_declared(&self, root: &Path) -> Result<()> {
+        let stored: Vec<u8> = self
+            .conn
+            .query_row("SELECT declared FROM meta", [], |r| r.get(0))?;
+        if stored != NativePath::from_path(root).to_blob() {
+            return Err(Error::RootMismatch);
+        }
+        Ok(())
+    }
+
+    /// Whether this is a legacy, unqualified read-only store.
+    pub fn is_legacy(&self) -> bool {
+        self.legacy
+    }
+
+    fn require_fresh(&self) -> Result<()> {
+        if self.legacy {
+            return Err(Error::Legacy);
+        }
+        let (generation, stale): (i64, i64) =
+            self.conn
+                .query_row("SELECT generation, stale FROM meta", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })?;
+        if generation == 0 || stale != 0 {
+            Err(Error::Stale)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Publish a complete generation atomically. A failed traversal, hash or
+    /// commit retains the previous complete generation. Cached mtimes are not a snapshot.
     pub fn scan<P: ProgressCallback>(
         &self,
         base_path: &Path,
         force: bool,
         progress: &mut P,
     ) -> Result<ScanResult> {
-        if !base_path.exists() {
-            return Err(Error::PathNotFound(base_path.to_path_buf()));
-        }
-
-        // First pass: count files
-        let mut file_count = 0u64;
-        let mut total_size = 0u64;
-
-        for entry in WalkDir::new(base_path)
-            .into_iter()
-            .filter_map(std::result::Result::ok)
+        let declared = absolute(base_path)?;
+        self.check_declared(&declared)?;
+        let canonical = fs::canonicalize(&declared)?;
+        let root_before = root_observation(&canonical)?;
+        let tx = self.conn.unchecked_transaction()?;
+        // Acquire the write lock before observing the current binding.
+        tx.execute("UPDATE meta SET stale=stale", [])?;
+        let old: (Option<Vec<u8>>, Option<i64>, Option<i64>) =
+            tx.query_row("SELECT canonical, root_dev, root_ino FROM meta", [], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })?;
+        if let Some(old_root) = &old.0
+            && *old_root != NativePath::from_path(&canonical).to_blob()
         {
-            if entry.file_type().is_file() {
-                file_count += 1;
-                if let Ok(meta) = entry.metadata() {
-                    total_size += meta.len();
-                }
-            }
+            return Err(Error::RootMismatch);
         }
-
-        progress.on_start(file_count, total_size);
-
-        // Even if no files to scan, we still need to prune missing entries
-        if file_count == 0 {
-            let pruned = self.prune_missing(base_path)?;
-            let result = ScanResult {
-                pruned,
-                ..Default::default()
-            };
-            progress.on_complete(&result);
-            return Ok(result);
-        }
-
-        // Second pass: hash files
+        let can_cache = !force
+            && old.0.is_some()
+            && root_before.0.is_some()
+            && root_before.1.is_some()
+            && old.1 == root_before.0
+            && old.2 == root_before.1;
+        tx.execute_batch("CREATE TEMP TABLE next_files (path BLOB PRIMARY KEY, hash TEXT NOT NULL, size INTEGER NOT NULL, mtime_sec INTEGER NOT NULL, mtime_nsec INTEGER NOT NULL);")?;
+        progress.on_start(0, 0);
         let mut hashed = 0u64;
-        let mut errors = 0u64;
-
-        for entry in WalkDir::new(base_path)
-            .into_iter()
-            .filter_map(std::result::Result::ok)
-        {
+        for entry in WalkDir::new(&canonical).follow_links(false) {
+            if progress.is_cancelled() {
+                return Err(Error::Scan("scan cancelled".into()));
+            }
+            let entry = entry.map_err(|e| {
+                Error::Scan(format!(
+                    "traversal failed: {:?}",
+                    e.io_error().map(std::io::Error::kind)
+                ))
+            })?;
             if !entry.file_type().is_file() {
                 continue;
             }
-
-            let file_path = entry.path();
-            let rel_path = file_path.strip_prefix(base_path).unwrap_or(file_path);
-            let rel_path_str = rel_path.to_string_lossy().to_string();
-
-            // Get metadata
-            let meta = match entry.metadata() {
-                Ok(m) => m,
-                Err(_) => {
-                    errors += 1;
-                    progress.on_file_complete(false);
-                    continue;
+            let path = entry.path();
+            let relative = path
+                .strip_prefix(&canonical)
+                .map_err(|_| Error::RootMismatch)?;
+            let identity = NativePath::from_path(relative);
+            identity.relative()?;
+            let meta = fs::symlink_metadata(path)?;
+            if !meta.file_type().is_file() {
+                return Err(Error::Scan("file changed during traversal".into()));
+            }
+            let modified = meta
+                .modified()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| Error::Scan("file timestamp predates epoch".into()))?;
+            let size =
+                i64::try_from(meta.len()).map_err(|_| Error::Scan("file too large".into()))?;
+            let seconds = i64::try_from(modified.as_secs())
+                .map_err(|_| Error::Scan("timestamp out of range".into()))?;
+            let nanos = i64::from(modified.subsec_nanos());
+            let key = identity.to_blob();
+            progress.on_file(relative, meta.len());
+            let cached: Option<String> = if can_cache {
+                tx.query_row("SELECT hash FROM files WHERE path=?1 AND size=?2 AND mtime_sec=?3 AND mtime_nsec=?4", params![key, size, seconds, nanos], |r| r.get(0)).optional()?
+            } else {
+                None
+            };
+            let hash = match cached {
+                Some(hash) => hash,
+                None => {
+                    hashed += 1;
+                    hash_file(path)?
                 }
             };
-
-            let size = meta.len();
-            let mtime = meta
-                .modified()
-                .map(|t| {
-                    t.duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs() as i64
-                })
-                .unwrap_or(0);
-
-            progress.on_file(rel_path, size);
-
-            // Skip if already scanned and not force (could check mtime)
-            let _ = force; // TODO: implement incremental scanning
-
-            // Hash the file
-            match hash_file(file_path) {
-                Ok(hash) => {
-                    self.upsert(&rel_path_str, &hash, size, mtime)?;
-                    hashed += 1;
-                    progress.on_file_complete(true);
-                }
-                Err(_) => {
-                    errors += 1;
-                    progress.on_file_complete(false);
-                }
+            let after = fs::symlink_metadata(path)?;
+            if !same_observation(&meta, &after) {
+                return Err(Error::Scan("file changed while scanning".into()));
             }
+            tx.execute(
+                "INSERT INTO next_files VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![key, hash, size, seconds, nanos],
+            )?;
+            progress.on_file_complete(true);
         }
-
-        // Prune missing files
-        let pruned = self.prune_missing(base_path)?;
-
-        // Get duplicate stats
-        let duplicates = self.duplicate_stats()?;
-
+        if progress.is_cancelled() {
+            return Err(Error::Scan("scan cancelled".into()));
+        }
+        if fs::canonicalize(&declared)? != canonical || root_observation(&canonical)? != root_before
+        {
+            return Err(Error::RootMismatch);
+        }
+        let pruned: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM files WHERE path NOT IN (SELECT path FROM next_files)",
+            [],
+            |r| r.get(0),
+        )?;
+        tx.execute_batch(
+            "DELETE FROM files; INSERT INTO files SELECT * FROM next_files; DROP TABLE next_files;",
+        )?;
+        tx.execute("UPDATE meta SET canonical=?1, root_dev=?2, root_ino=?3, generation=generation+1, stale=0, last_scanned_at=unixepoch()", params![NativePath::from_path(&canonical).to_blob(), root_before.0, root_before.1])?;
+        let (groups, files, wasted): (i64,i64,i64) = tx.query_row("SELECT COUNT(*),COALESCE(SUM(n),0),COALESCE(SUM((n-1)*size),0) FROM (SELECT COUNT(*) n,size FROM files GROUP BY hash,size HAVING n>1)", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+        let duplicates = DuplicateStats {
+            duplicate_groups: u64::try_from(groups)
+                .map_err(|_| Error::Scan("invalid count".into()))?,
+            duplicate_files: u64::try_from(files)
+                .map_err(|_| Error::Scan("invalid count".into()))?,
+            wasted_space: u64::try_from(wasted).map_err(|_| Error::Scan("invalid size".into()))?,
+        };
         let result = ScanResult {
             hashed,
-            errors,
-            pruned,
+            errors: 0,
+            pruned: u64::try_from(pruned).map_err(|_| Error::Scan("negative count".into()))?,
             duplicates,
         };
-
+        tx.commit()?;
         progress.on_complete(&result);
         Ok(result)
     }
 
-    /// Get manifest statistics
+    /// Statistics for the last complete, non-stale generation.
     pub fn stats(&self) -> Result<ManifestStats> {
-        let file_count = self.file_count()?;
-        let total_size = self.total_size()?;
-        let duplicates = self.duplicate_stats()?;
-
+        let _snapshot = self.conn.unchecked_transaction()?;
+        if self.legacy {
+            let (count, size): (i64, i64) = self.conn.query_row(
+                "SELECT COUNT(*),COALESCE(SUM(size),0) FROM files",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            let (groups, files, wasted): (i64,i64,i64) = self.conn.query_row("SELECT COUNT(*),COALESCE(SUM(n),0),COALESCE(SUM((n-1)*size),0) FROM (SELECT COUNT(*) n,size FROM files GROUP BY hash,size HAVING n>1)", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+            let last_scanned_at =
+                self.conn
+                    .query_row("SELECT MAX(scanned_at) FROM files", [], |r| r.get(0))?;
+            return Ok(ManifestStats {
+                last_scanned_at,
+                file_count: u64::try_from(count).map_err(|_| Error::Legacy)?,
+                total_size: u64::try_from(size).map_err(|_| Error::Legacy)?,
+                duplicates: DuplicateStats {
+                    duplicate_files: u64::try_from(files).map_err(|_| Error::Legacy)?,
+                    duplicate_groups: u64::try_from(groups).map_err(|_| Error::Legacy)?,
+                    wasted_space: u64::try_from(wasted).map_err(|_| Error::Legacy)?,
+                },
+            });
+        }
         Ok(ManifestStats {
-            file_count,
-            total_size,
-            duplicates,
+            last_scanned_at: self
+                .conn
+                .query_row("SELECT last_scanned_at FROM meta", [], |r| r.get(0))?,
+            file_count: self.file_count()?,
+            total_size: self.total_size()?,
+            duplicates: self.duplicate_stats_inner()?,
         })
     }
-
-    /// Find duplicate file groups
-    ///
-    /// # Arguments
-    /// * `min_size` - Minimum file size to consider (in bytes)
-    ///
-    /// # Returns
-    /// A list of `DuplicateGroup`s, sorted by total wasted space (descending)
-    pub fn find_duplicates(&self, min_size: u64) -> Result<Vec<DuplicateGroup>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT hash, GROUP_CONCAT(path, '|'), SUM(size) as total_size, COUNT(*) as count
-             FROM files
-             WHERE size >= ?1
-             GROUP BY hash
-             HAVING count > 1
-             ORDER BY total_size DESC",
-        )?;
-
-        let groups = stmt.query_map([min_size as i64], |row| {
-            let hash: String = row.get(0)?;
-            let paths_str: String = row.get(1)?;
-            let total_size: i64 = row.get(2)?;
-            let count: i64 = row.get(3)?;
-
-            let paths: Vec<String> = paths_str
-                .split('|')
-                .map(std::string::ToString::to_string)
-                .collect();
-
-            Ok(DuplicateGroup {
-                hash,
-                paths,
-                size_each: (total_size / count) as u64,
-                count: count as usize,
-            })
-        })?;
-
-        let mut result = Vec::new();
-        for group in groups {
-            result.push(group?);
-        }
-        Ok(result)
-    }
-
-    /// Delete a file entry from the manifest
-    ///
-    /// This only removes the entry from the database, not the actual file.
-    pub fn delete_entry(&self, path: &str) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM files WHERE path = ?1", [path])?;
-        Ok(())
-    }
-
-    /// Get total file count
+    /// Count entries in the current generation.
     pub fn file_count(&self) -> Result<u64> {
-        let count: i64 = self
+        self.require_fresh()?;
+        let n: i64 = self
             .conn
-            .query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))?;
-        Ok(count as u64)
+            .query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?;
+        u64::try_from(n).map_err(|_| Error::Scan("invalid count".into()))
     }
-
-    /// Get total size of all files
+    /// Sum file sizes in the current generation.
     pub fn total_size(&self) -> Result<u64> {
-        let size: i64 =
-            self.conn
-                .query_row("SELECT COALESCE(SUM(size), 0) FROM files", [], |row| {
-                    row.get(0)
-                })?;
-        Ok(size as u64)
+        self.require_fresh()?;
+        let n: i64 = self
+            .conn
+            .query_row("SELECT COALESCE(SUM(size),0) FROM files", [], |r| r.get(0))?;
+        u64::try_from(n).map_err(|_| Error::Scan("invalid size".into()))
     }
 
-    /// Find files that exist in both this manifest and another
-    ///
-    /// Uses SQL ATTACH DATABASE for efficient cross-manifest comparison.
-    ///
-    /// # Arguments
-    /// * `other_db_path` - Path to the other manifest database
-    /// * `min_size` - Minimum file size to consider (in bytes)
-    ///
-    /// # Returns
-    /// A list of `CrossManifestDuplicate`s, sorted by size (descending)
-    ///
-    /// # Errors
-    /// Returns an error if `other_db_path` does not exist or cannot be attached.
+    /// Retrieve each duplicate path as a separate lossless row.
+    pub fn find_duplicates(&self, min_size: u64) -> Result<Vec<DuplicateGroup>> {
+        let _snapshot = self.conn.unchecked_transaction()?;
+        self.find_duplicates_inner(min_size)
+    }
+    fn find_duplicates_inner(&self, min_size: u64) -> Result<Vec<DuplicateGroup>> {
+        self.require_fresh()?;
+        let min_size =
+            i64::try_from(min_size).map_err(|_| Error::Scan("minimum size out of range".into()))?;
+        let mut statement = self.conn.prepare("SELECT f.hash,f.path,f.size FROM files f JOIN (SELECT hash,size FROM files WHERE size>=?1 GROUP BY hash,size HAVING COUNT(*)>1) d ON f.hash=d.hash AND f.size=d.size ORDER BY f.hash,f.size,f.path")?;
+        let rows = statement.query_map([min_size], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Vec<u8>>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
+        })?;
+        let mut groups: Vec<DuplicateGroup> = Vec::new();
+        for row in rows {
+            let (hash, blob, size) = row?;
+            let path = NativePath::from_blob(&blob)?;
+            path.relative()?;
+            let size = u64::try_from(size).map_err(|_| Error::Scan("invalid size".into()))?;
+            if let Some(group) = groups.last_mut()
+                && group.hash == hash
+                && group.size_each == size
+            {
+                group.paths.push(path);
+                group.count += 1;
+            } else {
+                groups.push(DuplicateGroup {
+                    hash,
+                    paths: vec![path],
+                    size_each: size,
+                    count: 1,
+                });
+            }
+        }
+        Ok(groups)
+    }
+    /// Duplicate summary for the current generation.
+    pub fn duplicate_stats(&self) -> Result<DuplicateStats> {
+        let _snapshot = self.conn.unchecked_transaction()?;
+        self.duplicate_stats_inner()
+    }
+    fn duplicate_stats_inner(&self) -> Result<DuplicateStats> {
+        let groups = self.find_duplicates_inner(0)?;
+        Ok(DuplicateStats {
+            duplicate_files: groups.iter().map(|g| g.count as u64).sum(),
+            duplicate_groups: groups.len() as u64,
+            wasted_space: groups.iter().map(DuplicateGroup::wasted_space).sum(),
+        })
+    }
+    /// Compare complete generations without attaching or modifying either database.
     pub fn compare_with(
         &self,
         other_db_path: &Path,
         min_size: u64,
     ) -> Result<Vec<CrossManifestDuplicate>> {
-        // Validate the other database exists
-        if !other_db_path.exists() {
-            return Err(Error::PathNotFound(other_db_path.to_path_buf()));
+        let other = Self::open(other_db_path)?;
+        let _left_snapshot = self.conn.unchecked_transaction()?;
+        let _right_snapshot = other.conn.unchecked_transaction()?;
+        self.require_fresh()?;
+        other.require_fresh()?;
+        let left = self.rows(min_size)?;
+        let right = other.rows(min_size)?;
+        let mut by_hash: HashMap<(String, u64), Vec<NativePath>> = HashMap::new();
+        for (hash, size, path) in right {
+            by_hash.entry((hash, size)).or_default().push(path);
         }
-
-        // Attach the other database
-        self.conn.execute(
-            "ATTACH DATABASE ?1 AS other",
-            [other_db_path.to_string_lossy().as_ref()],
-        )?;
-
-        // Find matching hashes across both manifests
-        let mut stmt = self.conn.prepare(
-            "SELECT m.hash, m.size, m.path, o.path
-             FROM files m
-             INNER JOIN other.files o ON m.hash = o.hash
-             WHERE m.size >= ?1
-             ORDER BY m.size DESC",
-        )?;
-
-        let duplicates = stmt
-            .query_map([min_size as i64], |row| {
-                Ok(CrossManifestDuplicate {
-                    hash: row.get(0)?,
-                    size: row.get::<_, i64>(1)? as u64,
-                    source_path: row.get(2)?,
-                    other_path: row.get(3)?,
-                })
-            })?
-            .filter_map(std::result::Result::ok)
-            .collect();
-
-        // Detach the other database
-        self.conn.execute("DETACH DATABASE other", [])?;
-
-        Ok(duplicates)
-    }
-
-    /// Get duplicate statistics
-    pub fn duplicate_stats(&self) -> Result<DuplicateStats> {
-        // Count files with duplicates
-        let dup_file_count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM files WHERE hash IN (
-                SELECT hash FROM files GROUP BY hash HAVING COUNT(*) > 1
-            )",
-            [],
-            |row| row.get(0),
-        )?;
-
-        // Count unique hashes with duplicates
-        let dup_hash_count: i64 = self.conn.query_row(
-            "SELECT COUNT(DISTINCT hash) FROM (
-                SELECT hash FROM files GROUP BY hash HAVING COUNT(*) > 1
-            )",
-            [],
-            |row| row.get(0),
-        )?;
-
-        // Calculate wasted space (total size - size of one copy per hash)
-        let wasted: i64 = self.conn.query_row(
-            "SELECT COALESCE(SUM(wasted), 0) FROM (
-                SELECT hash, (COUNT(*) - 1) * size as wasted
-                FROM files
-                GROUP BY hash
-                HAVING COUNT(*) > 1
-            )",
-            [],
-            |row| row.get(0),
-        )?;
-
-        Ok(DuplicateStats {
-            duplicate_files: dup_file_count as u64,
-            duplicate_groups: dup_hash_count as u64,
-            wasted_space: wasted as u64,
-        })
-    }
-
-    /// Insert or update a file entry
-    fn upsert(&self, path: &str, hash: &str, size: u64, mtime: i64) -> Result<()> {
-        let now = chrono::Utc::now().timestamp();
-        self.conn.execute(
-            "INSERT INTO files (path, hash, size, mtime, scanned_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(path) DO UPDATE SET
-                hash = excluded.hash,
-                size = excluded.size,
-                mtime = excluded.mtime,
-                scanned_at = excluded.scanned_at",
-            params![path, hash, size, mtime, now],
-        )?;
-        Ok(())
-    }
-
-    /// Remove entries for files that no longer exist
-    fn prune_missing(&self, base_path: &Path) -> Result<u64> {
-        let mut stmt = self.conn.prepare("SELECT id, path FROM files")?;
-        let rows: Vec<(i64, String)> = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .filter_map(std::result::Result::ok)
-            .collect();
-
-        let mut removed = 0;
-        for (id, path) in rows {
-            let full_path = base_path.join(&path);
-            if !full_path.exists() {
-                self.conn.execute("DELETE FROM files WHERE id = ?1", [id])?;
-                removed += 1;
+        let mut result = Vec::new();
+        for (hash, size, source_path) in left {
+            if let Some(paths) = by_hash.get(&(hash.clone(), size)) {
+                for other_path in paths {
+                    result.push(CrossManifestDuplicate {
+                        hash: hash.clone(),
+                        size,
+                        source_path: source_path.clone(),
+                        other_path: other_path.clone(),
+                    });
+                }
             }
         }
+        result.sort_by_key(|item| std::cmp::Reverse(item.size));
+        Ok(result)
+    }
+    /// Verify both keeper and candidate against the current root and generation,
+    /// durably mark inventory stale, then delete candidates. A failure may
+    /// occur after partial deletion; stale state remains until a complete scan.
+    /// This does not protect against adversarial replacement after verification.
+    #[cfg(unix)]
+    pub fn delete_duplicates(&self, root: &Path, groups: &[DuplicateGroup]) -> Result<(u64, u64)> {
+        use std::os::unix::fs::MetadataExt;
+        self.require_fresh()?;
+        let declared = absolute(root)?;
+        self.check_declared(&declared)?;
+        let canonical = fs::canonicalize(&declared)?;
+        let (stored, dev, ino, generation): (Vec<u8>, Option<i64>, Option<i64>, i64) =
+            self.conn.query_row(
+                "SELECT canonical,root_dev,root_ino,generation FROM meta",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )?;
+        if stored != NativePath::from_path(&canonical).to_blob()
+            || root_observation(&canonical)? != (dev, ino)
+            || dev.is_none()
+            || ino.is_none()
+        {
+            return Err(Error::RootMismatch);
+        }
+        if groups.is_empty() {
+            return Ok((0, 0));
+        }
+        // Ensure every proposed identity belongs to this generation before
+        // invalidating it. Never trust caller-provided duplicate groups alone.
+        for group in groups {
+            if group.paths.len() < 2 || group.count != group.paths.len() {
+                return Err(Error::Stale);
+            }
+            for path in &group.paths {
+                path.relative()?;
+                let count: i64 = self.conn.query_row(
+                    "SELECT COUNT(*) FROM files WHERE path=?1 AND hash=?2 AND size=?3",
+                    params![
+                        path.to_blob(),
+                        group.hash,
+                        i64::try_from(group.size_each).map_err(|_| Error::Stale)?
+                    ],
+                    |r| r.get(0),
+                )?;
+                if count != 1 {
+                    return Err(Error::Stale);
+                }
+            }
+        }
+        let mut writer =
+            Connection::open_with_flags(&self.db_path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        schema(&writer)?;
+        writer.execute_batch("PRAGMA synchronous=FULL; BEGIN IMMEDIATE;")?;
+        let changed = writer.execute("UPDATE meta SET stale=1 WHERE stale=0 AND generation>0 AND declared=?1 AND canonical=?2 AND root_dev=?3 AND root_ino=?4 AND generation=?5", params![NativePath::from_path(&declared).to_blob(),stored,dev,ino,generation])?;
+        if changed != 1 {
+            writer.execute_batch("ROLLBACK;")?;
+            return Err(Error::Stale);
+        }
+        writer.execute_batch("COMMIT;")?;
+        // Retake the write lock and verify that no intervening scan published a
+        // new generation; hold it until all deletion dispatches have finished.
+        let tx = writer.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let (stale, current_generation): (i64, i64) =
+            tx.query_row("SELECT stale,generation FROM meta", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
+        if stale != 1 || current_generation != generation {
+            return Err(Error::Stale);
+        }
+        let mut count = 0;
+        let mut bytes = 0;
+        for group in groups {
+            let keeper = group.paths[0].relative()?;
+            for candidate in group.paths.iter().skip(1) {
+                if fs::canonicalize(&declared)? != canonical
+                    || root_observation(&canonical)? != (dev, ino)
+                {
+                    return Err(Error::RootMismatch);
+                }
+                let keeper_path = verified_file(&canonical, &keeper, &group.hash, group.size_each)?;
+                let candidate_path = verified_file(
+                    &canonical,
+                    &candidate.relative()?,
+                    &group.hash,
+                    group.size_each,
+                )?;
+                let keep_meta = fs::metadata(&keeper_path)?;
+                let candidate_meta = fs::metadata(&candidate_path)?;
+                if keeper_path == candidate_path
+                    || (keep_meta.dev() == candidate_meta.dev()
+                        && keep_meta.ino() == candidate_meta.ino())
+                {
+                    return Err(Error::Stale);
+                }
+                fs::remove_file(candidate_path)?;
+                count += 1;
+                bytes += group.size_each;
+            }
+        }
+        tx.commit()?;
+        Ok((count, bytes))
+    }
+    /// Native file identity verification is unavailable on this platform.
+    #[cfg(not(unix))]
+    pub fn delete_duplicates(
+        &self,
+        _root: &Path,
+        _groups: &[DuplicateGroup],
+    ) -> Result<(u64, u64)> {
+        Err(Error::Scan(
+            "duplicate deletion is unsupported on this platform".into(),
+        ))
+    }
 
-        Ok(removed)
+    fn rows(&self, minimum: u64) -> Result<Vec<(String, u64, NativePath)>> {
+        let minimum =
+            i64::try_from(minimum).map_err(|_| Error::Scan("minimum size out of range".into()))?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT hash,size,path FROM files WHERE size>=?1")?;
+        let rows = stmt.query_map([minimum], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, Vec<u8>>(2)?,
+            ))
+        })?;
+        let mut result = Vec::new();
+        for row in rows {
+            let (hash, size, blob) = row?;
+            let path = NativePath::from_blob(&blob)?;
+            path.relative()?;
+            result.push((
+                hash,
+                u64::try_from(size).map_err(|_| Error::Scan("invalid size".into()))?,
+                path,
+            ));
+        }
+        Ok(result)
     }
 }
 
-/// Hash a file using BLAKE3
-fn hash_file(path: &Path) -> std::io::Result<String> {
-    let file = File::open(path)?;
-    let mut reader = BufReader::with_capacity(1024 * 1024, file); // 1MB buffer
-    let mut hasher = Hasher::new();
+#[cfg(unix)]
+fn verified_file(root: &Path, relative: &Path, hash: &str, size: u64) -> Result<PathBuf> {
+    let path = root.join(relative);
+    let metadata = fs::symlink_metadata(&path)?;
+    if !metadata.file_type().is_file() || metadata.len() != size {
+        return Err(Error::Stale);
+    }
+    let canonical = fs::canonicalize(&path)?;
+    if !canonical.starts_with(root) || hash_file(&path)? != hash {
+        return Err(Error::Stale);
+    }
+    if !same_observation(&metadata, &fs::symlink_metadata(&path)?) {
+        return Err(Error::Stale);
+    }
+    Ok(path)
+}
 
-    let mut buffer = [0u8; 65536]; // 64KB chunks
+fn hash_file(path: &Path) -> std::io::Result<String> {
+    let mut reader = BufReader::new(File::open(path)?);
+    let mut hasher = Hasher::new();
+    let mut buffer = [0u8; 65536];
     loop {
-        let bytes_read = reader.read(&mut buffer)?;
-        if bytes_read == 0 {
+        let n = reader.read(&mut buffer)?;
+        if n == 0 {
             break;
         }
-        hasher.update(&buffer[..bytes_read]);
+        hasher.update(&buffer[..n]);
     }
-
     Ok(hasher.finalize().to_hex().to_string())
 }
 
-// ============================================================================
-// Utility functions
-// ============================================================================
-
-/// Convert a path to a manifest name
-///
-/// Uses the last path component, replacing invalid characters.
-pub fn path_to_name(path: &Path) -> String {
-    path.file_name()
-        .or_else(|| {
-            path.components()
-                .next_back()
-                .map(std::path::Component::as_os_str)
-        })
-        .map_or_else(
-            || "default".to_string(),
-            |s| s.to_string_lossy().to_string(),
-        )
-        .replace(['/', '\\', ':'], "_")
+#[cfg(unix)]
+fn root_observation(path: &Path) -> Result<(Option<i64>, Option<i64>)> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::metadata(path)?;
+    if !meta.is_dir() {
+        return Err(Error::Scan("root is not a directory".into()));
+    }
+    Ok((Some(meta.dev() as i64), Some(meta.ino() as i64)))
+}
+#[cfg(not(unix))]
+fn root_observation(path: &Path) -> Result<(Option<i64>, Option<i64>)> {
+    if !fs::metadata(path)?.is_dir() {
+        return Err(Error::Scan("root is not a directory".into()));
+    }
+    Ok((None, None))
+}
+fn same_observation(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if a.dev() != b.dev() || a.ino() != b.ino() {
+            return false;
+        }
+    }
+    b.is_file() && a.len() == b.len() && a.modified().ok() == b.modified().ok()
 }
 
-/// Format bytes as human-readable size
+/// Derive a stable database filename from declared native identity, even offline.
+pub fn manifest_name(root: &Path) -> Result<String> {
+    let root = absolute(root)?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(std::env::consts::OS.as_bytes());
+    hasher.update(&[0]);
+    hasher.update(&NativePath::from_path(&root).to_blob());
+    Ok(format!("v2-{}", hasher.finalize().to_hex()))
+}
+/// Presentation-only legacy path label.
+pub fn path_to_name(path: &Path) -> String {
+    path.file_name()
+        .unwrap_or(path.as_os_str())
+        .to_string_lossy()
+        .replace(['/', '\\', ':'], "_")
+}
+/// Format bytes as human-readable size.
 pub fn format_size(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-    const TB: u64 = GB * 1024;
-
-    if bytes >= TB {
-        format!("{:.2} TB", bytes as f64 / TB as f64)
-    } else if bytes >= GB {
-        format!("{:.1} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.1} KB", bytes as f64 / KB as f64)
+    const K: u64 = 1024;
+    const M: u64 = K * 1024;
+    const G: u64 = M * 1024;
+    const T: u64 = G * 1024;
+    if bytes >= T {
+        format!("{:.2} TB", bytes as f64 / T as f64)
+    } else if bytes >= G {
+        format!("{:.1} GB", bytes as f64 / G as f64)
+    } else if bytes >= M {
+        format!("{:.1} MB", bytes as f64 / M as f64)
+    } else if bytes >= K {
+        format!("{:.1} KB", bytes as f64 / K as f64)
     } else {
         format!("{bytes} B")
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    #[test]
-    fn test_open_creates_db() {
-        let tmp = TempDir::new().unwrap();
-        let db_path = tmp.path().join("test.db");
-
-        let manifest = Manifest::open(&db_path).unwrap();
-        assert_eq!(manifest.file_count().unwrap(), 0);
-        assert!(db_path.exists());
+    fn fixture() -> (TempDir, PathBuf, PathBuf) {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("root");
+        fs::create_dir(&root).unwrap();
+        let db = temp.path().join("manifest.db");
+        (temp, root, db)
     }
 
     #[test]
-    fn test_scan_empty_dir() {
-        let tmp = TempDir::new().unwrap();
-        let db_path = tmp.path().join("manifest.db");
-        let scan_dir = tmp.path().join("data");
-        std::fs::create_dir(&scan_dir).unwrap();
-
-        let manifest = Manifest::open(&db_path).unwrap();
-        let result = manifest.scan(&scan_dir, false, &mut NoProgress).unwrap();
-
-        assert_eq!(result.hashed, 0);
-        assert_eq!(result.errors, 0);
-    }
-
-    #[test]
-    fn test_scan_with_files() {
-        let tmp = TempDir::new().unwrap();
-        let db_path = tmp.path().join("manifest.db");
-        let scan_dir = tmp.path().join("data");
-        std::fs::create_dir(&scan_dir).unwrap();
-
-        // Create test files
-        std::fs::write(scan_dir.join("a.txt"), "hello").unwrap();
-        std::fs::write(scan_dir.join("b.txt"), "world").unwrap();
-        std::fs::write(scan_dir.join("c.txt"), "hello").unwrap(); // duplicate of a.txt
-
-        let manifest = Manifest::open(&db_path).unwrap();
-        let result = manifest.scan(&scan_dir, false, &mut NoProgress).unwrap();
-
-        assert_eq!(result.hashed, 3);
-        assert_eq!(result.errors, 0);
-        assert_eq!(result.duplicates.duplicate_groups, 1);
-        assert_eq!(result.duplicates.duplicate_files, 2);
-    }
-
-    #[test]
-    fn test_find_duplicates() {
-        let tmp = TempDir::new().unwrap();
-        let db_path = tmp.path().join("manifest.db");
-        let scan_dir = tmp.path().join("data");
-        std::fs::create_dir(&scan_dir).unwrap();
-
-        // Create duplicate files
-        std::fs::write(scan_dir.join("a.txt"), "duplicate content").unwrap();
-        std::fs::write(scan_dir.join("b.txt"), "duplicate content").unwrap();
-        std::fs::write(scan_dir.join("unique.txt"), "unique").unwrap();
-
-        let manifest = Manifest::open(&db_path).unwrap();
-        manifest.scan(&scan_dir, false, &mut NoProgress).unwrap();
-
-        let dups = manifest.find_duplicates(0).unwrap();
-        assert_eq!(dups.len(), 1);
-        assert_eq!(dups[0].count, 2);
-        assert_eq!(dups[0].paths.len(), 2);
-    }
-
-    #[test]
-    fn test_path_to_name() {
-        assert_eq!(path_to_name(Path::new("/Volumes/T9")), "T9");
-        assert_eq!(path_to_name(Path::new("/home/user/data")), "data");
-        // Root path "/" has component "/" which becomes "_" after sanitization
-        assert_eq!(path_to_name(Path::new("/")), "_");
-    }
-
-    #[test]
-    fn test_format_size() {
-        assert_eq!(format_size(0), "0 B");
-        assert_eq!(format_size(500), "500 B");
-        assert_eq!(format_size(1024), "1.0 KB");
-        assert_eq!(format_size(1536), "1.5 KB");
-        assert_eq!(format_size(1024 * 1024), "1.0 MB");
-        assert_eq!(format_size(1024 * 1024 * 1024), "1.0 GB");
-        assert_eq!(format_size(1024 * 1024 * 1024 * 1024), "1.00 TB");
-    }
-
-    #[test]
-    fn test_prune_missing() {
-        let tmp = TempDir::new().unwrap();
-        let db_path = tmp.path().join("manifest.db");
-        let scan_dir = tmp.path().join("data");
-        std::fs::create_dir(&scan_dir).unwrap();
-
-        // Create and scan a file
-        let file_path = scan_dir.join("temp.txt");
-        std::fs::write(&file_path, "temporary").unwrap();
-
-        let manifest = Manifest::open(&db_path).unwrap();
-        manifest.scan(&scan_dir, false, &mut NoProgress).unwrap();
-        assert_eq!(manifest.file_count().unwrap(), 1);
-
-        // Delete the file and re-scan
-        std::fs::remove_file(&file_path).unwrap();
-        let result = manifest.scan(&scan_dir, false, &mut NoProgress).unwrap();
-
+    fn scans_are_root_bound_complete_and_force_rehashes() {
+        let (_temp, root, db) = fixture();
+        fs::write(root.join("a"), "same").unwrap();
+        let store = Manifest::open_for_root(&db, &root).unwrap();
+        assert_eq!(store.scan(&root, false, &mut NoProgress).unwrap().hashed, 1);
+        assert_eq!(store.scan(&root, false, &mut NoProgress).unwrap().hashed, 0);
+        assert_eq!(store.scan(&root, true, &mut NoProgress).unwrap().hashed, 1);
+        let other = root.parent().unwrap().join("other");
+        fs::create_dir(&other).unwrap();
+        assert!(matches!(
+            store.scan(&other, true, &mut NoProgress),
+            Err(Error::RootMismatch)
+        ));
+        assert_eq!(store.stats().unwrap().file_count, 1);
+        fs::remove_file(root.join("a")).unwrap();
+        let result = store.scan(&root, false, &mut NoProgress).unwrap();
         assert_eq!(result.pruned, 1);
-        assert_eq!(manifest.file_count().unwrap(), 0);
+        assert_eq!(store.stats().unwrap().file_count, 0);
+    }
+
+    struct RemoveOnFile;
+    impl ProgressCallback for RemoveOnFile {
+        fn on_start(&mut self, _: u64, _: u64) {}
+        fn on_file(&mut self, _: &Path, _: u64) {}
+        fn on_file_complete(&mut self, _: bool) {}
+        fn on_complete(&mut self, _: &ScanResult) {}
     }
 
     #[test]
-    fn test_compare_with() {
-        let tmp = TempDir::new().unwrap();
-
-        // Create two separate scan directories
-        let dir_a = tmp.path().join("storage_a");
-        let dir_b = tmp.path().join("storage_b");
-        std::fs::create_dir(&dir_a).unwrap();
-        std::fs::create_dir(&dir_b).unwrap();
-
-        // Create files - "shared content" exists in both, others are unique
-        std::fs::write(dir_a.join("shared.txt"), "shared content").unwrap();
-        std::fs::write(dir_a.join("unique_a.txt"), "only in A").unwrap();
-
-        std::fs::write(dir_b.join("also_shared.txt"), "shared content").unwrap();
-        std::fs::write(dir_b.join("unique_b.txt"), "only in B").unwrap();
-
-        // Create and populate manifests
-        let db_a = tmp.path().join("manifest_a.db");
-        let db_b = tmp.path().join("manifest_b.db");
-
-        let manifest_a = Manifest::open(&db_a).unwrap();
-        manifest_a.scan(&dir_a, false, &mut NoProgress).unwrap();
-
-        let manifest_b = Manifest::open(&db_b).unwrap();
-        manifest_b.scan(&dir_b, false, &mut NoProgress).unwrap();
-
-        // Compare manifests
-        let cross_dups = manifest_a.compare_with(&db_b, 0).unwrap();
-
-        assert_eq!(cross_dups.len(), 1);
-        assert_eq!(cross_dups[0].source_path, "shared.txt");
-        assert_eq!(cross_dups[0].other_path, "also_shared.txt");
-        assert_eq!(cross_dups[0].size, 14); // "shared content".len()
+    fn failed_publication_keeps_previous_generation() {
+        let (_temp, root, db) = fixture();
+        fs::write(root.join("a"), "same").unwrap();
+        let store = Manifest::open_for_root(&db, &root).unwrap();
+        store.scan(&root, true, &mut NoProgress).unwrap();
+        // A deterministic database failure aborts publication after traversal.
+        store.conn.execute_batch("CREATE TRIGGER reject_publish BEFORE DELETE ON files BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap();
+        fs::write(root.join("b"), "new").unwrap();
+        assert!(store.scan(&root, true, &mut RemoveOnFile).is_err());
+        assert_eq!(store.stats().unwrap().file_count, 1);
     }
 
-    #[test]
-    fn test_compare_with_min_size() {
-        let tmp = TempDir::new().unwrap();
-
-        let dir_a = tmp.path().join("storage_a");
-        let dir_b = tmp.path().join("storage_b");
-        std::fs::create_dir(&dir_a).unwrap();
-        std::fs::create_dir(&dir_b).unwrap();
-
-        // Create small shared file (5 bytes) and large shared file (100 bytes)
-        std::fs::write(dir_a.join("small.txt"), "small").unwrap();
-        std::fs::write(dir_a.join("large.txt"), "x".repeat(100)).unwrap();
-
-        std::fs::write(dir_b.join("small.txt"), "small").unwrap();
-        std::fs::write(dir_b.join("large.txt"), "x".repeat(100)).unwrap();
-
-        let db_a = tmp.path().join("manifest_a.db");
-        let db_b = tmp.path().join("manifest_b.db");
-
-        let manifest_a = Manifest::open(&db_a).unwrap();
-        manifest_a.scan(&dir_a, false, &mut NoProgress).unwrap();
-
-        let manifest_b = Manifest::open(&db_b).unwrap();
-        manifest_b.scan(&dir_b, false, &mut NoProgress).unwrap();
-
-        // With min_size=50, only large file should match
-        let cross_dups = manifest_a.compare_with(&db_b, 50).unwrap();
-
-        assert_eq!(cross_dups.len(), 1);
-        assert_eq!(cross_dups[0].source_path, "large.txt");
-        assert_eq!(cross_dups[0].size, 100);
-    }
-
-    #[test]
-    fn test_compare_with_missing_database() {
-        let tmp = TempDir::new().unwrap();
-
-        // Create manifest A
-        let dir_a = tmp.path().join("storage_a");
-        std::fs::create_dir(&dir_a).unwrap();
-        std::fs::write(dir_a.join("file.txt"), "content").unwrap();
-
-        let db_a = tmp.path().join("manifest_a.db");
-        let manifest_a = Manifest::open(&db_a).unwrap();
-        manifest_a.scan(&dir_a, false, &mut NoProgress).unwrap();
-
-        // Try to compare with non-existent database
-        let missing_db = tmp.path().join("does_not_exist.db");
-        let result = manifest_a.compare_with(&missing_db, 0);
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            Error::PathNotFound(path) => {
-                assert_eq!(path, missing_db);
-            }
-            other => panic!("Expected PathNotFound error, got: {other:?}"),
+    struct Vanish(PathBuf);
+    impl ProgressCallback for Vanish {
+        fn on_start(&mut self, _: u64, _: u64) {}
+        fn on_file(&mut self, path: &Path, _: u64) {
+            fs::remove_file(self.0.join(path)).unwrap();
         }
+        fn on_file_complete(&mut self, _: bool) {}
+        fn on_complete(&mut self, _: &ScanResult) {}
+    }
+
+    struct Cancel;
+    impl ProgressCallback for Cancel {
+        fn is_cancelled(&self) -> bool {
+            true
+        }
+        fn on_start(&mut self, _: u64, _: u64) {}
+        fn on_file(&mut self, _: &Path, _: u64) {}
+        fn on_file_complete(&mut self, _: bool) {}
+        fn on_complete(&mut self, _: &ScanResult) {}
+    }
+    #[test]
+    fn cancellation_preserves_previous_generation() {
+        let (_temp, root, db) = fixture();
+        fs::write(root.join("a"), "old").unwrap();
+        let store = Manifest::open_for_root(&db, &root).unwrap();
+        store.scan(&root, true, &mut NoProgress).unwrap();
+        assert!(store.scan(&root, true, &mut Cancel).is_err());
+        assert_eq!(store.stats().unwrap().file_count, 1);
     }
 
     #[test]
-    fn test_compare_with_empty_manifests() {
-        let tmp = TempDir::new().unwrap();
+    fn failed_hash_preserves_previous_generation() {
+        let (_temp, root, db) = fixture();
+        fs::write(root.join("a"), "old").unwrap();
+        let store = Manifest::open_for_root(&db, &root).unwrap();
+        store.scan(&root, true, &mut NoProgress).unwrap();
+        assert!(store.scan(&root, true, &mut Vanish(root.clone())).is_err());
+        assert_eq!(store.stats().unwrap().file_count, 1);
+    }
 
-        // Create two empty manifests (no files scanned)
-        let db_a = tmp.path().join("empty_a.db");
-        let db_b = tmp.path().join("empty_b.db");
+    #[cfg(unix)]
+    #[test]
+    fn changed_root_symlink_does_not_rebind() {
+        let (temp, root, db) = fixture();
+        let link = temp.path().join("alias");
+        std::os::unix::fs::symlink(&root, &link).unwrap();
+        let store = Manifest::open_for_root(&db, &link).unwrap();
+        store.scan(&link, true, &mut NoProgress).unwrap();
+        let other = temp.path().join("other");
+        fs::create_dir(&other).unwrap();
+        fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&other, &link).unwrap();
+        assert!(matches!(
+            store.scan(&link, true, &mut NoProgress),
+            Err(Error::RootMismatch)
+        ));
+    }
 
-        let _manifest_a = Manifest::open(&db_a).unwrap();
-        let _manifest_b = Manifest::open(&db_b).unwrap();
-
-        // Re-open and compare - should return empty, not error
-        let manifest_a = Manifest::open(&db_a).unwrap();
-        let result = manifest_a.compare_with(&db_b, 0).unwrap();
-
-        assert_eq!(result.len(), 0);
+    #[cfg(unix)]
+    #[test]
+    fn verified_deletion_marks_stale_until_new_complete_scan() {
+        let (_temp, root, db) = fixture();
+        fs::write(root.join("a"), "same").unwrap();
+        fs::write(root.join("b"), "same").unwrap();
+        let store = Manifest::open_for_root(&db, &root).unwrap();
+        store.scan(&root, true, &mut NoProgress).unwrap();
+        let groups = store.find_duplicates(0).unwrap();
+        assert_eq!(store.delete_duplicates(&root, &groups).unwrap(), (1, 4));
+        assert!(matches!(store.stats(), Err(Error::Stale)));
+        store.scan(&root, true, &mut NoProgress).unwrap();
+        assert_eq!(store.stats().unwrap().file_count, 1);
     }
 
     #[test]
-    fn test_compare_with_one_empty_manifest() {
-        let tmp = TempDir::new().unwrap();
+    fn read_only_open_rejects_wal_without_sidecars() {
+        let (temp, _root, db) = fixture();
+        let conn = Connection::open(&db).unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode.to_lowercase(), "wal");
+        conn.execute_batch("CREATE TABLE files(path TEXT, hash TEXT, size INTEGER, mtime INTEGER, scanned_at INTEGER);").unwrap();
+        drop(conn);
+        let mut before: Vec<_> = fs::read_dir(temp.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        before.sort();
+        assert!(Manifest::open(&db).is_err());
+        let mut after: Vec<_> = fs::read_dir(temp.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        after.sort();
+        assert_eq!(before, after);
+    }
 
-        // Create manifest A with files
-        let dir_a = tmp.path().join("storage_a");
-        std::fs::create_dir(&dir_a).unwrap();
-        std::fs::write(dir_a.join("file.txt"), "content").unwrap();
+    #[test]
+    fn legacy_stats_are_read_only_and_unqualified() {
+        let (_temp, root, db) = fixture();
+        let conn = Connection::open(&db).unwrap();
+        conn.execute_batch("CREATE TABLE files(path TEXT, hash TEXT, size INTEGER, mtime INTEGER, scanned_at INTEGER); INSERT INTO files VALUES ('a','h',4,0,123);").unwrap();
+        drop(conn);
+        let before = fs::read(&db).unwrap();
+        let store = Manifest::open_existing(&db, &root).unwrap();
+        assert!(store.is_legacy());
+        assert_eq!(store.stats().unwrap().last_scanned_at, Some(123));
+        assert!(matches!(store.find_duplicates(0), Err(Error::Legacy)));
+        drop(store);
+        assert!(matches!(
+            Manifest::open_for_root(&db, &root),
+            Err(Error::Legacy)
+        ));
+        assert_eq!(before, fs::read(&db).unwrap());
+        let missing = db.parent().unwrap().join("missing/sub.db");
+        assert!(Manifest::open(&missing).is_err());
+        assert!(!missing.parent().unwrap().exists());
+    }
 
-        let db_a = tmp.path().join("manifest_a.db");
-        let manifest_a = Manifest::open(&db_a).unwrap();
-        manifest_a.scan(&dir_a, false, &mut NoProgress).unwrap();
+    #[cfg(unix)]
+    #[test]
+    fn native_paths_round_trip_and_cross_compare() {
+        use std::os::unix::ffi::OsStringExt;
+        let (_temp, root, db) = fixture();
+        let name = std::ffi::OsString::from_vec(b"a|\n\xff".to_vec());
+        fs::write(root.join(&name), "same").unwrap();
+        fs::write(root.join("other"), "same").unwrap();
+        let store = Manifest::open_for_root(&db, &root).unwrap();
+        store.scan(&root, true, &mut NoProgress).unwrap();
+        let group = store.find_duplicates(0).unwrap().remove(0);
+        assert!(
+            group
+                .paths
+                .iter()
+                .any(|p| p.to_path_buf().unwrap().as_os_str() == name.as_os_str())
+        );
+        let json = serde_json::to_string(&group).unwrap();
+        let decoded: DuplicateGroup = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.paths, group.paths);
+        let (_temp2, root2, db2) = fixture();
+        fs::write(root2.join("shared"), "same").unwrap();
+        let other = Manifest::open_for_root(&db2, &root2).unwrap();
+        other.scan(&root2, true, &mut NoProgress).unwrap();
+        assert_eq!(store.compare_with(&db2, 0).unwrap().len(), 2);
+    }
 
-        // Create empty manifest B
-        let db_b = tmp.path().join("empty_b.db");
-        let _manifest_b = Manifest::open(&db_b).unwrap();
+    #[cfg(unix)]
+    #[test]
+    fn deletion_rejects_foreign_groups_and_replaced_symlink() {
+        let (temp, root, db) = fixture();
+        fs::write(root.join("a"), "same").unwrap();
+        fs::write(root.join("b"), "same").unwrap();
+        let store = Manifest::open_for_root(&db, &root).unwrap();
+        store.scan(&root, true, &mut NoProgress).unwrap();
+        let groups = store.find_duplicates(0).unwrap();
+        let mut forged = groups.clone();
+        forged[0].hash = "different".into();
+        assert!(store.delete_duplicates(&root, &forged).is_err());
+        assert_eq!(store.stats().unwrap().file_count, 2);
+        let outside = temp.path().join("outside");
+        fs::write(&outside, "same").unwrap();
+        let candidate = root.join(groups[0].paths[1].to_path_buf().unwrap());
+        fs::remove_file(&candidate).unwrap();
+        std::os::unix::fs::symlink(&outside, &candidate).unwrap();
+        assert!(store.delete_duplicates(&root, &groups).is_err());
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "same");
+        assert!(matches!(store.stats(), Err(Error::Stale)));
+    }
 
-        // Compare - should return empty since B has no files
-        let result = manifest_a.compare_with(&db_b, 0).unwrap();
-        assert_eq!(result.len(), 0);
+    #[cfg(unix)]
+    #[test]
+    fn deletion_requires_durable_stale_marker_and_fresh_proof() {
+        let (_temp, root, db) = fixture();
+        fs::write(root.join("a"), "same").unwrap();
+        fs::write(root.join("b"), "same").unwrap();
+        let store = Manifest::open_for_root(&db, &root).unwrap();
+        store.scan(&root, true, &mut NoProgress).unwrap();
+        let groups = store.find_duplicates(0).unwrap();
+        store.conn.execute_batch("CREATE TRIGGER reject_stale BEFORE UPDATE OF stale ON meta WHEN NEW.stale=1 BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap();
+        assert!(store.delete_duplicates(&root, &groups).is_err());
+        assert!(root.join("a").exists() && root.join("b").exists());
+        store
+            .conn
+            .execute_batch("DROP TRIGGER reject_stale;")
+            .unwrap();
+        fs::write(root.join("b"), "diff").unwrap();
+        assert!(store.delete_duplicates(&root, &groups).is_err());
+        assert!(root.join("a").exists() && root.join("b").exists());
+        assert!(matches!(store.stats(), Err(Error::Stale)));
     }
 }

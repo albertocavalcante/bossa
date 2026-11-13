@@ -66,7 +66,9 @@ pub fn run(filter: &[String], list_only: bool, min_size: u64, display_limit: usi
 
     // Display results
     display_results(&results);
-
+    if !results.errors.is_empty() {
+        anyhow::bail!("one or more manifest comparisons failed");
+    }
     Ok(())
 }
 
@@ -222,7 +224,7 @@ fn compare_pair(
             "    {:>width$} {} {}",
             "",
             "└─".dimmed(),
-            dup.other_path.dimmed(),
+            dup.other_path.to_string().dimmed(),
             width = SIZE_COLUMN_WIDTH
         );
     }
@@ -276,7 +278,7 @@ fn display_results(results: &ComparisonResults) {
         );
         println!();
         println!(
-            "  {} Files backed up on T9 can be safely evicted from iCloud:",
+            "  {} Recorded matches are historical; verify current files before eviction:",
             "Tip:".bold()
         );
         println!(
