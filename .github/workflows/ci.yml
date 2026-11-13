@@ -113,6 +113,7 @@ jobs:
         uses: dtolnay/rust-toolchain@888c2e1ea69ab0d4330cbf0af1ecc7b68f368cc1 # stable (untagged commit; no version tag)
         with:
           toolchain: 1.99.1
+          components: clippy, rustfmt
 
       - name: Cache Cargo
         uses: actions/cache@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
@@ -137,6 +138,9 @@ jobs:
 
       - name: Run tests
         run: just test
+
+      - name: Check SDK feature matrix and consumer
+        run: just sdk-consumer-check
 
   # Doc check
   docs:

@@ -10,6 +10,7 @@ rust_library(
     srcs = glob(["src/**/*.rs"]),
     crate_name = "bossa_sdk",
     crate_root = "src/lib.rs",
+    crate_features = ["native"],
     edition = "2024",
     proc_macro_deps = all_crate_deps(proc_macro = True),
     deps = [

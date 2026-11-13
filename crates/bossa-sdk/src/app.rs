@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 pub struct AppEnvironment {
     home: Option<PathBuf>,
     variables: BTreeMap<OsString, OsString>,
-    #[cfg(windows)]
+    #[cfg(all(windows, feature = "native"))]
     platform_config: Option<PathBuf>,
-    #[cfg(windows)]
+    #[cfg(all(windows, feature = "native"))]
     platform_state: Option<PathBuf>,
 }
 
@@ -26,14 +26,15 @@ impl AppEnvironment {
         Self {
             home,
             variables: variables.into_iter().collect(),
-            #[cfg(windows)]
+            #[cfg(all(windows, feature = "native"))]
             platform_config: None,
-            #[cfg(windows)]
+            #[cfg(all(windows, feature = "native"))]
             platform_state: None,
         }
     }
 
     /// Capture native inputs once at the application's outer boundary.
+    #[cfg(feature = "native")]
     pub fn capture() -> Self {
         let value = Self::new(dirs::home_dir(), std::env::vars_os());
         #[cfg(windows)]
@@ -86,6 +87,7 @@ impl AppEnvironment {
     }
 
     /// Preserve the existing config-directory precedence, without creating it.
+    #[cfg(feature = "native")]
     pub fn config_dir(&self) -> Result<PathBuf> {
         if let Some(path) = self.override_path("BOSSA_CONFIG_DIR") {
             return Ok(path);
@@ -118,6 +120,7 @@ impl AppEnvironment {
         Ok(self.home_dir()?.join(".config/bossa"))
     }
 
+    #[cfg(feature = "native")]
     pub fn state_dir(&self) -> Result<PathBuf> {
         if let Some(path) = self.override_path("BOSSA_STATE_DIR") {
             return Ok(path);
@@ -159,6 +162,7 @@ pub(crate) fn lookup_variable<'a>(
 }
 
 /// Resolved roots for one application invocation. Resolution performs reads only.
+#[cfg(feature = "native")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppPaths {
     pub config: PathBuf,
@@ -166,6 +170,7 @@ pub struct AppPaths {
     pub workspaces: PathBuf,
 }
 
+#[cfg(feature = "native")]
 impl AppPaths {
     pub fn resolve(environment: &AppEnvironment) -> Result<Self> {
         Ok(Self {
@@ -176,7 +181,7 @@ impl AppPaths {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "native"))]
 mod tests {
     use super::*;
     use tempfile::TempDir;
