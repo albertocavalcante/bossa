@@ -198,7 +198,7 @@ pub fn run(ctx: &Context, cmd: ToolsCommand) -> Result<()> {
 /// Apply tools from config file.
 fn apply(ctx: &Context, filter_tools: &[String], dry_run: bool, force: bool) -> Result<()> {
     let config = BossaConfig::load()?;
-    let mut state = ToolsConfig::load()?;
+    let mut state = crate::config::load_tools_config(crate::paths::environment())?;
 
     // Validate all definitions
     config.tools.validate()?;
@@ -291,7 +291,7 @@ fn apply(ctx: &Context, filter_tools: &[String], dry_run: bool, force: bool) -> 
         match install_from_definition(ctx, name, def, &config.tools) {
             Ok(installed_tool) => {
                 state.insert(name.clone(), installed_tool);
-                state.save()?;
+                crate::config::save_tools_config(crate::paths::environment(), &state)?;
 
                 if !ctx.quiet {
                     ui::success(&format!("  ✓ {name} installed"));
@@ -618,7 +618,7 @@ fn install_from_url(
     }
 
     // Load existing config
-    let mut config = ToolsConfig::load()?;
+    let mut config = crate::config::load_tools_config(crate::paths::environment())?;
 
     // Check if already installed
     if let Some(existing) = config.get(name) {
@@ -682,7 +682,7 @@ fn install_from_url(
         container: None,
     };
     config.insert(name.to_string(), installed_tool);
-    config.save()?;
+    crate::config::save_tools_config(crate::paths::environment(), &config)?;
 
     if !ctx.quiet {
         ui::success(&format!("Tool '{name}' installed successfully!"));
@@ -716,7 +716,7 @@ fn install_from_container(
     check_runtime_available(runtime)?;
 
     // Load existing config
-    let mut config = ToolsConfig::load()?;
+    let mut config = crate::config::load_tools_config(crate::paths::environment())?;
 
     // Check if already installed
     if let Some(existing) = config.get(name) {
@@ -841,7 +841,7 @@ fn install_from_container(
         }),
     };
     config.insert(name.to_string(), installed_tool);
-    config.save()?;
+    crate::config::save_tools_config(crate::paths::environment(), &config)?;
 
     if !ctx.quiet {
         ui::success(&format!("Tool '{name}' installed successfully!"));
@@ -856,7 +856,7 @@ fn install_from_container(
 
 /// List installed tools.
 fn list(_ctx: &Context, show_all: bool) -> Result<()> {
-    let state = ToolsConfig::load()?;
+    let state = crate::config::load_tools_config(crate::paths::environment())?;
     let config = BossaConfig::load()?;
 
     // Collect defined tools from config
@@ -933,7 +933,7 @@ fn list(_ctx: &Context, show_all: bool) -> Result<()> {
 
 /// Show status of a specific tool.
 fn status(_ctx: &Context, name: &str) -> Result<()> {
-    let state = ToolsConfig::load()?;
+    let state = crate::config::load_tools_config(crate::paths::environment())?;
     let config = BossaConfig::load()?;
 
     let installed = state.get(name);
@@ -1063,7 +1063,7 @@ fn status(_ctx: &Context, name: &str) -> Result<()> {
 
 /// Uninstall a tool.
 fn uninstall(ctx: &Context, name: &str, dry_run: bool, yes: bool) -> Result<()> {
-    let mut config = ToolsConfig::load()?;
+    let mut config = crate::config::load_tools_config(crate::paths::environment())?;
 
     let tool = config
         .get(name)
@@ -1119,7 +1119,7 @@ fn uninstall(ctx: &Context, name: &str, dry_run: bool, yes: bool) -> Result<()> 
     }
 
     // Save config
-    config.save()?;
+    crate::config::save_tools_config(crate::paths::environment(), &config)?;
 
     if !ctx.quiet {
         ui::success(&format!("Tool '{name}' uninstalled successfully!"));
@@ -1171,7 +1171,7 @@ impl VersionInfo {
 
 /// Check for outdated tools
 fn outdated(ctx: &Context, filter_tools: &[String], as_json: bool) -> Result<()> {
-    let state = ToolsConfig::load()?;
+    let state = crate::config::load_tools_config(crate::paths::environment())?;
     let config = BossaConfig::load()?;
 
     // Collect tools to check

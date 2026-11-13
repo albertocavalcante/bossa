@@ -983,7 +983,7 @@ fn show_text_diff(a: &Path, b: &Path) {
 /// Load reconciliation config from main config, launching setup wizard if missing
 fn load_config() -> Result<DotfilesReconcileConfig> {
     let mut config = BossaConfig::load()?;
-    if let Some(reconcile) = config.dotfiles_reconcile {
+    if let Some(reconcile) = config.dotfiles_reconcile.clone() {
         return Ok(reconcile);
     }
     setup_reconcile_config(&mut config)

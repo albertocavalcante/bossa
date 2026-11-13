@@ -3,7 +3,6 @@ mod commands;
 mod config;
 mod engine;
 mod generators;
-mod legacy_config;
 mod paths;
 mod progress;
 mod resource;

@@ -45,7 +45,7 @@ fn apply_git(
 ) -> Result<()> {
     ui::header("Git Config");
 
-    let target = generators::git::target_path(git_config, &config.locations);
+    let target = generators::git::target_path(git_config, &config.locations)?;
     let content = generators::git::generate(git_config, &config.locations)?;
 
     println!("  Target: {}", target.display());
@@ -122,7 +122,7 @@ fn status(_ctx: &AppContext) -> Result<()> {
     ui::header("Config Status");
 
     if let Some(ref git_config) = config.configs.git {
-        let target = generators::git::target_path(git_config, &config.locations);
+        let target = generators::git::target_path(git_config, &config.locations)?;
         let exists = target.exists();
         let icon = if exists {
             "✓".green()

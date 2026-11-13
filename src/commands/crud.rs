@@ -346,7 +346,7 @@ fn list_collections(_ctx: &Context) -> Result<()> {
     println!();
 
     for (name, collection) in &config.collections {
-        let path = collection.expanded_path()?;
+        let path = collection.expanded_path(crate::paths::environment())?;
         let exists = path.exists();
         let status = if exists {
             "✓".green()
@@ -386,7 +386,7 @@ fn list_repos(_ctx: &Context, _collection: Option<&str>) -> Result<()> {
     let mut cloned_count = 0;
 
     for (coll_name, collection) in &config.collections {
-        let path = collection.expanded_path()?;
+        let path = collection.expanded_path(crate::paths::environment())?;
 
         if !collection.repos.is_empty() {
             ui::section(&format!("Collection: {coll_name}"));
@@ -472,7 +472,7 @@ fn list_storage(_ctx: &Context) -> Result<()> {
     println!();
 
     for (name, storage) in &config.storage {
-        let mount = storage.expanded_mount()?;
+        let mount = storage.expanded_mount(crate::paths::environment())?;
         let is_mounted = mount.exists();
         let status = if is_mounted {
             "✓".green()
@@ -536,7 +536,7 @@ fn show_collection(name: &str) -> Result<()> {
         .find_collection(name)
         .context(format!("Collection '{name}' not found"))?;
 
-    let path = collection.expanded_path()?;
+    let path = collection.expanded_path(crate::paths::environment())?;
 
     ui::kv("Name", name);
     ui::kv("Path", &path.display().to_string());
@@ -612,7 +612,9 @@ fn show_workspace(name: &str) -> Result<()> {
         .find_workspace_repo(name)
         .context(format!("Workspace '{name}' not found"))?;
 
-    let root = config.workspaces.expanded_root()?;
+    let root = config
+        .workspaces
+        .expanded_root(crate::paths::environment())?;
 
     ui::kv("Name", &workspace.name);
     ui::kv("URL", &workspace.url);
@@ -669,7 +671,7 @@ fn show_storage(name: &str) -> Result<()> {
         .find_storage(name)
         .context(format!("Storage '{name}' not found"))?;
 
-    let mount = storage.expanded_mount()?;
+    let mount = storage.expanded_mount(crate::paths::environment())?;
     let is_mounted = mount.exists();
     let status = if is_mounted {
         "✓ mounted".green()
@@ -694,8 +696,9 @@ fn show_storage(name: &str) -> Result<()> {
         ui::section("Symlinks");
 
         for symlink in &storage.symlinks {
-            let from = symlink.expanded_from()?;
-            let to = symlink.expanded_to(&mount.display().to_string())?;
+            let from = symlink.expanded_from(crate::paths::environment())?;
+            let to =
+                symlink.expanded_to(&mount.display().to_string(), crate::paths::environment())?;
 
             let from_exists = from.exists();
             let is_valid_symlink = from.is_symlink() && from.read_link().ok() == Some(to.clone());

@@ -186,7 +186,7 @@ fn list(_ctx: &Context) -> Result<()> {
     println!();
 
     for (name, collection) in &config.collections {
-        let path = collection.expanded_path()?;
+        let path = collection.expanded_path(crate::paths::environment())?;
         let exists = path.exists();
         let status = if exists {
             "✓".green()
@@ -220,7 +220,7 @@ fn status(_ctx: &Context, name: &str) -> Result<()> {
         .find_collection(name)
         .with_context(|| format!("Collection '{name}' not found"))?;
 
-    let root = collection.expanded_path()?;
+    let root = collection.expanded_path(crate::paths::environment())?;
 
     ui::kv("Path", &root.display().to_string());
     ui::kv("Description", &collection.description);
@@ -266,7 +266,7 @@ fn sync(
         .find_collection(collection_name)
         .with_context(|| format!("Collection '{collection_name}' not found"))?;
 
-    let root = collection.expanded_path()?;
+    let root = collection.expanded_path(crate::paths::environment())?;
 
     // Ensure root directory exists
     fs::create_dir_all(&root)?;
@@ -489,7 +489,7 @@ fn audit(_ctx: &Context, collection_name: &str, fix: bool) -> Result<()> {
         .with_context(|| format!("Collection '{collection_name}' not found"))?
         .clone();
 
-    let root = collection.expanded_path()?;
+    let root = collection.expanded_path(crate::paths::environment())?;
 
     if !root.exists() {
         ui::warn(&format!(
@@ -618,7 +618,7 @@ fn snapshot(_ctx: &Context, collection_name: &str) -> Result<()> {
         .with_context(|| format!("Collection '{collection_name}' not found"))?
         .clone();
 
-    let root = collection.expanded_path()?;
+    let root = collection.expanded_path(crate::paths::environment())?;
 
     if !root.exists() {
         ui::warn(&format!(
@@ -773,7 +773,7 @@ fn add(
         let collection = config
             .find_collection(collection_name)
             .with_context(|| format!("Collection '{collection_name}' not found"))?;
-        let root = collection.expanded_path()?;
+        let root = collection.expanded_path(crate::paths::environment())?;
         fs::create_dir_all(&root)?;
 
         let repo = collection
@@ -822,7 +822,7 @@ fn rm(_ctx: &Context, collection_name: &str, repo_name: &str, delete: bool) -> R
         return Ok(());
     }
 
-    let root = collection.expanded_path()?;
+    let root = collection.expanded_path(crate::paths::environment())?;
 
     config.save()?;
     ui::success(&format!(
@@ -854,7 +854,7 @@ fn clean(_ctx: &Context, collection_name: &str, skip_confirm: bool, dry_run: boo
         .find_collection(collection_name)
         .with_context(|| format!("Collection '{collection_name}' not found"))?;
 
-    let root = collection.expanded_path()?;
+    let root = collection.expanded_path(crate::paths::environment())?;
 
     if !root.exists() {
         ui::info("Collection directory does not exist. Nothing to clean.");

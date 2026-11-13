@@ -251,7 +251,7 @@ fn sync(ctx: &AppContext, dry_run: bool) -> Result<()> {
 fn status(_ctx: &AppContext) -> Result<()> {
     ui::header("Cellar Status");
 
-    let config = BossaConfig::load()?.cellar;
+    let config = BossaConfig::load()?.into_desired().cellar;
 
     if config.path.is_empty() {
         ui::warn("Cellar not configured. Add [cellar] section to config.toml.");
@@ -406,7 +406,7 @@ fn demote(_ctx: &AppContext, pkg: &str) -> Result<()> {
 
 /// Load cellar config, validate the path is set, and ensure the volume is mounted.
 fn load_validated_config() -> Result<CellarConfig> {
-    let config = BossaConfig::load()?.cellar;
+    let config = BossaConfig::load()?.into_desired().cellar;
 
     if config.path.is_empty() {
         bail!(

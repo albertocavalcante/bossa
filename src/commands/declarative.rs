@@ -105,7 +105,9 @@ fn selected(target: Option<&str>, required: bool) -> Result<Selected> {
             {
                 crate::paths::workspaces_dir()?
             } else {
-                config.workspaces.expanded_root()?
+                config
+                    .workspaces
+                    .expanded_root(crate::paths::environment())?
             },
             &cwd,
         );
@@ -146,7 +148,7 @@ fn selected(target: Option<&str>, required: bool) -> Result<Selected> {
         if !matches("storage", name) {
             continue;
         }
-        let mount = absolute(storage.expanded_mount()?, &cwd);
+        let mount = absolute(storage.expanded_mount(crate::paths::environment())?, &cwd);
         let mut links = Vec::new();
         for link in &storage.symlinks {
             let source = if link.to.contains("{mount}") {

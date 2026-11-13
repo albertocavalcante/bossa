@@ -101,25 +101,18 @@ pub fn main_store() -> Result<bossa::DocumentStore> {
 pub fn parse_bossa_document(
     document: &bossa::ConfigDocument,
 ) -> Result<(crate::schema::BossaConfig, bool)> {
-    let result = match document.format {
-        bossa::ConfigFormat::Toml => crate::legacy_config::decode_toml(document.parse()?),
-        bossa::ConfigFormat::Json => crate::legacy_config::decode(document.parse()?),
-    };
-    result.with_context(|| format!("Could not load {}", document.path.display()))
+    let decoded = bossa::decode_bossa_config(document.format, document.contents().as_bytes())
+        .with_context(|| format!("Could not load {}", document.path.display()))?;
+    Ok((
+        crate::schema::BossaConfig::from_desired(decoded.desired),
+        decoded.legacy,
+    ))
 }
 
 pub fn load_bossa_config(required: bool) -> Result<crate::schema::BossaConfig> {
-    let store = main_store()?;
-    let snapshot = store.read()?;
-    let mut config = match &snapshot.document {
-        Some(document) => parse_bossa_document(document)?.0,
-        None if required => anyhow::bail!(
-            "No Bossa configuration found; select or create config.toml/config.json before applying"
-        ),
-        None => crate::schema::BossaConfig::default(),
-    };
-    config.store_revision = Some((store, snapshot.revision));
-    Ok(config)
+    Ok(crate::schema::BossaConfig::from_loaded(
+        bossa::LoadedBossaConfig::load(main_store()?, required)?,
+    ))
 }
 
 /// Get the bossa config directory path
@@ -327,6 +320,32 @@ pub fn detect_default_branch(url: &str) -> String {
 // ============================================================================
 // Tests
 // ============================================================================
+
+/// Load the CLI's separate tool installation state using the selected environment.
+pub fn load_tools_config(
+    environment: &bossa::AppEnvironment,
+) -> Result<crate::schema::ToolsConfig> {
+    let config_path = environment.config_dir()?.join("tools.toml");
+    if !config_path.exists() {
+        return Ok(crate::schema::ToolsConfig::default());
+    }
+    let content = std::fs::read_to_string(&config_path)
+        .with_context(|| format!("Could not read tools config: {}", config_path.display()))?;
+    toml::from_str(&content).context("Invalid TOML format in tools config")
+}
+
+/// Save tool state with the existing CLI file semantics.
+pub fn save_tools_config(
+    environment: &bossa::AppEnvironment,
+    state: &crate::schema::ToolsConfig,
+) -> Result<PathBuf> {
+    let config_dir = environment.config_dir()?;
+    std::fs::create_dir_all(&config_dir)?;
+    let config_path = config_dir.join("tools.toml");
+    let content = toml::to_string_pretty(state).context("Failed to serialize tools config")?;
+    std::fs::write(&config_path, content)?;
+    Ok(config_path)
+}
 
 #[cfg(test)]
 mod tests {

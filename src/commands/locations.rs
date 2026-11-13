@@ -31,7 +31,7 @@ fn list() -> Result<()> {
     }
 
     for (name, path) in &config.locations.paths {
-        let resolved = crate::paths::resolve(path, &config.locations);
+        let resolved = crate::paths::resolve(path, &config.locations)?;
         let exists = resolved.exists();
         let icon = if exists { "✓".green() } else { "✗".red() };
 
@@ -66,7 +66,7 @@ fn add(name: &str, path: &str) -> Result<()> {
         .insert(name.to_string(), path.to_string());
     config.save()?;
 
-    let resolved = crate::paths::resolve(path, &config.locations);
+    let resolved = crate::paths::resolve(path, &config.locations)?;
     println!(
         "{} Added location: {} = {}",
         "✓".green(),
@@ -103,7 +103,7 @@ fn show(name: &str) -> Result<()> {
         .get(name)
         .with_context(|| format!("Location '{name}' not found"))?;
 
-    let resolved = crate::paths::resolve(path, &config.locations);
+    let resolved = crate::paths::resolve(path, &config.locations)?;
     println!("{}", resolved.display());
 
     Ok(())
