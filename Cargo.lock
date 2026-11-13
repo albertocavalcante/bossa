@@ -161,6 +161,7 @@ version = "0.1.2"
 dependencies = [
  "anyhow",
  "blake3",
+ "bossa-sdk",
  "brewkit",
  "chrono",
  "clap",
@@ -200,6 +201,23 @@ dependencies = [
  "url",
  "walkdir",
  "zip",
+]
+
+[[package]]
+name = "bossa-sdk"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "declarative",
+ "dirs",
+ "rustix",
+ "serde",
+ "serde_json",
+ "shellexpand",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
 ]
 
 [[package]]

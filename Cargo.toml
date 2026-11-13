@@ -73,6 +73,7 @@ tempfile = "3"
 zip = "2"
 
 # Workspace crates
+bossa-sdk = { path = "crates/bossa-sdk" }
 brewkit = { path = "crates/brewkit" }
 declarative = { path = "crates/declarative" }
 icloud = { path = "crates/icloud" }

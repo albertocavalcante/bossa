@@ -5,19 +5,7 @@ load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 package(default_visibility = ["//visibility:public"])
 
 APP_SRCS = [
-    "src/app.rs",
-    "src/application.rs",
-    "src/configuration.rs",
-    "src/filesystem.rs",
-    "src/json.rs",
     "src/lib.rs",
-    "src/process.rs",
-    "src/process/unix.rs",
-    "src/setup.rs",
-    "src/setup/git.rs",
-    "src/store.rs",
-    "src/store/metadata.rs",
-    "src/store/metadata/mac_acl.rs",
 ]
 
 rust_library(
@@ -26,33 +14,12 @@ rust_library(
     crate_name = "bossa",
     crate_root = "src/lib.rs",
     edition = "2024",
-    proc_macro_deps = all_crate_deps(proc_macro = True),
-    deps = [
-        "//crates/declarative",
-        "@crates//:anyhow",
-        "@crates//:blake3",
-        "@crates//:dirs",
-        "@crates//:serde",
-        "@crates//:serde_json",
-        "@crates//:shellexpand",
-        "@crates//:tempfile",
-        "@crates//:thiserror",
-        "@crates//:toml",
-    ] + select({
-        "@platforms//os:linux": ["@crates//:rustix"],
-        "@platforms//os:osx": ["@crates//:rustix"],
-        "//conditions:default": [],
-    }),
+    deps = ["//crates/bossa-sdk"],
 )
 
 rust_test(
     name = "bossa_app_test",
-    compile_data = [
-        "tests/fixtures/process-output.sh",
-        "tests/fixtures/process-tree.sh",
-    ],
     crate = ":bossa_app",
-    deps = ["@crates//:tempfile"],
 )
 
 # Main binary
