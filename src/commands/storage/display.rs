@@ -1,14 +1,11 @@
 //! Display functions for storage status
 
-use anyhow::Result;
 use colored::Colorize;
-use std::path::Path;
 
 use crate::ui;
 
-use super::collectors::ICLOUD_MIN_EVICTABLE_SIZE;
-use super::disk::{format_disk_usage, get_disk_space};
-use super::types::{ICloudStats, ManifestEntry, ManifestInfo};
+use super::disk::format_disk_usage;
+use super::types::{Coverage, DiskSpace, ICloudStats, ManifestEntry, ManifestInfo};
 
 // ============================================================================
 // Constants
@@ -17,104 +14,95 @@ use super::types::{ICloudStats, ManifestEntry, ManifestInfo};
 /// T9 external drive mount point
 pub const T9_MOUNT: &str = "/Volumes/T9";
 
-/// Minimum size to show in optimization hints (100 MB)
-const HINT_MIN_SIZE: u64 = 100 * 1024 * 1024;
-
 // ============================================================================
 // Local SSD Display
 // ============================================================================
 
 /// Display local SSD space usage
-pub fn show_local_ssd() -> Result<()> {
+pub fn show_local_ssd(stats: &Option<DiskSpace>) {
     ui::section("Local SSD");
-
-    let stats = get_disk_space("/")?;
-
-    ui::kv(
-        "Used",
-        &format_disk_usage(stats.used(), stats.total, ui::format_size),
-    );
-    ui::kv("Available", &ui::format_size(stats.available));
-
-    Ok(())
+    if let Some(stats) = stats {
+        ui::kv(
+            "Used",
+            &format_disk_usage(stats.used(), stats.total, ui::format_size),
+        );
+        ui::kv("Available", &ui::format_size(stats.available));
+    } else {
+        ui::dim("Unavailable");
+    }
 }
 
-// ============================================================================
-// iCloud Display
-// ============================================================================
-
-/// Display iCloud Drive statistics
-pub fn show_icloud(stats: &Option<ICloudStats>) {
-    ui::section("iCloud Drive");
-
-    let stats = match stats {
-        Some(s) => s,
-        None => {
-            ui::dim("Not available");
-            return;
-        }
-    };
-
+pub fn show_icloud(stats: &ICloudStats) {
+    ui::section("iCloud Drive metadata");
+    if let Some(root) = &stats.root {
+        ui::kv("Root", &root.display().to_string());
+    }
     ui::kv(
-        "Local",
+        "Scope",
         &format!(
-            "{} ({} files downloaded)",
-            ui::format_size(stats.local_bytes),
-            stats.local_count
+            "depth <= {}; max {} entries; hidden excluded",
+            stats.max_depth, stats.max_entries
         ),
     );
+    if stats.filesystem_coverage == Coverage::Unavailable {
+        ui::dim("Filesystem observation unavailable; totals unknown");
+        return;
+    }
     ui::kv(
-        "Cloud-only",
-        &format!(
-            "{} ({} files evicted)",
-            ui::format_size(stats.cloud_bytes),
-            stats.cloud_count
-        ),
+        "Filesystem coverage",
+        if stats.filesystem_coverage == Coverage::Complete {
+            "complete for stated scope"
+        } else {
+            "partial; totals unknown"
+        },
     );
-
-    if stats.evictable_bytes > 0 {
+    if let Some(bytes) = stats.known_logical_bytes {
         ui::kv(
-            "Evictable",
+            "Known logical bytes",
             &format!(
-                "{} ({} files >= {})",
-                ui::format_size(stats.evictable_bytes),
-                stats.evictable_count,
-                ui::format_size(ICLOUD_MIN_EVICTABLE_SIZE)
+                "at least {} ({} observed files)",
+                ui::format_size(bytes),
+                stats.observed_files
             ),
         );
+    } else {
+        ui::dim("Known-size subtotal unavailable");
     }
+    ui::kv(
+        "iCloud residency",
+        &format!(
+            "unknown ({} observed files); no state check",
+            stats.unknown_states
+        ),
+    );
+    ui::kv(
+        "Omissions",
+        &format!(
+            "walk errors {}, metadata errors {}, unknown sizes {}, hidden {}, depth-limited directories {}, other {}",
+            stats.walk_errors,
+            stats.metadata_errors,
+            stats.unknown_sizes,
+            stats.skipped_hidden,
+            stats.depth_limited_directories,
+            stats.skipped_other
+        ),
+    );
+    if stats.entry_limit_reached {
+        ui::dim("Entry limit reached; remaining coverage is unknown.");
+    }
+    ui::dim("Logical sizes are not allocated or reclaimable bytes.");
 }
 
-// ============================================================================
-// T9 External Drive Display
-// ============================================================================
-
-/// Display T9 external drive status
-pub fn show_t9() -> Result<()> {
+pub fn show_t9(stats: &Option<DiskSpace>) {
     ui::section("T9 External");
-
-    let t9_path = Path::new(T9_MOUNT);
-
-    if !t9_path.exists() {
-        ui::kv("Status", &"Not mounted".dimmed().to_string());
-        return Ok(());
+    if let Some(stats) = stats {
+        ui::kv(
+            "Used",
+            &format_disk_usage(stats.used(), stats.total, ui::format_size),
+        );
+    } else {
+        ui::dim("Unavailable or not mounted");
     }
-
-    ui::kv("Status", &"Mounted".green().to_string());
-
-    match get_disk_space(T9_MOUNT) {
-        Ok(stats) => {
-            ui::kv(
-                "Used",
-                &format_disk_usage(stats.used(), stats.total, ui::format_size),
-            );
-        }
-        Err(e) => {
-            ui::dim(&format!("Could not read space: {e}"));
-        }
-    }
-
-    Ok(())
 }
 
 // ============================================================================
@@ -132,7 +120,7 @@ pub fn show_manifests(manifests: &[ManifestInfo]) {
     for info in manifests {
         let dup_str = if info.duplicate_groups > 0 {
             format!(
-                " | {} dups ({})",
+                " | {} duplicate groups ({} logical bytes; not reclaimable space)",
                 info.duplicate_groups,
                 ui::format_size(info.wasted_space)
             )
@@ -190,43 +178,6 @@ pub fn show_manifest_list(manifests: &[ManifestEntry]) {
                 entry.name.cyan(),
                 "(error opening manifest)".red()
             );
-        }
-    }
-}
-
-// ============================================================================
-// Optimization Hints Display
-// ============================================================================
-
-/// Display optimization hints based on collected stats
-pub fn show_hints(icloud_stats: &Option<ICloudStats>, manifests: &[ManifestInfo]) {
-    let mut hints: Vec<String> = Vec::new();
-
-    // iCloud evictable hint
-    if let Some(stats) = icloud_stats
-        && stats.evictable_bytes >= HINT_MIN_SIZE
-    {
-        hints.push(format!(
-            "Evict {} from iCloud: {}",
-            ui::format_size(stats.evictable_bytes),
-            "bossa icloud find-evictable".cyan()
-        ));
-    }
-
-    // Manifest duplicates hint
-    let total_wasted: u64 = manifests.iter().map(|m| m.wasted_space).sum();
-    if total_wasted >= HINT_MIN_SIZE {
-        hints.push(format!(
-            "Clean {} in duplicates: {}",
-            ui::format_size(total_wasted),
-            "bossa manifest duplicates <path>".cyan()
-        ));
-    }
-
-    if !hints.is_empty() {
-        ui::section("Hints");
-        for hint in hints {
-            println!("  {} {}", "->".dimmed(), hint);
         }
     }
 }

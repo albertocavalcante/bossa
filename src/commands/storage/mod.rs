@@ -24,7 +24,7 @@ use anyhow::Result;
 use crate::ui;
 
 use collectors::{collect_icloud_stats, collect_manifest_stats};
-use display::{show_hints, show_icloud, show_local_ssd, show_manifests, show_t9};
+use display::{show_icloud, show_local_ssd, show_manifests, show_t9};
 
 // ============================================================================
 // Public API
@@ -34,31 +34,52 @@ use display::{show_hints, show_icloud, show_local_ssd, show_manifests, show_t9};
 ///
 /// Shows:
 /// - Local SSD space usage
-/// - iCloud Drive statistics (local/cloud/evictable)
+/// - Bounded iCloud Drive filesystem metadata with explicit coverage
 /// - T9 external drive status
 /// - Scanned manifest statistics
-/// - Optimization hints
-pub fn status() -> Result<()> {
+pub fn status(json: bool) -> Result<()> {
+    let report = types::StorageReport {
+        schema: "bossa.storage-status/v1",
+        local: disk::get_disk_space("/").ok(),
+        external: external_disk(display::T9_MOUNT),
+        icloud: collect_icloud_stats(),
+        manifests: collect_manifest_stats().ok(),
+    };
+    if json {
+        println!("{}", serde_json::to_string(&report)?);
+        return Ok(());
+    }
     ui::header("Storage Overview");
-
-    // Local SSD
-    show_local_ssd()?;
-
-    // iCloud Drive - collect all stats in one pass
-    let icloud_stats = collect_icloud_stats();
-    show_icloud(&icloud_stats);
-
-    // T9 External
-    show_t9()?;
-
-    // Scanned manifests
-    let manifests = collect_manifest_stats()?;
-    show_manifests(&manifests);
-
-    // Optimization hints
-    show_hints(&icloud_stats, &manifests);
-
+    show_local_ssd(&report.local);
+    show_icloud(&report.icloud);
+    show_t9(&report.external);
+    if let Some(manifests) = &report.manifests {
+        show_manifests(manifests);
+    } else {
+        ui::dim("Manifest statistics unavailable");
+    }
     Ok(())
+}
+
+// A stale ordinary directory under /Volumes must not be reported as a mounted disk.
+#[cfg(unix)]
+fn external_disk(path: &str) -> Option<types::DiskSpace> {
+    use std::os::unix::fs::MetadataExt;
+    let mount = std::path::Path::new(path);
+    let parent = mount.parent()?;
+    let metadata = std::fs::symlink_metadata(mount).ok()?;
+    if !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.dev() == std::fs::metadata(parent).ok()?.dev()
+    {
+        return None;
+    }
+    disk::get_disk_space(path).ok()
+}
+
+#[cfg(not(unix))]
+fn external_disk(_path: &str) -> Option<types::DiskSpace> {
+    None
 }
 
 /// Find duplicates across scanned manifests
@@ -75,4 +96,28 @@ pub fn duplicates(
     display_limit: usize,
 ) -> Result<()> {
     duplicates::run(filter, list_only, min_size, display_limit)
+}
+
+#[cfg(test)]
+mod status_tests {
+    use crate::cli::{Cli, Command, StorageCommand};
+    use clap::Parser;
+
+    #[cfg(unix)]
+    #[test]
+    fn ordinary_directory_is_not_a_mounted_external_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("not-a-mount");
+        std::fs::create_dir(&path).unwrap();
+        assert!(super::external_disk(path.to_str().unwrap()).is_none());
+    }
+
+    #[test]
+    fn status_json_is_a_distinct_cli_option() {
+        let parsed = Cli::try_parse_from(["bossa", "storage", "status", "--json"]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            Command::Storage(StorageCommand::Status { json: true })
+        ));
+    }
 }

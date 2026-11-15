@@ -596,7 +596,11 @@ pub enum ManifestCommand {
 #[derive(Debug, Subcommand)]
 pub enum StorageCommand {
     /// Show unified storage overview
-    Status,
+    Status {
+        /// Emit a machine-readable coverage report
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Find duplicates across storage locations (requires scanned manifests)
     ///
