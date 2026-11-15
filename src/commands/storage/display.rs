@@ -44,49 +44,44 @@ pub fn show_icloud(stats: &ICloudStats) {
             stats.max_depth, stats.max_entries
         ),
     );
-    if stats.coverage == Coverage::Unavailable {
-        ui::dim("Unavailable; totals unknown");
+    if stats.filesystem_coverage == Coverage::Unavailable {
+        ui::dim("Filesystem observation unavailable; totals unknown");
         return;
     }
     ui::kv(
-        "Coverage",
-        if stats.coverage == Coverage::Complete {
+        "Filesystem coverage",
+        if stats.filesystem_coverage == Coverage::Complete {
             "complete for stated scope"
         } else {
             "partial; totals unknown"
         },
     );
-    let (Some(local), Some(cloud)) = (
-        stats.known_local_logical_bytes,
-        stats.known_cloud_logical_bytes,
-    ) else {
-        ui::dim("Known-size subtotals unavailable");
-        return;
-    };
+    if let Some(bytes) = stats.known_logical_bytes {
+        ui::kv(
+            "Known logical bytes",
+            &format!(
+                "at least {} ({} observed files)",
+                ui::format_size(bytes),
+                stats.observed_files
+            ),
+        );
+    } else {
+        ui::dim("Known-size subtotal unavailable");
+    }
     ui::kv(
-        "Known local logical bytes",
+        "iCloud residency",
         &format!(
-            "at least {} ({} observed files)",
-            ui::format_size(local),
-            stats.observed_local_files
-        ),
-    );
-    ui::kv(
-        "Known cloud logical bytes",
-        &format!(
-            "at least {} ({} observed files)",
-            ui::format_size(cloud),
-            stats.observed_cloud_files
+            "unknown ({} observed files); no state check",
+            stats.unknown_states
         ),
     );
     ui::kv(
         "Omissions",
         &format!(
-            "walk errors {}, status errors {}, unknown sizes {}, unknown states {}, hidden {}, depth-limited directories {}, other {}",
+            "walk errors {}, metadata errors {}, unknown sizes {}, hidden {}, depth-limited directories {}, other {}",
             stats.walk_errors,
-            stats.status_errors,
+            stats.metadata_errors,
             stats.unknown_sizes,
-            stats.unknown_states,
             stats.skipped_hidden,
             stats.depth_limited_directories,
             stats.skipped_other

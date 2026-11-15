@@ -18,15 +18,13 @@ bossa storage status
 ```
 
 The overview includes local filesystem capacity, iCloud metadata and available manifest summaries.
-The iCloud scan is metadata-only, excludes hidden entries, stops at depth 3 and processes at most 1,000 entries (including the root). It reports
-`complete`, `partial`, or `unavailable`, plus skipped entries, errors, unknown sizes and
-states. Logical-byte subtotals include only observed known-size files; they are lower bounds,
+The iCloud scan is metadata-only, excludes hidden entries, stops at depth 3 and processes at most 1,000 entries (including the root). It reports filesystem coverage as `complete`, `partial`, or `unavailable`, plus skipped entries, errors and unknown sizes. iCloud residency is always unknown: allocation and extended-attribute heuristics cannot prove local or cloud state. Logical-byte subtotals include only observed known-size files; they are lower bounds,
 not allocated bytes, reclaimable space, or evidence that eviction is safe. Counts are observed counts, not complete totals when coverage is partial. Concurrent filesystem changes mean a scan is not an atomic snapshot. An unavailable
 root is unknown, not an empty directory. This does not inspect Photos or request cloud-file downloads. Native no-hydration behavior remains to be qualified on each supported macOS release. The entry limit is not a wall-clock deadline: the existing iCloud status backend may block on a system call or subprocess. Callers must not assume a bounded completion time.
 
 Use `bossa storage status --json` for schema `bossa.storage-status/v1`. Its `icloud`
 object includes the resolved root when available, scope, coverage and observation counts.
-Known-size logical-byte fields are null when the root cannot be observed. `local`, `external`
+The known logical-byte subtotal is null when the root cannot be observed. iCloud state coverage is unavailable even for a complete filesystem walk. `local`, `external`
 and `manifests` may be null when their observation is unavailable. Never infer a complete
 inventory or verified backup from this report.
 
