@@ -34,7 +34,7 @@ use display::{show_icloud, show_local_ssd, show_manifests, show_t9};
 ///
 /// Shows:
 /// - Local SSD space usage
-/// - iCloud Drive statistics (local/cloud/evictable)
+/// - Bounded iCloud Drive filesystem metadata with explicit coverage
 /// - T9 external drive status
 /// - Scanned manifest statistics
 pub fn status(json: bool) -> Result<()> {
