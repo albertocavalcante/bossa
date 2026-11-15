@@ -7,72 +7,131 @@ use walkdir::WalkDir;
 
 use crate::config;
 
-use super::types::{ICloudStats, ManifestEntry, ManifestInfo};
+use super::types::{Coverage, ICloudStats, ManifestEntry, ManifestInfo};
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-/// Minimum file size to consider for eviction (10 MB)
-pub const ICLOUD_MIN_EVICTABLE_SIZE: u64 = 10 * 1024 * 1024;
-
-/// Maximum depth for iCloud directory walk (performance limit)
+/// Maximum depth for iCloud metadata walk; depth-limited directories are partial.
 const ICLOUD_MAX_DEPTH: usize = 3;
+/// Count root, files, directories and traversal errors against the same budget.
+const ICLOUD_MAX_ENTRIES: u64 = 1000;
 
-// ============================================================================
-// iCloud Collection
-// ============================================================================
+/// Collect only metadata. A missing root or failed traversal is never a known zero.
+pub fn collect_icloud_stats() -> ICloudStats {
+    let Ok(client) = icloud::Client::new() else {
+        return ICloudStats::unavailable(None, ICLOUD_MAX_DEPTH, ICLOUD_MAX_ENTRIES);
+    };
+    let Ok(root) = client.icloud_root() else {
+        return ICloudStats::unavailable(None, ICLOUD_MAX_DEPTH, ICLOUD_MAX_ENTRIES);
+    };
+    scan_icloud(&root, |path| {
+        client
+            .status(path)
+            .map(|s| (s.state, s.size))
+            .map_err(|_| ())
+    })
+}
 
-/// Collect all iCloud stats in a single directory walk
-///
-/// Returns `None` if iCloud is not available or cannot be accessed.
-/// Errors during file iteration are silently skipped.
-pub fn collect_icloud_stats() -> Option<ICloudStats> {
-    let client = icloud::Client::new().ok()?;
-    let root = client.icloud_root().ok()?;
-
-    let mut stats = ICloudStats::default();
-
-    for entry in WalkDir::new(&root)
-        .max_depth(ICLOUD_MAX_DEPTH)
-        .into_iter()
-        .filter_map(std::result::Result::ok)
-    {
+fn scan_icloud(
+    root: &Path,
+    mut status: impl FnMut(&Path) -> std::result::Result<(icloud::DownloadState, Option<u64>), ()>,
+) -> ICloudStats {
+    let mut stats = ICloudStats::unavailable(
+        Some(root.to_path_buf()),
+        ICLOUD_MAX_DEPTH,
+        ICLOUD_MAX_ENTRIES,
+    );
+    if !fs::symlink_metadata(root).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink()) {
+        return stats;
+    }
+    if fs::read_dir(root).is_err() {
+        return stats;
+    }
+    stats.coverage = Coverage::Complete;
+    stats.known_local_logical_bytes = Some(0);
+    stats.known_cloud_logical_bytes = Some(0);
+    let mut entries = WalkDir::new(root).max_depth(ICLOUD_MAX_DEPTH).into_iter();
+    while let Some(entry) = entries.next() {
+        if stats.entries_seen == stats.max_entries {
+            stats.entry_limit_reached = true;
+            stats.coverage = Coverage::Partial;
+            break;
+        }
+        stats.entries_seen += 1;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                stats.walk_errors += 1;
+                stats.coverage = Coverage::Partial;
+                continue;
+            }
+        };
+        if entry.depth() > 0 && entry.file_name().to_string_lossy().starts_with('.') {
+            stats.skipped_hidden += 1;
+            stats.coverage = Coverage::Partial;
+            if entry.file_type().is_dir() {
+                entries.skip_current_dir();
+            }
+            continue;
+        }
+        if entry.file_type().is_dir() {
+            if entry.depth() == ICLOUD_MAX_DEPTH {
+                stats.depth_limited_directories += 1;
+                stats.coverage = Coverage::Partial;
+            }
+            continue;
+        }
         if !entry.file_type().is_file() {
+            stats.skipped_other += 1;
+            stats.coverage = Coverage::Partial;
             continue;
         }
-
-        // Skip hidden files
-        if is_hidden_file(&entry) {
+        let (state, size) = match status(entry.path()) {
+            Ok(status) => status,
+            Err(()) => {
+                stats.status_errors += 1;
+                stats.coverage = Coverage::Partial;
+                continue;
+            }
+        };
+        let total = if state.is_local() {
+            stats.observed_local_files += 1;
+            stats
+                .known_local_logical_bytes
+                .as_mut()
+                .expect("initialized after root validation")
+        } else if state.is_cloud_only() {
+            stats.observed_cloud_files += 1;
+            stats
+                .known_cloud_logical_bytes
+                .as_mut()
+                .expect("initialized after root validation")
+        } else {
+            stats.unknown_states += 1;
+            stats.coverage = Coverage::Partial;
+            if size.is_none() {
+                stats.unknown_sizes += 1;
+            }
             continue;
-        }
-
-        if let Ok(status) = client.status(entry.path()) {
-            let size = status.size.unwrap_or(0);
-            if status.state.is_local() {
-                stats.local_bytes += size;
-                stats.local_count += 1;
-                // Track evictable (local files above threshold)
-                if size >= ICLOUD_MIN_EVICTABLE_SIZE {
-                    stats.evictable_bytes += size;
-                    stats.evictable_count += 1;
+        };
+        match size {
+            Some(size) => match total.checked_add(size) {
+                Some(sum) => *total = sum,
+                None => {
+                    *total = u64::MAX;
+                    stats.arithmetic_overflow = true;
+                    stats.coverage = Coverage::Partial;
                 }
-            } else if status.state.is_cloud_only() {
-                stats.cloud_bytes += size;
-                stats.cloud_count += 1;
+            },
+            None => {
+                stats.unknown_sizes += 1;
+                stats.coverage = Coverage::Partial;
             }
         }
     }
-
-    Some(stats)
-}
-
-/// Check if a walkdir entry is a hidden file (starts with '.')
-fn is_hidden_file(entry: &walkdir::DirEntry) -> bool {
-    entry
-        .file_name()
-        .to_str()
-        .is_some_and(|s| s.starts_with('.'))
+    stats
 }
 
 // ============================================================================
@@ -148,4 +207,117 @@ fn get_manifest_name(path: &Path) -> String {
         .chars()
         .flat_map(char::escape_default)
         .collect()
+}
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+    use icloud::DownloadState;
+
+    #[test]
+    fn incomplete_walk_is_visible_and_unknown_sizes_are_not_counted() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("local"), b"local").unwrap();
+        fs::write(root.join("cloud"), b"cloud").unwrap();
+        fs::write(root.join("unknown-size"), b"x").unwrap();
+        fs::write(root.join("error"), b"x").unwrap();
+        fs::write(root.join("unknown-state"), b"x").unwrap();
+        fs::write(root.join(".hidden"), b"x").unwrap();
+        fs::create_dir(root.join(".private")).unwrap();
+        fs::write(root.join(".private/omitted"), b"x").unwrap();
+        fs::create_dir_all(root.join("a/b/c/deeper")).unwrap();
+        fs::write(root.join("a/b/c/deeper/omitted"), b"x").unwrap();
+        let stats = scan_icloud(root, |path| {
+            match path.file_name().unwrap().to_str().unwrap() {
+                "local" => Ok((DownloadState::Local, Some(5))),
+                "cloud" => Ok((DownloadState::Cloud, Some(7))),
+                "unknown-size" => Ok((DownloadState::Local, None)),
+                "unknown-state" => Ok((DownloadState::Unknown, Some(10))),
+                "error" => Err(()),
+                _ => panic!("unexpected file"),
+            }
+        });
+        assert_eq!(stats.coverage, Coverage::Partial);
+        assert_eq!(
+            (
+                stats.known_local_logical_bytes,
+                stats.known_cloud_logical_bytes
+            ),
+            (Some(5), Some(7))
+        );
+        assert_eq!(
+            (
+                stats.unknown_sizes,
+                stats.unknown_states,
+                stats.status_errors
+            ),
+            (1, 1, 1)
+        );
+        assert_eq!(
+            (stats.skipped_hidden, stats.depth_limited_directories),
+            (2, 1)
+        );
+        let json = serde_json::to_value(&stats).unwrap();
+        assert_eq!(json["coverage"], "partial");
+        assert!(json.get("evictable_bytes").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_subtree_reports_a_walk_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let denied = dir.path().join("denied");
+        fs::create_dir(&denied).unwrap();
+        fs::set_permissions(&denied, fs::Permissions::from_mode(0o0)).unwrap();
+        // Privileged test environments may still read mode-000 directories.
+        let can_read = fs::read_dir(&denied).is_ok();
+        let stats = scan_icloud(dir.path(), |_| panic!("no files expected"));
+        fs::set_permissions(&denied, fs::Permissions::from_mode(0o700)).unwrap();
+        if !can_read {
+            assert_eq!(stats.coverage, Coverage::Partial);
+            assert!(stats.walk_errors > 0);
+        }
+    }
+
+    #[test]
+    fn entry_budget_stops_and_marks_coverage_partial() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..ICLOUD_MAX_ENTRIES {
+            fs::write(dir.path().join(format!("{i:04}")), b"x").unwrap();
+        }
+        let mut calls = 0;
+        let stats = scan_icloud(dir.path(), |_| {
+            calls += 1;
+            Ok((DownloadState::Local, Some(1)))
+        });
+        assert_eq!(stats.coverage, Coverage::Partial);
+        assert!(stats.entry_limit_reached);
+        assert_eq!(stats.entries_seen, ICLOUD_MAX_ENTRIES);
+        assert_eq!(calls, ICLOUD_MAX_ENTRIES - 1); // root consumes one entry
+    }
+
+    #[test]
+    fn overflowing_subtotal_is_partial() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("a"), b"x").unwrap();
+        fs::write(dir.path().join("b"), b"x").unwrap();
+        let stats = scan_icloud(dir.path(), |_| Ok((DownloadState::Local, Some(u64::MAX))));
+        assert!(stats.arithmetic_overflow);
+        assert_eq!(stats.coverage, Coverage::Partial);
+        assert_eq!(stats.known_local_logical_bytes, Some(u64::MAX));
+    }
+
+    #[test]
+    fn empty_observed_directory_differs_from_unavailable_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let empty = scan_icloud(dir.path(), |_| panic!("empty"));
+        assert_eq!(empty.coverage, Coverage::Complete);
+        assert_eq!(empty.known_local_logical_bytes, Some(0));
+        let absent = scan_icloud(&dir.path().join("absent"), |_| panic!("absent"));
+        assert_eq!(absent.coverage, Coverage::Unavailable);
+        assert_eq!(absent.known_local_logical_bytes, None);
+        assert!(serde_json::to_value(absent).unwrap()["known_local_logical_bytes"].is_null());
+    }
 }

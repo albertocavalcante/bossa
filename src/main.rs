@@ -105,7 +105,7 @@ fn main() -> Result<()> {
         Command::Manifest(cmd) => commands::manifest::run(cmd.into()),
         Command::ICloud(cmd) => commands::icloud::run(cmd.into()),
         Command::Storage(cmd) => match cmd {
-            StorageCommand::Status => commands::storage::status(),
+            StorageCommand::Status { json } => commands::storage::status(json),
             StorageCommand::Duplicates {
                 manifests,
                 list,
