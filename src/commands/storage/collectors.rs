@@ -326,12 +326,20 @@ mod coverage_tests {
         // If invoked, this simulates failed xattr lookup and leaves a marker.
         fs::write(
             bin.join("xattr"),
-            b"#!/bin/sh\n: > $HOME/xattr-was-called\nexit 1\n",
+            b"#!/bin/sh\n: > \"$HOME/xattr-was-called\"\nexit 1\n",
         )
         .unwrap();
         for name in ["which", "xattr"] {
             fs::set_permissions(bin.join(name), fs::Permissions::from_mode(0o700)).unwrap();
         }
+        let marker = dir.path().join("home/xattr-was-called");
+        let control = std::process::Command::new(bin.join("xattr"))
+            .env("HOME", dir.path().join("home"))
+            .status()
+            .unwrap();
+        assert!(!control.success());
+        assert!(marker.exists());
+        fs::remove_file(&marker).unwrap();
         let status = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "commands::storage::collectors::coverage_tests::unavailable_xattr_cannot_imply_cloud_or_local"])
             .env_clear().env("HOME", dir.path().join("home")).env("PATH", &bin)
